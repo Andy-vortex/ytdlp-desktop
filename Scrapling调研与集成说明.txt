@@ -1,0 +1,36 @@
+Scrapling调研与集成说明
+
+调研依据：官方GitHub主分支/0.5发布、Fetcher与StealthyFetcher源码、解析与自适应文档；实际安装并测试scrapling[fetchers]==0.5。精确依赖保存在requirements-lock.txt。
+官方仓库：https://github.com/D4Vinci/Scrapling
+0.5发布：https://github.com/D4Vinci/Scrapling/releases/tag/v0.5
+请求接口：https://scrapling.readthedocs.io/en/latest/fetching/static.html
+浏览器接口：https://scrapling.readthedocs.io/en/latest/fetching/stealthy.html
+自适应原理：https://scrapling.readthedocs.io/en/latest/parsing/adaptive.html
+
+选型结论
+Scrapling负责“访问网页、等待动态内容、定位并提取”，原yt-dlp负责“站点音视频解析、清晰度选择、下载重试、FFmpeg转换”。网页采集结果经用户选择才交给下载队列。不会用网页抓取成功冒充视频下载成功。
+
+已接入的能力
+1. Fetcher普通HTTP抓取：浏览器请求指纹、代理共用、25秒单次超时、有限重试，普通站点不必启动浏览器。
+2. StealthyFetcher动态Chrome：等待JS，用户选择有界滚动次数，通过video/audio/source/iframe/og:video与媒体响应发现资源；使用独立临时profile，不读取已有登录状态。没有自动登录、解验证码或承诺反爬通杀。
+3. Selector/CSS数据提取：相对链接按实际响应地址及base标签解析，只保留HTTP/HTTPS有效地址，去片段去重，保留签名参数顺序；正文从article/main/body提取。支持用户填CSS缩小范围。
+4. 采集结果工作区：普通网页/媒体候选分类、标题与地址搜索、多选、选中导入既有队列、链接TXT导出、正文TXT/Markdown导出（含来源）。
+5. 有界翻页：只跟同站rel=next，访问集合防环；每起始页最多5页、最多20个起始页、结果2000条。避免无边界全站抓取和错误链接自动下载。
+6. 站点来源传递：每条链接的来源页作为Referer传给yt-dlp，失败重试恢复，不自动传递Cookie。
+
+暂不接入的功能及原因
+自适应选择器：基于保存元素特征的相似匹配，确实无需LLM，但可能定位错。当前一次性采集缺少稳定任务标识与旧元素基线，自动启用可能静默采错；暂用显式CSS和结果预览。
+Spiders全站并发/代理池：现有桌面程序以可控队列为主，先采用有界翻页；不同时建立两个下载/限流调度体系。
+MCP/Agent Skill：适合供AI调用，不是普通用户在下载器里必须使用的功能；此版本不启动本地MCP服务。
+持久登录态/验证码处理：涉及账号数据，现有下载器未提供显式授权入口，故不自动读取或迁移。需要时可另做明确的登录管理设计。
+抖音专用解析：Scrapling没有现成等价于抖音下载器的站点解析服务，不能因具备浏览器指纹处理就承诺稳定下载。该版本可发现动态页媒体候选，最终仍取决于yt-dlp站点支持、资源时效及权限；未做抖音账号实测，不宣称验证通过。
+
+依赖与发布
+BSD-3-Clause开源项目；第三方原始许可证收集到vendor/licenses/python-packages。Scrapling当前0.5存在不兼容旧教程的API变更，按0.5实际源码实现并锁定依赖，不在用户启动时自动更新Python库。网页采集与yt-dlp引擎更新互不替换。
+
+验证证据
+verification/collection-test/report.json：实际普通HTTP翻页/环路/去重、CSS范围、空页、媒体直链、真实Chrome JS与媒体网络响应、Referer受限媒体交给yt-dlp真实下载、HTTP与浏览器取消。
+verification/ui-report.json：四页界面、过滤/选择/去重/队列/Referer/正文与链接导出、采集忙闲和取消控件，以及原下载进度/重试回归。
+verification/packaged-collection/report.json：窗口型单文件EXE实际普通、动态Chrome与公开HTTPS采集及进程树停止，非仅源码测试。
+verification/integration-report.json：原五种音视频输出格式与停止回归。
+verification/release-1.4.0.json：打包组件自检与正式EXE摘要。

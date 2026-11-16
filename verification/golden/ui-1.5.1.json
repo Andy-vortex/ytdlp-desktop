@@ -1,0 +1,5613 @@
+[
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "准备就绪",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "添加链接后，点击开始下载",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": null,
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "暂无任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "initial"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "准备就绪",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "添加链接后，点击开始下载",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": null,
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: three links"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "准备就绪",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "添加链接后，点击开始下载",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 1: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 3：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item 1/3"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "title longer than 56 characters"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "[generic] a: Downloading webpage"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "log: plain engine line"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "下载间隔 / 重试等待 · 剩余 05:00 · 可随时停止",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  下载间隔 / 重试等待 · 05:00",
+          "等待中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "waiting 300 s"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "下载间隔 / 重试等待 · 剩余 00:59 · 可随时停止",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  下载间隔 / 重试等待 · 00:59",
+          "等待中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "render_wait 241 s later"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "等待结束，继续处理…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  下载间隔 / 重试等待 · 00:59",
+          "处理中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "resuming"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "50.0%   ·   1.0 KB / 2.0 KB   ·   512.0 B/s   ·   剩余 00:02",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.5
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  512.0 B/s",
+          "50.0%",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "progress: 50 % downloading"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "下载中   ·   4.0 KB / —   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.5
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  —",
+          "下载中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "progress: fraction None"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "100.0%   ·   2.0 KB / 2.0 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  —",
+          "处理中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "progress: status finished"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "[ExtractAudio] Destination: a.wav"
+      ],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  —",
+          "转换中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "log: [ExtractAudio] line"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "文件已保存：<OUT>\\a.wav"
+      ],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  —",
+          "转换中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "file"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "第一条测试媒体 · A Media Title That Is Clearly Longer Than Fift",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item_done: success with one file"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 2 / 3：https://media.example.invalid/b"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item 2/3"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "[Merger] Merging formats into \"b.mkv\""
+      ],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  正在获取媒体信息",
+          "转换中",
+          "active"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "log: [Merger] line"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item_done: failed"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 3 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 3 / 3：https://www.youtube.com/watch?v=golden"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item 3/3"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 3 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "[VideoRemuxer] Remuxing video from mp4 to mkv"
+      ],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  正在获取媒体信息",
+          "转换中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "log: [VideoRemuxer] line"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 3 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "音视频处理中，请稍候…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  已保存 2 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item_done: success with two files"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 2 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务结束 · 2 条成功，1 条失败",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 2  /  失败 1  /  共 3",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  已保存 2 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: failures with failed_urls and failed_path"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 2 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 2  /  失败 1  /  共 3",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "第一条测试媒体 · A Media Title That Is Clearly Longer Tha",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  详情见任务日志",
+          "失败",
+          "failed"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  已保存 2 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "unknown event kind is ignored"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 2 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: two links"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务结束 · 2 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 2: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 2：https://www.youtube.com/watch?v=golden"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 2 item 1/2"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item_done: failed with bot_check"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 2 / 2：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 2 item 2/2"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 2 item_done: success"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 1 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务结束 · 1 条成功，1 条失败",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "YouTube 要求登录验证：请在“偏好设置 → 网络”选择 cookies.txt 后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 1  /  共 2",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: bot_check without cookies"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 1 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "YouTube 要求登录验证：请在“偏好设置 → 网络”选择 cookies.txt 后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 1  /  共 2",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "cookies file chosen"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务结束 · 1 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "YouTube 要求登录验证：请在“偏好设置 → 网络”选择 cookies.txt 后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 1  /  共 2",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 2b: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务结束 · 0 条成功，1 条失败",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "YouTube 仍要求登录验证：cookies 可能已过期，请重新导出后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 1  /  共 2",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: bot_check with cookies"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "YouTube 仍要求登录验证：cookies 可能已过期，请重新导出后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 1  /  共 2",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "www.youtube.com",
+          "01  ·  YouTube 要求登录验证，需要 cookies",
+          "失败",
+          "failed"
+        ],
+        [
+          "example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "cookies cleared"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "YouTube 仍要求登录验证：cookies 可能已过期，请重新导出后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: three links again"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "YouTube 仍要求登录验证：cookies 可能已过期，请重新导出后点“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 3: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 3：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 3 item 1/3"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "网站限流，暂停整个下载队列 · 剩余 15:00 · 可随时停止",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  网站限流，暂停整个下载队列 · 15:00",
+          "等待中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 3 waiting 900 s (rate limit)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 3",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "网站限流，暂停整个下载队列 · 剩余 15:00 · 可随时停止",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "3 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  详情见任务日志",
+          "已停止",
+          "stopped"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "item_done: cancelled"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务已停止",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务已停止",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "已下载的片段会保留，重新开始可尝试续传。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 0  /  共 3",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (3)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  详情见任务日志",
+          "已停止",
+          "stopped"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "www.youtube.com",
+          "03  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: cancelled"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务已停止",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "已下载的片段会保留，重新开始可尝试续传。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: two links again"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务已停止",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "已下载的片段会保留，重新开始可尝试续传。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 4: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 2：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 4 item 1/2"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 4 item_done 1: success"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 2 / 2：https://media.example.invalid/b"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 4 item 2/2"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 2 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (3)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 4 item_done 2: success"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 2 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "下载完成 · 2 条成功",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 2  /  失败 0  /  共 2",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: all ok"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 2 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: one link"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载完成 · 2 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 5: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 1",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 1：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 5 item 1/1"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 1",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 5 item_done: success"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "下载完成 · 1 条成功",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "媒体已保存，但部分归档信息失败，请查看任务日志。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  已保存 1 个文件",
+          "已完成",
+          "done"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: archive_errors"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "媒体已保存，但部分归档信息失败，请查看任务日志。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: two links for job 6"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "媒体已保存，但部分归档信息失败，请查看任务日志。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 6: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 2",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 2：https://example.invalid/a"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "2 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 6 item 1/2"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务结束 · 0 条成功，1 条失败",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 1  /  共 2",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (2)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "example.invalid",
+          "01  ·  正在获取媒体信息",
+          "失败",
+          "failed"
+        ],
+        [
+          "media.example.invalid",
+          "02  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: failed while a row is active"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (2)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "populate_queue: one link for job 7"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务结束 · 0 条成功，1 条失败",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "失败链接已保存，可点击任务列表中的“重试失败”。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (2)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  等待解析",
+          "等待中",
+          "waiting"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 7: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在解析链接 1 / 1",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "链接 1 / 1：https://media.example.invalid/b"
+      ],
+      "metrics": "正在连接网站…",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "1 条任务",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (2)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "解析中",
+          "active"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "job 7 item 1/1"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "任务已停止",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "任务已停止",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "已下载的片段会保留，重新开始可尝试续传。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 0  /  共 1",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: cancelled while a row is active"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "任务已停止",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "已下载的片段会保留，重新开始可尝试续传。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 0  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "download job 8: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [
+        "下载完成 · 1 条成功"
+      ],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "done: legacy payload without failed_urls"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "update 1: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "update 1: animate(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在检查官方更新…",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 1.0
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "从官方稳定版更新；下载完成后校验 SHA256。",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "update: title"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "正在检查官方更新…",
+      "engine_badge": "yt-dlp <VER>",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "正在下载新版引擎… 25.0%",
+      "version_label": "yt-dlp  <VER>"
+    },
+    "step": "update: progress with status updating"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.01.01",
+      "history": [],
+      "log": [
+        "引擎检查完成：2099.01.01"
+      ],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "更新完成；之后的新任务将使用新版引擎。",
+      "version_label": "yt-dlp  2099.01.01"
+    },
+    "step": "updated: new version"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.01.01",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "更新完成；之后的新任务将使用新版引擎。",
+      "version_label": "yt-dlp  2099.01.01"
+    },
+    "step": "update_done"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.01.01",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "更新完成；之后的新任务将使用新版引擎。",
+      "version_label": "yt-dlp  2099.01.01"
+    },
+    "step": "update 2: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.01.01",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "更新完成；之后的新任务将使用新版引擎。",
+      "version_label": "yt-dlp  2099.01.01"
+    },
+    "step": "update 2: animate(True)"
+  },
+  {
+    "state": {
+      "animating": true,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [
+        "引擎检查完成：2099.02.02"
+      ],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "indeterminate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "当前已是官方最新版。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "updated: unchanged"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "当前已是官方最新版。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "update 2: update_done"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "当前已是官方最新版。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "update 3: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [
+        "更新失败：Update checksum or size is unavailable"
+      ],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "更新未完成，现有引擎仍可使用；详情见任务日志。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "update_error"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "update_done: cancelled"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "normal"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "collect: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "normal"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [
+        "网页采集：测试文章，2 条链接"
+      ],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "collect_page"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "normal"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [
+        "网页采集未完成：网站返回HTTP 503，可尝试动态模式或稍后重试。"
+      ],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "collect_error"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "collect_done"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "音频 · WAV 32 位",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "format variable set to MKV, on_format not called"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(True) with operation download"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "normal",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(False) with operation download"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(True) with operation update"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "update",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "normal",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(False) with operation update"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "normal"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(True) with operation collect"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "normal",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "set_busy(False) with operation collect"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "collect",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "normal",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "normal"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "history: a download job is recorded, the list is not refreshed yet"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": true,
+      "collect_start": [
+        "开始采集",
+        "disabled"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "current_title": "下载引擎已就绪",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [],
+      "log": [],
+      "metrics": "25.0%   ·   1000.0 B / 3.9 KB   ·   —   ·   剩余 —",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 0.25
+      },
+      "quality_menu": "disabled",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 0,
+      "retry_button": [
+        "重试失败 (1)",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "disabled"
+      ],
+      "stop_button": [
+        "停止",
+        "normal"
+      ],
+      "update_buttons": "D",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "download job 9: set_busy(True)"
+  },
+  {
+    "state": {
+      "animating": false,
+      "busy": false,
+      "collect_start": [
+        "开始采集",
+        "normal"
+      ],
+      "collect_stop": [
+        "停止",
+        "disabled"
+      ],
+      "controls": "NNNNNNNNNNNNNNNNNNNNDDDNNNNNNNNNNNNNNNN",
+      "current_title": "下载完成 · 1 条成功",
+      "engine_badge": "yt-dlp 2099.02.02",
+      "history": [
+        [
+          "下载",
+          "1条 · 音频 · 原始最佳",
+          "已完成"
+        ]
+      ],
+      "log": [
+        "下载完成 · 1 条成功",
+        "失败清单：<STATE>\\failed-downloads.json"
+      ],
+      "metrics": "文件已保存，点击“打开文件夹”即可查看。",
+      "mode": "视频 · 最佳画质 MKV",
+      "open_output_button": [
+        "打开文件夹",
+        "normal"
+      ],
+      "operation": "download",
+      "progress": {
+        "mode": "determinate",
+        "target": 1.0
+      },
+      "quality_menu": "normal",
+      "queue_stats": "成功 1  /  失败 0  /  共 1",
+      "refresh_library": 1,
+      "retry_button": [
+        "重试失败",
+        "disabled"
+      ],
+      "rows": [
+        [
+          "media.example.invalid",
+          "01  ·  正在获取媒体信息",
+          "已停止",
+          "stopped"
+        ]
+      ],
+      "start_button": [
+        "↓  开始下载",
+        "normal"
+      ],
+      "stop_button": [
+        "停止",
+        "disabled"
+      ],
+      "update_buttons": "N",
+      "update_status": "已取消更新。",
+      "version_label": "yt-dlp  2099.02.02"
+    },
+    "step": "done: the history list shows the finished job"
+  }
+]

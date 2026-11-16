@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Build output (build.py writes everything under build\)
+build/
+dist/
+
+# Third-party programs (yt-dlp, FFmpeg, Deno) - fetched by prepare_vendor.py
+vendor/
+
+# Local data, state and logs
+data/
+*.log
+
+# Internal records of the 1.6.0 upgrade (contain local paths); only the spec is published
+docs/1.6.0/audit/
+docs/1.6.0/baseline/
+docs/1.6.0/handoff/
+docs/1.6.0/prototype/
+
+# Old test outputs and local backups
+verification/backup-*/
+verification/*.json
+verification/collection-test/
+verification/packaged-collection/
+
+# Never publish cookies
+*cookies*.txt
+cookies/

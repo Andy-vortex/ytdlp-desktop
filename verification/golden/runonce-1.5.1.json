@@ -1,0 +1,858 @@
+{
+  "archive_lines": {
+    "archive_calls": [
+      [
+        "<TMP>\\archive\\item",
+        {
+          "filepath": "<TMP>\\标题 [abc].wav",
+          "id": "x1",
+          "title": "T"
+        }
+      ],
+      [
+        "<TMP>\\archive\\item",
+        {
+          "id": "x2",
+          "title": "no file"
+        }
+      ]
+    ],
+    "archive_errors": [
+      "归档文件与本条资料目录不匹配。"
+    ],
+    "bot_check": false,
+    "events": [
+      [
+        "archive",
+        {
+          "filepath": "<TMP>\\标题 [abc].wav",
+          "id": "x1",
+          "title": "T"
+        }
+      ],
+      [
+        "log",
+        "归档信息保存失败（媒体已保留）：归档文件与本条资料目录不匹配。"
+      ],
+      [
+        "archive",
+        {
+          "id": "x2",
+          "title": "no file"
+        }
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "bot_check": {
+    "bot_check": true,
+    "events": [
+      [
+        "log",
+        "ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication."
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "bot_check_four_characters_apart": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "ERROR: [youtube] abc: Sign in to confirm you____re not a bot."
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "bot_check_three_characters_any_case": {
+    "bot_check": true,
+    "events": [
+      [
+        "log",
+        "ERROR: [youtube] abc: SIGN IN TO CONFIRM YOUâ€™RE NOT A BOT."
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "cancel_during_sleep": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "[download] Sleeping 300 seconds ..."
+      ],
+      [
+        "waiting",
+        {
+          "index": 1,
+          "reason": "下载间隔 / 重试等待",
+          "seconds": "<S>",
+          "total": 2
+        }
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      "<KILLED>",
+      false,
+      null
+    ]
+  },
+  "cancelled_before_start": {
+    "bot_check": false,
+    "events": [],
+    "files": [],
+    "popen": null,
+    "result": [
+      -1,
+      false,
+      null
+    ]
+  },
+  "http_status_429": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "[debug] response header Retry-After=12"
+      ],
+      [
+        "log",
+        "WARNING: [generic] Got HTTP status 429, giving up"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      "<KILLED>",
+      true,
+      12
+    ]
+  },
+  "invalid_utf8": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "�� broken bytes"
+      ],
+      [
+        "title",
+        "T"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "line_shapes": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "   "
+      ],
+      [
+        "log",
+        "  [download] indented  "
+      ],
+      [
+        "log",
+        "__GUI_PROGRESS__50|100|NA|10|5|downloading|extra"
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.25,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 200.0
+        }
+      ],
+      [
+        "archive",
+        {
+          "id": "x1",
+          "title": "T"
+        }
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "near_misses": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "[download] Destination: Too Many Requests [abc].m4a"
+      ],
+      [
+        "log",
+        "ERROR: HTTP Error 4290: not a rate limit"
+      ],
+      [
+        "log",
+        "[debug] Retry-After header is missing"
+      ],
+      [
+        "log",
+        "[download] Sleeping 0 seconds ..."
+      ],
+      [
+        "log",
+        "[download] Sleeping a while ..."
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "normal": {
+    "bot_check": false,
+    "events": [
+      [
+        "title",
+        "T"
+      ],
+      [
+        "log",
+        "[download] Sleeping 0.15 seconds ..."
+      ],
+      [
+        "waiting",
+        {
+          "index": 1,
+          "reason": "下载间隔 / 重试等待",
+          "seconds": "<S>",
+          "total": 2
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.5,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 100.0
+        }
+      ],
+      [
+        "resuming",
+        {
+          "index": 1,
+          "total": 2
+        }
+      ],
+      [
+        "file",
+        "<TMP>\\标题 [abc].wav"
+      ]
+    ],
+    "files": [
+      "<TMP>\\标题 [abc].wav"
+    ],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "odd_lines": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "Some title includes number 429"
+      ],
+      [
+        "log",
+        "ERROR: HTTP Error 403: Forbidden"
+      ],
+      [
+        "log",
+        "__GUI_TITLE__not-json"
+      ],
+      [
+        "log",
+        "__GUI_PROGRESS__1|2|3"
+      ],
+      [
+        "file",
+        "<TMP>\\标题 [abc].wav"
+      ],
+      [
+        "file",
+        "<TMP>\\标题 [abc].wav"
+      ]
+    ],
+    "files": [
+      "<TMP>\\标题 [abc].wav"
+    ],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      3,
+      false,
+      null
+    ]
+  },
+  "parsing_details": {
+    "bot_check": true,
+    "events": [
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.5,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 100.0
+        }
+      ],
+      [
+        "file",
+        null
+      ],
+      [
+        "file",
+        17
+      ],
+      [
+        "log",
+        "ERROR: [youtube] abc: Sign in to confirm youre not a bot."
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "plain_failure": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "ERROR: boom"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      1,
+      false,
+      null
+    ]
+  },
+  "progress_shapes": {
+    "bot_check": false,
+    "events": [
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.5,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 100.0
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.25,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 200.0
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": null,
+          "eta": null,
+          "fraction": null,
+          "speed": null,
+          "status": "downloading",
+          "total": null
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 300.0,
+          "eta": null,
+          "fraction": 1,
+          "speed": null,
+          "status": "downloading",
+          "total": 200.0
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 10.0,
+          "eta": 1.0,
+          "fraction": null,
+          "speed": 1.0,
+          "status": "finished",
+          "total": 0.0
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": null,
+          "eta": 1000.0,
+          "fraction": 0.0,
+          "speed": null,
+          "status": "downloading",
+          "total": 100.0
+        }
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "rate_limit": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "ERROR: HTTP Error 429: Too Many Requests"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      "<KILLED>",
+      true,
+      null
+    ]
+  },
+  "retry_after": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "[debug] response header Retry-After: 7"
+      ],
+      [
+        "log",
+        "[debug] response header Retry-After: 3"
+      ],
+      [
+        "log",
+        "ERROR: HTTP Error 429: Too Many Requests"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      "<KILLED>",
+      true,
+      7
+    ]
+  },
+  "sleep_expires": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "[download] Sleeping 1 seconds ..."
+      ],
+      [
+        "waiting",
+        {
+          "index": 1,
+          "reason": "下载间隔 / 重试等待",
+          "seconds": "<S>",
+          "total": 2
+        }
+      ],
+      [
+        "resuming",
+        {
+          "index": 1,
+          "total": 2
+        }
+      ],
+      [
+        "progress",
+        {
+          "downloaded": 50.0,
+          "eta": 5.0,
+          "fraction": 0.5,
+          "speed": 10.0,
+          "status": "downloading",
+          "total": 100.0
+        }
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      0,
+      false,
+      null
+    ]
+  },
+  "too_many_requests_without_status": {
+    "bot_check": false,
+    "events": [
+      [
+        "log",
+        "WARNING: [youtube] abc: Too Many Requests"
+      ]
+    ],
+    "files": [],
+    "popen": {
+      "creationflags": "CREATE_NO_WINDOW",
+      "cwd": "<BIN>",
+      "encoding": "utf-8",
+      "env": {
+        "PATH[0]": "<BIN>",
+        "PYINSTALLER_RESET_ENVIRONMENT": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "errors": "replace",
+      "other_keywords": [],
+      "positional_arguments": 1,
+      "stderr": "STDOUT",
+      "stdin": "DEVNULL",
+      "stdout": "PIPE"
+    },
+    "result": [
+      "<KILLED>",
+      true,
+      null
+    ]
+  }
+}
