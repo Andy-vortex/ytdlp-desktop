@@ -118,7 +118,16 @@ class FakeGitHub:
 
 
 class UpdaterCase(unittest.TestCase):
+    # 1.7.0 (c5-updater a): the updater first runs "<new exe> --version".  The pretend exe of these
+    # tests is no program, so that run is stood in for (a version line, exit code 0) unless a test
+    # class sets this; test_v170_core.EngineStartCheckTests runs it for real.
+    real_version_check = False
+
     def setUp(self):
+        if not self.real_version_check:
+            patcher = mock.patch.object(updater, '_version_output', return_value=(0, TAG.encode() + b'\r\n', b''))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)

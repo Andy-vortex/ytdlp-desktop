@@ -19,8 +19,10 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 import applog
+import collection_ui
 import engine
 import formats
+import i18n
 import naming
 import paths
 import settings
@@ -38,12 +40,15 @@ DEFAULT_SIZE = (1120, 810)
 MIN_SIZE = (1000, 740)
 # Events handled through self.handlers (kind -> bound method on_<kind>); collect_* go to handle_collection.
 HANDLED_KINDS = ('log', 'item', 'title', 'waiting', 'resuming', 'progress', 'media', 'file', 'queued', 'item_done',
-                 'done', 'updated', 'update_error', 'update_done', 'update_status', 'update_progress', 'engine_check')
+                 'done', 'updated', 'update_error', 'update_done', 'update_status', 'update_progress', 'engine_check',
+                 'library_busy')     # (1.7.0 U1) a worker's history write waits for a locked library
 # Tk variables written to settings.json 400 ms after a change (SPEC 3.2).
 PERSISTED = ('output', 'mode', 'resolution', 'batch_safe', 'archive_enabled', 'archive_root', 'cookies', 'naming',
              'embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded', 'notify_done', 'clipboard_hint',
              'check_engine_updates')
 _GEOMETRY = re.compile(r'^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$')
+# (1.7.0 U4) settings.json could not be read at start (held or locked): said once on the download page.
+SETTINGS_HELD_NOTICE = '设置文件暂时无法读取，本次先用默认设置；原文件不会被覆盖。'
 
 
 def virtual_screen():
@@ -124,7 +129,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.report_callback_exception = self.report_error
         self.logger = applog.get()
         # 2. window basics
-        self.title(TITLE)
+        self.title(i18n.t('app.title'))       # TITLE in zh (I18N.md 8.5)
         self.geometry(f'{DEFAULT_SIZE[0]}x{DEFAULT_SIZE[1]}')
         self.minsize(*MIN_SIZE)
         self.protocol('WM_DELETE_WINDOW', self.on_close)
@@ -236,11 +241,11 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             self.format.set(FORMATS[1])
             self.on_format()
         self.links_changed()
-        self.append_log(f'就绪：yt-dlp {engine_version()}；FFmpeg、ffprobe 和 Deno 已内置。')
+        self.append_log(i18n.t('log.ready', version=i18n.localize(engine_version())))
         if settings.HELD in self.prefs:
             # (final-merge, core request 1) settings.load() could not read the file: say why the
             # defaults are shown; save() never writes them over the stored file.
-            self.append_log('设置文件暂时无法读取（可能被其他程序占用），本次先用默认设置；原文件不会被覆盖。')
+            self.append_log(i18n.t('log.settings_held'))
         try:
             self.iconbitmap(str(RESOURCE_ROOT / 'app.ico'))
         except tk.TclError:
@@ -250,6 +255,11 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.after(1000, self.watchdog)
         self.download_startup()
         self.settings_startup()
+        if settings.HELD in self.prefs:
+            # (1.7.0 U4) Once, on the download page as well: the owner sees the defaults and is told
+            # why, without a dialog.  The notice stays until 知道了 or another notice takes its place.
+            self.show_notice('settings', i18n.t('shell.notice.settings_held'),
+                             [(i18n.t('common.got_it'), lambda: self.hide_notice('settings'))])
         if not self.smoke_mode and self.prefs.get('zoomed'):
             self.after(0, lambda: self.state('zoomed'))
 
@@ -259,10 +269,11 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.collected_pages = []
         self.collection_errors = 0
         self.download_referers = {}
-        self.collect_mode = tk.StringVar(value='普通网页')
+        # The stored (compared) values of 1.6.0, shown through i18n.label by the collect page (I18N.md 7).
+        self.collect_mode = tk.StringVar(value=collection_ui.MODE_STATIC)
         self.collect_scrolls = tk.StringVar(value='0')
         self.collect_pages_limit = tk.StringVar(value='1')
-        self.collect_filter = tk.StringVar(value='媒体候选')
+        self.collect_filter = tk.StringVar(value=collection_ui.FILTERS[0])
         self.collect_search = tk.StringVar()
         self.collect_selector = tk.StringVar()
 
@@ -300,7 +311,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         """Tk callback errors: the traceback goes to the log file, one line to the log page."""
         try:
             applog.get('ui').error('界面错误', exc_info=(kind, value, trace))
-            self.append_log(f'界面错误：{kind.__name__}: {value}')
+            self.append_log(i18n.t('log.ui_error', kind=kind.__name__, value=value))
         except Exception:
             pass
 
@@ -316,14 +327,15 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
                             height=36, corner_radius=10, fg_color=ui_theme.ACCENT)
         mark.grid(row=0, column=0, rowspan=2, padx=(0, 10))
         ui_theme.label(brand, 'YT-DLP', role='brand', text_color=ui_theme.WHITE, anchor='w').grid(row=0, column=1, sticky='w')
-        ui_theme.label(brand, '桌面下载器', role='caption', text_color=ui_theme.SIDE_MUTED,
-                       anchor='w').grid(row=1, column=1, sticky='w')
+        caption, wrapped = self._brand_caption(brand)
+        ui_theme.label(brand, caption, role='caption', text_color=ui_theme.SIDE_MUTED, anchor='w',
+                       **({'justify': 'left'} if wrapped else {})).grid(row=1, column=1, sticky='w')
         self.nav_icons = {}
-        for row, key, code, title in [(1, 'download', ui_theme.ICON_DOWNLOAD, '下载中心'),
-                                      (2, 'collect', ui_theme.ICON_SEARCH, '网页采集'),
-                                      (3, 'library', ui_theme.ICON_LIBRARY, '资料管理'),
-                                      (4, 'logs', ui_theme.ICON_LOG, '任务日志'),
-                                      (5, 'settings', ui_theme.ICON_SETTINGS, '偏好设置')]:
+        for row, key, code, title in [(1, 'download', ui_theme.ICON_DOWNLOAD, i18n.t('nav.download')),
+                                      (2, 'collect', ui_theme.ICON_SEARCH, i18n.t('nav.collect')),
+                                      (3, 'library', ui_theme.ICON_LIBRARY, i18n.t('nav.library')),
+                                      (4, 'logs', ui_theme.ICON_LOG, i18n.t('nav.logs')),
+                                      (5, 'settings', ui_theme.ICON_SETTINGS, i18n.t('nav.settings'))]:
             self.nav_icons[key] = (ui_theme.icon(code, 'side'), ui_theme.icon(code, 'white'))
             button = ctk.CTkButton(side, text=title, image=self.nav_icons[key][0], compound='left', anchor='w',
                                    border_spacing=10, height=40, corner_radius=8, font=self.font,
@@ -337,14 +349,44 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         status.grid_columnconfigure(1, weight=1)
         self.side_dot = ui_theme.label(status, '●', role='caption', text_color=ui_theme.SIDE_OK, width=10)
         self.side_dot.grid(row=0, column=0, sticky='w', padx=(12, 6), pady=(10, 0))
-        self.side_status = ui_theme.label(status, '就绪', role='caption', text_color=ui_theme.SIDE_OK, anchor='w')
+        self.side_status = ui_theme.label(status, '', role='caption', text_color=ui_theme.SIDE_OK, anchor='w')
         self.side_status.grid(row=0, column=1, sticky='ew', padx=(0, 12), pady=(10, 0))
-        self.engine_badge = ui_theme.label(status, f'yt-dlp {engine_version()}', role='caption',
+        # (1.7.0, I18N.md 10.4) A safety net: a status longer than its 120 px is cut with '…'.
+        ui_theme.fit(self.side_status, i18n.t('shell.status.ready'))
+        # The engine version, or the localized 已内置 when the built-in version is not known (9.3).
+        self.engine_badge = ui_theme.label(status, f'yt-dlp {i18n.localize(engine_version())}', role='caption',
                                            text_color=ui_theme.SIDE_MUTED, anchor='w')
         self.engine_badge.grid(row=1, column=0, columnspan=2, sticky='ew', padx=12)
-        self.app_badge = ui_theme.label(status, f'v{APP_VERSION}', role='caption', text_color=ui_theme.SIDE_MUTED,
-                                        anchor='w')
+        self.app_badge = ui_theme.label(status, '', role='caption', text_color=ui_theme.SIDE_MUTED, anchor='w')
         self.app_badge.grid(row=2, column=0, columnspan=2, sticky='ew', padx=12, pady=(0, 10))
+        self.show_app_badge(False)
+
+    @staticmethod
+    def _brand_caption(brand):
+        """(1.7.0, I18N.md 10.4) The caption under the brand, on two lines when one line is wider than
+        its column (en 'Desktop Downloader'; the zh text fits and stays one line): (text, wrapped)."""
+        text = i18n.t('shell.brand_caption')
+        try:
+            scale = ui_theme._scaling(brand) or 1.0
+            measure = ui_theme._measure_font(brand, ui_theme.font('caption')).measure
+            room = (ui_theme.SIDEBAR_W - 2 * 16 - 36 - 10) * scale      # sidebar, brand padding, mark and its gap
+            if measure(text) <= room or ' ' not in text.strip():
+                return text, False
+            words = text.split(' ')
+            splits = [(' '.join(words[:cut]), ' '.join(words[cut:])) for cut in range(1, len(words))]
+            first, rest = min(splits, key=lambda pair: max(measure(pair[0]), measure(pair[1])))
+            return f'{first}\n{rest}', True
+        except (tk.TclError, AttributeError, ValueError):
+            return text, False
+
+    def show_app_badge(self, engine_new):
+        """(1.7.0) The app badge of the sidebar: the version, and ' · 引擎有新版' (en ' · new engine')
+        while a newer yt-dlp is offered.  The texts are the shell's (catalog i18n_shell)."""
+        if engine_new:
+            self.app_badge.configure(text=i18n.t('shell.badge.engine_new', version=APP_VERSION),
+                                     text_color=ui_theme.SIDE_WARN)
+        else:
+            self.app_badge.configure(text=f'v{APP_VERSION}', text_color=ui_theme.SIDE_MUTED)
 
     def page(self, name, title, subtitle, max_width=None):
         page = ctk.CTkFrame(self.content, fg_color='transparent', corner_radius=0)
@@ -385,6 +427,8 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         page.tkraise()
         ui_theme.hide_from_focus(self, 'pages', [other for other in self.pages.values() if other is not page])
         self.current_page = name
+        if name == 'collect' and hasattr(self, '_dim_collect_box'):
+            self._dim_collect_box(bool(self.busy))      # (1.7.0 U6) the look waits for its page
         self.focus_page(name)
 
     def focus_page(self, name):
@@ -408,7 +452,9 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         elif name == 'logs':
             target = getattr(self, 'logs', page)
         elif name == 'library':
-            tables = {'任务历史与续采': 'history_tree', '增量订阅': 'subscription_tree', '统一资料归档': 'archive_tree'}
+            # The tab ids are the 1.6.0 Chinese names (group library_tab, I18N.md 7), in tab order.
+            tab_ids = [value for value, _label in i18n.choices('library_tab')]
+            tables = dict(zip(tab_ids, ('history_tree', 'subscription_tree', 'archive_tree')))
             try:
                 target = getattr(self, tables.get(self.library_tabs.get(), ''), page)
             except AttributeError:
@@ -421,25 +467,29 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
     def refresh_shell(self):
         """Side status line and the start button's label, derived from the current state."""
         try:
-            text, tone = '就绪', ui_theme.SIDE_OK
+            text, tone = i18n.t('shell.status.ready'), ui_theme.SIDE_OK
             if self.busy and self.operation == 'download':
                 if self.wait_context is not None and self.wait_seconds is not None:
-                    text, tone = f'等待 {time_text(self.wait_seconds)}', ui_theme.SIDE_WARN
+                    text, tone = i18n.t('shell.status.waiting', time=time_text(self.wait_seconds)), ui_theme.SIDE_WARN
                 elif self.active_index is not None:
                     total = max(self.job_row_count(), self.active_index + 1)
-                    text, tone = f'正在下载 {self.active_index + 1} / {total}', ui_theme.SIDE_INFO
+                    text, tone = (i18n.t('shell.status.downloading_n', index=self.active_index + 1, total=total),
+                                  ui_theme.SIDE_INFO)
                 else:
-                    text, tone = '正在下载', ui_theme.SIDE_INFO
+                    text, tone = i18n.t('shell.status.downloading'), ui_theme.SIDE_INFO
             elif self.busy and self.operation == 'collect':
-                text, tone = '正在采集', ui_theme.SIDE_INFO
+                text, tone = i18n.t('shell.status.collecting'), ui_theme.SIDE_INFO
             elif self.busy and self.operation == 'update':
-                text, tone = '正在更新引擎', ui_theme.SIDE_INFO
+                text, tone = i18n.t('shell.status.updating'), ui_theme.SIDE_INFO
             elif getattr(self, 'bot_retry', None) is not None:
-                text, tone = '等待 YouTube 验证', ui_theme.SIDE_DANGER
-            if self.side_status.cget('text') != text:
+                text, tone = i18n.t('shell.status.bot_wait'), ui_theme.SIDE_DANGER
+            # The status is fitted (cut with '…' when it is too wide): compare the full text.
+            if ui_theme.full_text(self.side_status) != text:
                 self.side_status.configure(text=text, text_color=tone)
                 self.side_dot.configure(text_color=tone)
-            start = '加入队列' if self.busy and self.operation == 'download' else '开始下载'
+            # (I18N.md 8.7) compared with the texts of the running language, not with Chinese literals
+            queued = self.busy and self.operation == 'download'
+            start = i18n.t('download.start.queue') if queued else i18n.t('download.start')
             if self.start_button.cget('text').strip() != start:
                 self.start_button.configure(text=start)
         except (AttributeError, tk.TclError):
@@ -456,7 +506,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             path.mkdir(parents=True, exist_ok=True)
             os.startfile(path)
         except OSError as error:
-            messagebox.showerror('无法打开目录', str(error), parent=self)
+            messagebox.showerror(i18n.t('dialog.open_folder_failed'), str(error), parent=self)
 
     def save_settings(self):
         """Write settings.json from the variables and the kept values; never in smoke mode."""
@@ -480,7 +530,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             pass        # the window is going away; what was read so far is saved
         self.prefs.update({key: value for key, value in values.items() if key in ('geometry', 'zoomed')})
         if not settings.save(values):
-            self.append_log('设置未保存：无法写入 settings.json，详情见日志文件。')
+            self.append_log(i18n.t('log.settings_not_saved'))
 
     def set_busy(self, busy):
         self.busy = busy
@@ -511,7 +561,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
                     self.handle('update_done', {'cancelled': True})
                 return
             self.clear_wait()
-            self.current_title.configure(text='正在停止任务…')
+            self.current_title.configure(text=i18n.t('download.title.stopping'))
             self.stop_button.configure(state='disabled')
             self.collect_stop.configure(state='disabled')
             threading.Thread(target=self.runner.cancel, daemon=True).start()
@@ -585,7 +635,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
                                                       'failed_urls': [], 'pending_urls': []}),
                                 'update': ('update_done', {'cancelled': True}),
                                 'collect': ('collect_done', {'cancelled': True})}.get(self.operation)
-                    self.append_log('后台任务意外结束，已恢复界面。')
+                    self.append_log(i18n.t('log.watchdog'))
                     self.run_token += 1
                     self.worker = None
                     if self.operation == 'download':
@@ -609,7 +659,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             self.force_close()      # second click on X while stopping
             return
         if self.busy:
-            if messagebox.askyesno('停止并关闭', '当前任务尚未完成。要停止任务并关闭吗？', parent=self):
+            if messagebox.askyesno(i18n.t('dialog.close_busy.title'), i18n.t('dialog.close_busy.text'), parent=self):
                 self.closing = True
                 self.stop()
                 self.after(8000, self.force_close)
@@ -642,6 +692,11 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.destroy()
 
     def destroy(self):
+        # (1.7.0 U1) History writes that still wait for a locked library are given up (logged).
+        try:
+            self.library_closing()
+        except Exception:
+            pass
         # Pending after() scripts would fire on a destroyed interpreter (or print
         # "invalid command name" under the next root of a test process).
         try:

@@ -886,13 +886,125 @@ class AppOptionMenu(ctk.CTkOptionMenu):
         canvas.tag_raise('app_chevron')
 
 
-def option_menu(parent, values, **kw):
-    """Drop-down, 36 px high, with a fixed width (``width=``, default 140) and a chevron arrow."""
+def _label_maps(values, labels):
+    """(1.7.0) (value -> label, label -> value) of a labeled control: ``labels`` is a list parallel
+    to ``values`` or a dict value -> label; a value without a label shows as str(value)."""
+    values = list(values)
+    if isinstance(labels, dict):
+        shown = [labels.get(value, str(value)) for value in values]
+    else:
+        shown = [str(item) for item in labels]
+        if len(shown) != len(values):
+            raise ValueError('labels must be as many as values')
+    to_label = dict(zip(values, shown))
+    to_value = {}
+    for value, text in zip(values, shown):
+        to_value.setdefault(text, value)
+    return to_label, to_value
+
+
+class LabeledOptionMenu(AppOptionMenu):
+    """(1.7.0, I18N.md 7) An ``AppOptionMenu`` that shows labels and stores values.
+
+    The menu lists the labels; ``variable`` (when given) holds the stored *value* and is
+    followed when somebody writes it; ``command`` is called with the value; ``get()`` returns
+    the value and ``set()`` takes a value (a label is accepted too).  ``cget('values')`` gives the
+    shown labels, ``stored_values`` the values.
+    """
+
+    def __init__(self, master, values, labels, variable=None, command=None, **kw):
+        self.stored_values = list(values)
+        self._to_label, self._to_value = _label_maps(self.stored_values, labels)
+        self._value_variable = variable
+        self._value_trace = None
+        self._value = variable.get() if variable is not None else (self.stored_values[0] if self.stored_values else '')
+        super().__init__(master, values=[self._to_label[value] for value in self.stored_values], command=command, **kw)
+        self._show(self._value)
+        if variable is not None:
+            self._value_trace = variable.trace_add('write', self._value_written)
+
+    def label_of(self, value):
+        try:
+            return self._to_label.get(value, str(value))
+        except TypeError:
+            return str(value)
+
+    def _show(self, value):
+        self._value = value
+        self._current_value = self.label_of(value)
+        self._text_label.configure(text=self._current_value)
+
+    def _value_written(self, *_):
+        try:
+            self._show(self._value_variable.get())
+        except tkinter.TclError:
+            pass
+
+    def _store(self, value):
+        self._show(value)
+        if self._value_variable is not None and self._value_variable.get() != value:
+            self._value_variable.set(value)
+
+    def _dropdown_callback(self, value: str):
+        value = self._to_value.get(value, value)
+        self._store(value)
+        if self._command is not None:
+            self._command(value)
+
+    def set(self, value):
+        try:
+            if value not in self._to_label and value in self._to_value:
+                value = self._to_value[value]
+        except TypeError:
+            pass
+        self._store(value)
+
+    def get(self):
+        return self._value
+
+    def cget(self, attribute_name: str):
+        if attribute_name == 'variable':
+            return self._value_variable
+        return super().cget(attribute_name)
+
+    def destroy(self):
+        if self._value_variable is not None and self._value_trace is not None:
+            try:
+                self._value_variable.trace_remove('write', self._value_trace)
+            except tkinter.TclError:
+                pass
+            self._value_trace = None
+        super().destroy()
+
+
+def option_menu(parent, values, labels=None, **kw):
+    """Drop-down, 36 px high, with a fixed width (``width=``, default 140) and a chevron arrow.
+
+    (1.7.0) With ``labels`` (a list parallel to ``values`` or a dict value -> label) the menu
+    shows the labels and stores the values (``LabeledOptionMenu``); without, the 1.6.0 widget.
+    """
     kw.setdefault('height', CONTROL_H)
     kw.setdefault('font', font('body'))
     kw.setdefault('dropdown_font', font('body'))
     kw.setdefault('dynamic_resizing', False)
+    if labels is not None:
+        return LabeledOptionMenu(parent, list(values), labels, **kw)
     return AppOptionMenu(parent, values=list(values), **kw)
+
+
+def menu_width(parent, labels, size='md'):
+    """(1.7.0) The width (logical px) an ``option_menu`` needs to show its widest label in full:
+    the text, the label's 1 px border on each side, the left inset and the chevron area."""
+    scale = _scaling(parent) or 1.0
+    measure = _measure_font(parent, font('caption' if size == 'sm' else 'body'))
+    labels = list(labels.values()) if isinstance(labels, dict) else list(labels)
+    widest = max((measure.measure(str(text)) for text in labels), default=0)
+    try:
+        radius = ctk.ThemeManager.theme['CTkOptionMenu']['corner_radius']
+    except (KeyError, TypeError):
+        radius = RADIUS
+    inset = max(radius, 3) + CONTROL_H + 3        # CTkOptionMenu's left padding and its chevron column
+    return int(-(-(widest + 2) // scale)) + inset
 
 
 class AppCheckBox(ctk.CTkCheckBox):
@@ -1212,7 +1324,7 @@ class Tabs(ctk.CTkFrame):
     given and returns one, else to the tab frame itself (final-fix-ui, polish-function-3).
     """
 
-    def __init__(self, master, names, command=None, focus=None, **kw):
+    def __init__(self, master, names, command=None, focus=None, labels=None, **kw):
         kw.setdefault('fg_color', SURFACE)
         kw.setdefault('corner_radius', RADIUS_CARD)
         kw.setdefault('border_width', 1)
@@ -1225,8 +1337,11 @@ class Tabs(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         names = list(names)
-        self._bar = ctk.CTkSegmentedButton(self, values=list(names), height=34, font=font('body'),
-                                           command=self._clicked)
+        # (1.7.0) ``labels`` (dict id -> label, or a list parallel to names): the bar shows the
+        # labels, every call keeps using the ids.
+        self._labels = dict(labels) if isinstance(labels, dict) else dict(zip(names, labels)) if labels else {}
+        self._bar = ctk.CTkSegmentedButton(self, values=[self._tab_label(name) for name in names], height=34,
+                                           font=font('body'), command=self._clicked)
         self._bar.grid(row=0, column=0, sticky='w', padx=16, pady=(14, 10))
         for name in names:
             self._make(name)
@@ -1243,7 +1358,18 @@ class Tabs(ctk.CTkFrame):
             self._gate()
         return frame
 
-    def _clicked(self, name):
+    def _tab_label(self, name):
+        """(1.7.0) What the bar shows for tab id ``name``."""
+        return self._labels.get(name, name)
+
+    def _tab_id(self, shown):
+        """(1.7.0) The tab id of a bar value (a label; an id is accepted as it is)."""
+        if shown in self._frames:
+            return shown
+        return next((name for name in self._frames if self._tab_label(name) == shown), shown)
+
+    def _clicked(self, shown):
+        name = self._tab_id(shown)
         self.set(name)
         if self._command is not None:
             self._command(name)
@@ -1252,7 +1378,7 @@ class Tabs(ctk.CTkFrame):
         """The frame of tab ``name``; the tab is created when it does not exist yet."""
         if name in self._frames:
             return self._frames[name]
-        self._bar.insert(len(self._frames), name)
+        self._bar.insert(len(self._frames), self._tab_label(name))
         frame = self._make(name)
         if not self._current:
             self.set(name)
@@ -1269,7 +1395,7 @@ class Tabs(ctk.CTkFrame):
         frame = self.tab(name)
         self._current = name
         frame.tkraise()
-        self._bar.set(name)
+        self._bar.set(self._tab_label(name))
         self._gate()
         others = [other for key, other in self._frames.items() if key != name]
         if any(focus_inside(self, other) for other in others):
@@ -1294,6 +1420,69 @@ class Tabs(ctk.CTkFrame):
 
 def tabs(parent, names, **kw):
     return Tabs(parent, names, **kw)
+
+
+class LabeledSegmentedButton(ctk.CTkSegmentedButton):
+    """(1.7.0, I18N.md 7) A ``CTkSegmentedButton`` that shows labels and stores values: ``command``
+    gets the value, ``get()`` returns it and ``set()`` takes a value (a label is accepted too).
+    ``cget('values')`` gives the shown labels, ``stored_values`` the values."""
+
+    def __init__(self, master, values, labels, command=None, **kw):
+        self.stored_values = list(values)
+        self._to_label, self._to_value = _label_maps(self.stored_values, labels)
+        self._value_command = command
+        super().__init__(master, values=[self._to_label[value] for value in self.stored_values],
+                         command=self._chosen, **kw)
+        # (final fix round 1, zh-1) A segment that grows to its text can get an odd physical width;
+        # its rounded end is then drawn one px short and the bar colour shows as a thin line beside
+        # the last segment's corners.  Every segment is kept at an even physical width.
+        for button in self._buttons_dict.values():
+            tkinter.Misc.bind(button, '<Configure>', lambda _event, b=button: self._even_later(b), add='+')
+
+    def _even_later(self, button):
+        try:
+            if button.winfo_width() % 2:
+                button.after_idle(self._make_even, button)
+        except tkinter.TclError:
+            pass
+
+    @staticmethod
+    def _make_even(button):
+        try:
+            width = button.winfo_width()
+            if width > 1 and width % 2:
+                button.configure(width=(width + 1) / (_scaling(button) or 1.0))
+        except (tkinter.TclError, ValueError):
+            pass
+
+    def label_of(self, value):
+        try:
+            return self._to_label.get(value, str(value))
+        except TypeError:
+            return str(value)
+
+    def _chosen(self, shown):
+        if self._value_command is not None:
+            self._value_command(self._to_value.get(shown, shown))
+
+    def set(self, value, from_variable_callback=False, from_button_callback=False):
+        if from_button_callback or (value not in self._to_label and value in self._to_value):
+            shown = value            # a click hands over the label of the segment
+        else:
+            shown = self.label_of(value)
+        super().set(shown, from_variable_callback, from_button_callback)
+
+    def get(self):
+        shown = super().get()
+        return self._to_value.get(shown, shown)
+
+
+def segmented(parent, values, labels, command=None, **kw):
+    """(1.7.0) A segmented choice (the appearance and language rows) that shows ``labels`` (a list
+    parallel to ``values`` or a dict value -> label) and hands ``command`` the stored value."""
+    kw.setdefault('height', 32)
+    kw.setdefault('font', font('body'))
+    return LabeledSegmentedButton(parent, values, labels, command=command, **kw)
 
 
 # ---------------------------------------------------------------- tables
@@ -1548,9 +1737,7 @@ class AppTable(ttk.Treeview):
         try:
             if self.winfo_width() <= 1 or not self.winfo_viewable():
                 return None
-            scale = _scaling(self)
-            # The cell padding of the style on both sides, and a little air before the next column.
-            spare = 2 * max(0, round(10 * scale) - 4) + round(4 * scale)
+            spare = cell_spare(_scaling(self))
             return {key: int(self.column(key, 'width')) - spare for key in self['columns']}
         except tkinter.TclError:
             return None
@@ -1609,6 +1796,12 @@ def _take(sizes, budget, start=0, stop=None):
         used += sizes[start + count]
         count += 1
     return count, used
+
+
+def cell_spare(scale):
+    """Physical px a table cell keeps beside its text (AppTable's cut): the cell padding of the
+    style on both sides, and a little air before the next column."""
+    return 2 * max(0, round(10 * scale) - 4) + round(4 * scale)
 
 
 def _cut_cell(text, width_of, room, middle=False, common=None):
@@ -1732,7 +1925,14 @@ def _refit(label_widget):
         # not a width the owner sees.  It is refitted when it is mapped (<Map>, bound in fit()).
         if label_widget.winfo_width() > 1 and label_widget.winfo_viewable():
             measure = _measure_font(label_widget, label_widget.cget('font')).measure
-            shown = _ellipsize(shown, measure, _fit_room(label_widget))
+            room = _fit_room(label_widget)
+            # (final fix round 3, ENV3-1) A shorter form of this very text (fit_alternatives) is shown
+            # whole instead of the text cut; without one, or when none fits, the text is cut as before.
+            alternatives = getattr(label_widget, '_fit_alternatives', None)
+            if alternatives and alternatives[0] == full and measure(shown) > room:
+                shown = next((text.replace('\n', ' ') for text in alternatives[1]
+                              if measure(text.replace('\n', ' ')) <= room), shown)
+            shown = _ellipsize(shown, measure, room)
         if shown != label_widget.cget('text'):
             label_widget._fit_write(text=shown)     # the label's own configure: the cut text is not a new full text
     except tkinter.TclError:
@@ -1774,6 +1974,14 @@ def fit(label, text):
         _bind_outer(label, '<Map>', lambda event: _refit(label))
     label._fit_text = '' if text is None else str(text)
     _refit(label)
+
+
+def fit_alternatives(label, text, alternatives=()):
+    """(final fix round 3, ENV3-1) Shorter forms of ``text`` for a label managed by ``fit``, longest
+    first: while the label's full text is ``text`` and does not fit, the first form that fits whole
+    is shown instead of ``text`` cut with '…' (``full_text`` stays ``text``).  Set it before the
+    label gets ``text``; no alternatives (or another full text) restore plain cutting."""
+    label._fit_alternatives = (str(text), tuple(str(form) for form in alternatives)) if alternatives else None
 
 
 def full_text(label):

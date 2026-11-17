@@ -5,12 +5,15 @@ most 200 lines per tick into the tagged text box.  Never import studio here at m
 """
 from __future__ import annotations
 
+import functools
 import os
 import re
+import string
 import tkinter as tk
 from tkinter import messagebox
 
 import customtkinter as ctk
+import i18n
 import paths
 import ui_theme
 
@@ -22,6 +25,34 @@ _ENGINE_PREFIX = re.compile(r'^\[[\w:]+\]')
 _SLEEPING = re.compile(r'^\[[\w:]+\] Sleeping [\d.]+ seconds')
 _ERROR_STARTS = ('此链接未完成', '此链接无法开始', '更新失败', '网页采集未完成', '订阅检查失败', '界面错误', '设置未保存',
                  '错误：', '无法启动下载引擎')
+_OK_STARTS = ('文件已保存', '下载完成')
+# (1.7.0, I18N.md 8.6) The header of a job that left links unfinished shares its start with the
+# header after 清除未完成 ('任务结束 · 1 条成功'): zh keeps the 1.6.0 rule of classify, the other
+# languages look for the template's longest literal part after its start (en 'Unfinished:').
+_FINISHED_UNFINISHED = 'download.title.finished_unfinished'
+
+
+def _literals(text):
+    try:
+        return [literal for literal, _field, _spec, _conversion in string.Formatter().parse(text)]
+    except ValueError:
+        return [text]
+
+
+@functools.lru_cache(maxsize=1)
+def _starts():
+    """(error starts, ok starts, ((start, part), ...) of the unfinished header in the other
+    languages): the 1.6.0 Chinese starts extended with i18n.prefixes() of the tagged keys."""
+    headers = i18n.all_values(_FINISHED_UNFINISHED)
+    shared = {_literals(text)[0] for text in headers}
+    errors = _ERROR_STARTS + tuple(start for start in i18n.prefixes('error') if start not in shared)
+    oks = _OK_STARTS + tuple(i18n.prefixes('ok'))
+    special = []
+    for text in headers[1:]:
+        parts = [part for part in _literals(text) if part]
+        if len(parts) > 1:
+            special.append((parts[0], max(parts[1:], key=len).strip()))
+    return errors, oks, tuple(special)
 
 
 def classify(line):
@@ -32,16 +63,19 @@ def classify(line):
         return 'warn'
     if _ENGINE_PREFIX.match(line) or 'Deleting original file' in line:
         return 'dim'
-    if line.startswith(_ERROR_STARTS) or (line.startswith('任务结束') and '未完成' in line):
+    errors, oks, special = _starts()
+    if line.startswith(errors) or (line.startswith('任务结束') and '未完成' in line):
         return 'error'
-    if line.startswith(('文件已保存', '下载完成')):
+    if any(line.startswith(start) and part in line[len(start):] for start, part in special):
+        return 'error'
+    if line.startswith(oks):
         return 'ok'
     return 'app'
 
 
 class LogUI:
     def build_log_page(self):
-        page = self.page('logs', '任务日志', '解析、下载、转换和错误信息，集中查看。')
+        page = self.page('logs', i18n.t('nav.logs'), i18n.t('log.subtitle'))
         page.grid_rowconfigure(1, weight=1)
         card = self.card(page)
         card.grid(row=1, column=0, sticky='nsew')
@@ -50,15 +84,20 @@ class LogUI:
         header = ctk.CTkFrame(card, fg_color='transparent', corner_radius=0)
         header.grid(row=0, column=0, sticky='ew', padx=ui_theme.CARD_PAD, pady=(12, 8))
         header.grid_columnconfigure(0, weight=1)
-        ui_theme.label(header, '运行记录', role='heading', anchor='w').grid(row=0, column=0, sticky='w')
+        ui_theme.label(header, i18n.t('log.heading'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
         self.errors_only = False
-        self.errors_button = ui_theme.button(header, '只看错误', self.toggle_errors, kind='ghost', size='sm')
+        # (1.7.0, I18N.md 10.1, 10.4) A button is as wide as its label needs (never below the 72 px
+        # of 1.6.0); the errors button fits both of its labels, so it keeps its width when it toggles.
+        errors_width = max(ui_theme.fitted_width(header, i18n.t('log.errors_only'), 'sm'),
+                           ui_theme.fitted_width(header, i18n.t('log.show_all'), 'sm'))
+        self.errors_button = ui_theme.button(header, i18n.t('log.errors_only'), self.toggle_errors, kind='ghost',
+                                             size='sm', width=errors_width)
         self.errors_button.grid(row=0, column=1, padx=(4, 0))
-        ui_theme.button(header, '复制全部', self.copy_log, kind='ghost', size='sm').grid(row=0, column=2, padx=(4, 0))
-        ui_theme.button(header, '打开日志文件', self.open_log_file, kind='ghost', size='sm').grid(row=0, column=3,
-                                                                                                padx=(4, 0))
-        ui_theme.button(header, '清空显示', self.clear_log_view, kind='ghost', size='sm').grid(row=0, column=4,
-                                                                                            padx=(4, 0))
+        for column, (text, command) in enumerate(((i18n.t('log.copy_all'), self.copy_log),
+                                                  (i18n.t('log.open_file'), self.open_log_file),
+                                                  (i18n.t('log.clear_view'), self.clear_log_view)), 2):
+            ui_theme.button(header, text, command, kind='ghost', size='sm',
+                            width=ui_theme.fitted_width(header, text, 'sm')).grid(row=0, column=column, padx=(4, 0))
         self.logs = ui_theme.textbox(card, state='disabled', wrap='word', font=ui_theme.font('caption'))
         self.logs.grid(row=1, column=0, sticky='nsew', padx=ui_theme.CARD_PAD, pady=(0, ui_theme.CARD_PAD))
         self.refresh_log_colors()
@@ -106,10 +145,13 @@ class LogUI:
             self.logs.tag_config(name, foreground=ui_theme.resolve(token))
 
     def append_log(self, line):
-        line = str(line)
+        # (1.7.0, I18N.md 8.6) Core lines arrive in canonical Chinese and are shown (and written to
+        # download.log) in the running language; UI lines are already localized and raw engine
+        # output is unknown to localize: both pass unchanged.  zh: the line itself.
+        line = i18n.localize(str(line))
         proxy = self.proxy.get().strip() if hasattr(self, 'proxy') else ''
         if proxy:
-            line = line.replace(proxy, '[代理]')
+            line = line.replace(proxy, i18n.t('core.proxy_mask'))
         self.logger.info(line)
         self.log_buffer.append(line)
 
@@ -138,7 +180,7 @@ class LogUI:
         self.errors_only = not self.errors_only
         for name in ('dim', 'app', 'ok'):
             self.logs.tag_config(name, elide=self.errors_only)
-        self.errors_button.configure(text='显示全部' if self.errors_only else '只看错误')
+        self.errors_button.configure(text=i18n.t('log.show_all') if self.errors_only else i18n.t('log.errors_only'))
         if follow:
             self.logs.see('end')
 
@@ -150,7 +192,7 @@ class LogUI:
         try:
             os.startfile(paths.log_file())
         except OSError as error:
-            messagebox.showwarning('无法打开日志文件', str(error), parent=self)
+            messagebox.showwarning(i18n.t('dialog.open_log_failed'), str(error), parent=self)
 
     def clear_log_view(self):
         self.logs.configure(state='normal')

@@ -2053,6 +2053,50 @@
         "queued",
         {
           "first_index": 2,
+          "items": [
+            {
+              "format": "audio_mp3",
+              "options": {
+                "archive_contexts": {},
+                "archive_root": "",
+                "batch_safe": true,
+                "cookies": "",
+                "embed_cover": true,
+                "embed_metadata": true,
+                "mode": "音频 · MP3 320K",
+                "naming": "title",
+                "output": "<OUT>",
+                "playlist": false,
+                "proxy": "",
+                "referers": {},
+                "resolution": "最佳",
+                "skip_downloaded": false,
+                "subtitles": false
+              },
+              "url": "https://example.invalid/a"
+            },
+            {
+              "format": "audio_mp3",
+              "options": {
+                "archive_contexts": {},
+                "archive_root": "",
+                "batch_safe": true,
+                "cookies": "",
+                "embed_cover": true,
+                "embed_metadata": true,
+                "mode": "音频 · MP3 320K",
+                "naming": "title",
+                "output": "<OUT>",
+                "playlist": false,
+                "proxy": "",
+                "referers": {},
+                "resolution": "最佳",
+                "skip_downloaded": false,
+                "subtitles": false
+              },
+              "url": "https://example.invalid/b"
+            }
+          ],
           "overrides": {
             "https://example.invalid/a": {
               "archive_contexts": {},
@@ -2284,6 +2328,16 @@
         "queued",
         {
           "first_index": 2,
+          "items": [
+            {
+              "format": "audio_best",
+              "url": "https://example.invalid/b"
+            },
+            {
+              "format": "audio_best",
+              "url": "https://example.invalid/c"
+            }
+          ],
           "total": 3,
           "urls": [
             "https://example.invalid/b",
@@ -2433,6 +2487,12 @@
         "queued",
         {
           "first_index": 3,
+          "items": [
+            {
+              "format": "audio_best",
+              "url": "https://example.invalid/c"
+            }
+          ],
           "total": 3,
           "urls": [
             "https://example.invalid/c"
@@ -2879,6 +2939,12 @@
         "queued",
         {
           "first_index": 3,
+          "items": [
+            {
+              "format": "audio_best",
+              "url": "https://example.invalid/a"
+            }
+          ],
           "total": 3,
           "urls": [
             "https://example.invalid/a"

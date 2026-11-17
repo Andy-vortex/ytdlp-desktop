@@ -869,7 +869,9 @@ class UpdaterTests(unittest.TestCase):
         def default_probe(command, timeout):
             return GOOD_PROBE
         started = time.monotonic()
+        # (1.7.0) The pretend exe is no program: its "--version" run is stood in for (c5-updater a).
         with mock.patch('urllib.request.urlopen', FakeGitHub()), \
+                mock.patch.object(updater, '_version_output', return_value=(0, b'2099.01.02\r\n', b'')), \
                 mock.patch.object(updater, '_probe_output', side_effect=probe or default_probe):
             updater.EngineUpdater(lambda kind, value: self.events.append((kind, value)), self.cancelled,
                                   ['--ignore-config']).run()

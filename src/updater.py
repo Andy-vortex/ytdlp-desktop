@@ -11,7 +11,9 @@ import itertools
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import stat
 import subprocess
 import threading
 import time
@@ -43,6 +45,13 @@ MSG_SAVE = '新版引擎无法保存到磁盘（{reason}），已保留现有引
 INSTALL_RETRY = 3.0            # seconds os.replace is repeated while another program holds a file
 INSTALL_PAUSE = 0.1
 MSG_RECEIPT = '新版引擎的校验记录无法写入（{reason}），已改用内置引擎，请稍后重试更新。'
+# (1.7.0, c5-updater a) The new engine must first run normally: "--version" ends with exit code 0 and
+# prints its version (yt-dlp's 2026.10.21 or a nightly's 2026.10.21.123456) as the first line.
+MSG_START = '新版引擎无法正常运行（{reason}），已保留现有引擎。'
+VERSION_LINE = re.compile(r'^\d{4}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$')
+# (1.7.0, c5-updater c) 恢复内置引擎 when the updated engine is still the one in use afterwards.
+MSG_RESTORE = '无法删除已更新的引擎（文件可能正被其他程序使用或为只读），目前仍在使用已更新的引擎。请稍后再试。'
+RESTORE_RETRY = 1.0            # seconds a delete is repeated while another program holds the file
 
 _cache = None                  # (key, path): the last engine_path() answer for an updated engine
 _cache_lock = threading.Lock()
@@ -169,22 +178,90 @@ def cleanup() -> None:
     paths.purge_engine_downloads(procutil.alive)
 
 
-def restore_bundled() -> None:
-    """Go back to the engine that ships with the app: delete the updated exe and its receipt."""
-    folder = paths.engines_dir()
-    # The receipt first: without it the updated exe is never used, even if it cannot be deleted now.
-    for name in ('yt-dlp.json', 'yt-dlp.exe'):
+def _delete_engine_file(path):
+    """One try to delete ``path``; a read-only file loses its read-only attribute first (the owner
+    asked for the delete).  None when the file is gone afterwards, else the OSError."""
+    try:
+        path.unlink()
+        return None
+    except FileNotFoundError:
+        return None
+    except PermissionError as error:
         try:
-            (folder / name).unlink()
+            if os.path.isfile(path) and not os.path.islink(path) and not os.access(path, os.W_OK):
+                os.chmod(path, stat.S_IWRITE)
+                path.unlink()
+                return None
         except FileNotFoundError:
-            pass
-        except OSError as error:
-            applog.get('updater').warning('could not delete %s: %s', name, error)
+            return None
+        except OSError as again:
+            return again
+        return error
+    except OSError as error:
+        return error
+
+
+def _remove_updated() -> bool:
+    """Delete the updated exe and its receipt; True when the bundled engine is the one in use
+    afterwards (engine_path()).  Never raises.
+
+    Either file gone is enough: without its receipt the updated exe is never used, and a receipt
+    without its exe neither.  Only when both stay, a file another program holds for a moment
+    (sharing violation) is tried again, for RESTORE_RETRY seconds in all; a running exe (access
+    denied, WinError 5) is not, since it stays held until that program ends.  restore_bundled runs
+    on the window's thread (1.7.0 fix round 1): restoring while a download runs on the updated
+    engine no longer blocks it for a second per file."""
+    folder = paths.engines_dir()
+    names = ('yt-dlp.json', 'yt-dlp.exe')   # the receipt first
+    deadline = time.monotonic() + RESTORE_RETRY
+    while True:
+        errors = {}
+        for name in names:
+            error = _delete_engine_file(folder / name)
+            if error is not None:
+                errors[name] = error
+        if len(errors) < len(names):
+            break
+        passing = [error for error in errors.values()
+                   if isinstance(error, PermissionError) and getattr(error, 'winerror', None) != 5]
+        if not passing or time.monotonic() >= deadline:
+            break
+        time.sleep(INSTALL_PAUSE)
+    for name, error in errors.items():
+        applog.get('updater').warning('could not delete %s: %s', name, error)
     invalidate()
+    try:
+        return engine_path() == paths.VENDOR / 'yt-dlp.exe'
+    except Exception:
+        return False
+
+
+def restore_bundled() -> bool:
+    """Go back to the engine that ships with the app: delete the updated exe and its receipt.
+
+    Returns True when the bundled engine is really the one in use afterwards (an exe that cannot be
+    deleted now is out of use once its receipt is gone).  When both stay (held by another program,
+    read-only and not changeable), the updated engine is still used: UpdateError(MSG_RESTORE), so
+    that the caller never reports a restore that did not happen (c5-updater c)."""
+    if not _remove_updated():
+        raise UpdateError(MSG_RESTORE)
+    return True
 
 
 def _probe_output(command, timeout) -> bytes:
-    """Everything an engine prints when it is started with ``command`` (the app's options, no URL).
+    """Everything an engine prints when it is started with ``command`` (the app's options, no URL):
+    stdout, a line break and stderr of _engine_run (the exit code is not part of it)."""
+    _code, output, errors = _engine_run(command, timeout)
+    return output + b'\n' + errors
+
+
+def _version_output(exe, timeout):
+    """(exit code, stdout, stderr) of '<exe> --ignore-config --version' (_engine_run)."""
+    return _engine_run([str(exe), '--ignore-config', '--version'], timeout)
+
+
+def _engine_run(command, timeout):
+    """(exit code, stdout, stderr) of an engine started with ``command``.
 
     Raises OSError when it does not start and subprocess.TimeoutExpired when it does not
     end in time.  A onefile engine is two processes that share the output pipes: after a
@@ -214,7 +291,7 @@ def _probe_output(command, timeout) -> bytes:
             except (subprocess.TimeoutExpired, OSError, ValueError):
                 pass   # something outside the tree still holds a pipe; it is not waited for
             raise
-        return (output or b'') + b'\n' + (errors or b'')
+        return process.returncode, output or b'', errors or b''
     finally:
         job.close()
         if run_tmp:
@@ -253,7 +330,9 @@ class EngineUpdater:
             self.emit('update_progress', {'fraction': received / total, 'downloaded': received, 'total': total})
 
     def _probe(self, exe):
-        """Refuse an engine that does not know one of the options this app passes."""
+        """Refuse an engine that does not run normally (_check_start), then one that does not know
+        one of the options this app passes."""
+        self._check_start(exe)
         try:
             output = _probe_output([str(exe), *self.probe_args], PROBE_TIMEOUT).decode('utf-8', errors='replace')
         except subprocess.TimeoutExpired as error:
@@ -267,6 +346,27 @@ class EngineUpdater:
             applog.get('updater').warning('the new engine rejects an option: %s', ' '.join(output.split())[:300])
             raise UpdateError(MSG_PROBE)
 
+    def _check_start(self, exe):
+        """(1.7.0, c5-updater a) "--version" must end with exit code 0 and print a version as its
+        first line; an engine that starts and ends with an error (a damaged or blocked unpacking,
+        a crash) is refused with MSG_START before the option check, which cannot tell such an
+        engine from a good one (both end without the "no such option" text)."""
+        log = applog.get('updater')
+        try:
+            code, output, errors = _version_output(exe, PROBE_TIMEOUT)
+        except subprocess.TimeoutExpired as error:
+            log.warning('the new engine did not answer --version within %s s', error.timeout)
+            raise UpdateError(MSG_START.format(reason=f'{error.timeout:g} 秒内没有结束')) from error
+        except OSError as error:
+            log.warning('the new engine could not be started: %s', error)
+            raise UpdateError(MSG_START.format(reason='无法启动')) from error
+        text = output.decode('utf-8', errors='replace').strip()
+        first = text.splitlines()[0].strip() if text else ''
+        if code != 0 or not VERSION_LINE.match(first):
+            log.warning('the new engine failed --version (exit code %s): %s', code,
+                        ' '.join((text + ' ' + errors.decode('utf-8', errors='replace')).split())[:300])
+            raise UpdateError(MSG_START.format(reason=f'退出码 {code}' if code != 0 else '没有给出版本号'))
+
     def _install(self, temporary, target) -> bool:
         """os.replace(temporary, target), repeated for about INSTALL_RETRY seconds while Windows
         reports a sharing violation (a virus scanner or indexer that briefly holds the new or
@@ -274,6 +374,10 @@ class EngineUpdater:
         changed); OSError when it still fails at the end."""
         deadline = time.monotonic() + INSTALL_RETRY
         while True:
+            # (1.7.0, c5-updater b) Stop wins before every attempt: a Stop during the pause below
+            # is seen before the next os.replace, also when the other program lets go meanwhile.
+            if self.cancelled.is_set():
+                return False
             try:
                 os.replace(temporary, target)
                 return True
@@ -361,7 +465,7 @@ class EngineUpdater:
                 # The new exe is in place, but without its receipt it is never used, and an
                 # updated engine that was installed before is gone.  Leave a clean state (the
                 # bundled engine) and say so, instead of claiming that nothing changed.
-                restore_bundled()
+                _remove_updated()
                 raise UpdateError(MSG_RECEIPT.format(reason=_file_reason(error))) from error
             finally:
                 invalidate()

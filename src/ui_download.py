@@ -10,6 +10,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
+import re
 import threading
 import time
 import tkinter as tk
@@ -20,12 +21,14 @@ import customtkinter as ctk
 import applog
 import engine
 import formats
+import i18n
 import procutil
 import ui_theme
 import unfinished as unfinished_list
 import urls as links
 from progress import SmoothProgressBar
 from engine import APP_DIR, RESOLUTIONS, LinkTooLong, Options, Runner, build_command
+from library_ui import require_job
 
 # 1.5.1 colour names, now ui_theme tokens ((light, dark) pairs); studio re-exports them.
 BG, WHITE, INK, MUTED = ui_theme.BG, ui_theme.SURFACE, ui_theme.INK, ui_theme.MUTED
@@ -74,9 +77,11 @@ CLEARED_DETAIL = '已从未完成列表移除'
 FINISHED_UNFINISHED = '未完成的链接已保留，可点“重试未完成”，或右键单条重试。'
 CLEARED_METRICS = '未完成记录已清除；已下载的文件不受影响，右键单条仍可重试。'
 # The header of a job that left links unfinished ('任务结束 · 1 条成功，1 条未完成'), and what
-# 清除未完成 puts in place of its unfinished part ('任务结束 · 1 条成功，未完成记录已清除').
+# 清除未完成 puts in place of its unfinished part (1.6.0: '，未完成记录已清除'; 1.7.0: nothing).
 FINISHED_PREFIX = '任务结束 · '
-CLEARED_TITLE_SUFFIX = '，未完成记录已清除'
+# (1.7.0 U5) Nothing: the header becomes '任务结束 · 1 条成功', which fits at 1000x740; the metrics
+# line below it says 未完成记录已清除 in full (CLEARED_METRICS).
+CLEARED_TITLE_SUFFIX = ''
 REASON_WORDS = {'failed': '上次失败', 'stopped': '已停止', 'unstarted': '未开始', 'blocked': 'YouTube 验证'}
 HINT_DEFAULT = 'Ctrl+V 粘贴 · Ctrl+Enter 开始'
 PLACEHOLDER = '在这里粘贴视频或音频链接，每行一条'
@@ -95,6 +100,23 @@ BOT_TEXT_COOKIES = 'YouTube 仍要求验证：cookies 可能已过期。可稍�
 PROXY_REASON = '无法连接代理或网站，请检查代理地址'
 # (polish, ui-daily-flow-4) A job whose links were all downloaded before.
 SKIPPED_TEXT = '这些链接以前下载过，文件仍在；右键可“仍然下载”。'
+# (1.7.0, I18N.md 8.1) The constants above keep their Chinese values (tests and other modules read
+# them); what the page shows comes from the catalogs.  The keys of REASON_WORDS and FOREIGN_TEXT:
+REASON_KEYS = {'failed': 'download.reason.failed', 'stopped': 'download.chip.stopped',
+               'unstarted': 'download.chip.unstarted', 'blocked': 'download.reason.blocked'}
+FOREIGN_KEYS = {'update': ('download.foreign.update.title', 'download.foreign.update.metrics',
+                           'download.foreign.update.stop', 'download.foreign.update.placeholder'),
+                'collect': ('download.foreign.collect.title', 'download.foreign.collect.metrics',
+                            'download.foreign.collect.stop', 'download.foreign.collect.placeholder')}
+# (I18N.md 10.5) The title of the task header keeps at least this many logical px; the stats line
+# beside it drops its unfinished part when it would leave less.  STATS_GAPS: the padding of the
+# stats label and the three buttons right of it.
+TITLE_MIN = 160
+STATS_GAPS = 40
+# The start button's icon (ui_theme.icon's default size) and the spacing CTkButton puts between
+# an image and its text (logical px).
+START_ICON = 16
+IMAGE_SPACING = 6
 
 
 def bytes_text(value):
@@ -118,7 +140,7 @@ def decode_link_file(path):
     """Text of a link file, decoded like engine.read_url_file (UTF-16 with BOM, UTF-8, GB18030; 5 MB)."""
     path = Path(path)
     if path.stat().st_size > 5 * 1024 * 1024:
-        raise ValueError('链接文件超过 5 MB，请分成多个较小的 TXT 文件导入。')
+        raise ValueError(i18n.t('core.links.file_too_large'))
     data = path.read_bytes()
     encodings = ('utf-16',) if data.startswith((b'\xff\xfe', b'\xfe\xff')) else ('utf-8-sig', 'gb18030')
     for encoding in encodings:
@@ -126,7 +148,7 @@ def decode_link_file(path):
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise ValueError('无法读取文本编码，请将链接文件另存为 UTF-8。')
+    raise ValueError(i18n.t('core.links.encoding'))
 
 
 def link_title(url):
@@ -151,6 +173,22 @@ def history_value(kind, value, proxied):
     return value
 
 
+def text_button_width(parent, text, size='md'):
+    """The logical width an AppButton needs to show ``text`` in full (ui_theme.fitted_width's
+    measure: the text, the label's 1 px border on each side and the corner columns), without
+    fitted_width's 72 px floor."""
+    scale = ui_theme._scaling(parent) or 1.0
+    measure = ui_theme._measure_font(parent, ui_theme.font('caption' if size == 'sm' else 'body'))
+    needed = measure.measure(text) + 2 + 2 * round(ui_theme.RADIUS * scale)
+    return int(-(-needed // scale))
+
+
+def stored_text(key, **values):
+    """The canonical (Chinese) text of ``key``: what the history stores in every language (H2),
+    e.g. the job title placeholder '3 条 · 音频 · MP3 320K' that history_title localizes later."""
+    return i18n.all_values(key)[0].format(**values)
+
+
 def synthetic_done():
     """The terminal event the UI makes up for a download worker that ended without one (WP4.md section C)."""
     return {'success': 0, 'failed': 0, 'files': [], 'cancelled': True, 'failed_urls': [], 'pending_urls': []}
@@ -167,7 +205,7 @@ def _cancel(widget, job):
 class DownloadUI:
     # ================================================================ page
     def build_download_page(self):
-        page = self.page('download', '下载中心', '添加链接，选择格式，剩下的交给下载器。', max_width=ui_theme.PAGE_MAX)
+        page = self.page('download', i18n.t('nav.download'), i18n.t('download.subtitle'), max_width=ui_theme.PAGE_MAX)
         page.grid_rowconfigure(2, weight=1)
         pad = ui_theme.CARD_PAD
         self.row_pool = []
@@ -181,6 +219,13 @@ class DownloadUI:
         self.foreign_saved = None
         self.job_ended = False              # the task rows are those of a job that has ended (footer text)
         self.metrics_base = ''              # metrics text of the running item before the active title is added
+        self.job_summary = None             # (success, unfinished) of the job that ended last (I18N.md 8.7)
+        # The stats line: (full text, its shorter form or forms): the running stats without the unfinished
+        # part, or the shorter forms of a finished job's stats (final fix round 1, ENV-1); None: none.
+        self.stats_texts = ('', None)
+        # (final fix round 3, ENV3-1) A finished job's stats form is chosen by the title (English only).
+        self.stats_title_first = False
+        self.stats_after = None
         self.clip_text = self.clip_digest = ''
         self._placeholder_shown = False
         # ------------------------------------------------ composer card
@@ -191,21 +236,25 @@ class DownloadUI:
         top = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
         top.grid(row=0, column=0, sticky='ew', padx=pad, pady=(12, 8))
         top.grid_columnconfigure(2, weight=1)
-        ui_theme.label(top, '添加下载链接', role='heading', anchor='w').grid(row=0, column=0, sticky='w')
-        self.link_count = ui_theme.chip(top, '0 条链接', 'info')
+        ui_theme.label(top, i18n.t('download.heading'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
+        self.link_count = ui_theme.chip(top, i18n.t('download.link_count', count=0), 'info')
         self.link_count.grid(row=0, column=1, sticky='w', padx=(10, 0))
         self.link_hint = ui_theme.label(top, '', role='caption', text_color=ui_theme.MUTED, anchor='e')
         self.link_hint.grid(row=0, column=2, sticky='ew', padx=(12, 4))
-        ui_theme.fit(self.link_hint, HINT_DEFAULT)
-        paste = ui_theme.button(top, '粘贴', self.paste, kind='ghost', size='sm', width=60)
+        ui_theme.fit(self.link_hint, i18n.t('download.hint.default'))
+        # (1.7.0, I18N.md 10.1) Fixed widths grow to fit their label: max(<1.6.0 width>, fitted width).
+        paste = ui_theme.button(top, i18n.t('download.paste'), self.paste, kind='ghost', size='sm',
+                                width=self._fitted(top, 60, 'download.paste', size='sm'))
         paste.grid(row=0, column=3, padx=(4, 0))
-        importer = ui_theme.button(top, '导入 TXT', self.import_txt, kind='ghost', size='sm', width=60)
+        importer = ui_theme.button(top, i18n.t('download.import'), self.import_txt, kind='ghost', size='sm',
+                                   width=self._fitted(top, 60, 'download.import', size='sm'))
         importer.grid(row=0, column=4, padx=(4, 0))
-        clear = ui_theme.button(top, '清空', self.clear_links, kind='ghost', size='sm', width=60)
+        clear = ui_theme.button(top, i18n.t('download.clear_box'), self.clear_links, kind='ghost', size='sm',
+                                width=self._fitted(top, 60, 'download.clear_box', size='sm'))
         clear.grid(row=0, column=5, padx=(4, 0))
         self.urls = ui_theme.textbox(composer, height=72, wrap='none')
         self.urls.grid(row=1, column=0, sticky='ew', padx=pad)
-        self.link_placeholder = ui_theme.label(self.urls, PLACEHOLDER, text_color=ui_theme.FAINT,
+        self.link_placeholder = ui_theme.label(self.urls, i18n.t('download.placeholder'), text_color=ui_theme.FAINT,
                                                fg_color=ui_theme.SURFACE_ALT, anchor='w', cursor='xterm')
         self.link_placeholder.bind('<Button-1>', self._placeholder_clicked)
         self.urls.bind('<KeyRelease>', self._links_typed)
@@ -221,36 +270,54 @@ class DownloadUI:
         self.clip_bar.grid_columnconfigure(0, weight=1)
         self.clip_label = ui_theme.label(self.clip_bar, '', role='caption', anchor='w')
         self.clip_label.grid(row=0, column=0, sticky='ew', padx=(12, 8), pady=4)
-        ui_theme.button(self.clip_bar, '添加', self.accept_clipboard, kind='ghost', size='sm',
-                        width=60).grid(row=0, column=1, pady=4)
-        ui_theme.button(self.clip_bar, '忽略', self.ignore_clipboard, kind='ghost', size='sm',
-                        width=60).grid(row=0, column=2, padx=(4, 8), pady=4)
+        ui_theme.button(self.clip_bar, i18n.t('download.clip.add'), self.accept_clipboard, kind='ghost', size='sm',
+                        width=self._fitted(self.clip_bar, 60, 'download.clip.add', size='sm')).grid(row=0, column=1,
+                                                                                                    pady=4)
+        ui_theme.button(self.clip_bar, i18n.t('download.clip.ignore'), self.ignore_clipboard, kind='ghost', size='sm',
+                        width=self._fitted(self.clip_bar, 60, 'download.clip.ignore', size='sm')).grid(
+                            row=0, column=2, padx=(4, 8), pady=4)
         self.clip_bar.grid_remove()
         choices = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
         choices.grid(row=4, column=0, sticky='ew', padx=pad, pady=(10, 0))
         choices.grid_columnconfigure(4, weight=1)
-        self.format_menu = ui_theme.option_menu(choices, [formats.by_id(i).label for i in formats.MENU_ORDER],
-                                                variable=self.format, command=self.on_format, width=250)
+        # (1.7.0, I18N.md 7) The menus show labels and keep the stored values: self.format holds the zh
+        # Preset.label (formats.by_label reads it), self.resolution the stored resolution.
+        values = [formats.by_id(i).label for i in formats.MENU_ORDER]
+        labels = [i18n.label('format', value) for value in values]
+        self.format_menu = ui_theme.option_menu(choices, values, labels=labels, variable=self.format,
+                                                command=self.on_format,
+                                                width=max(250, ui_theme.menu_width(choices, labels)))
         self.format_menu.grid(row=0, column=0, sticky='w')
-        self.quality_menu = ui_theme.option_menu(choices, list(RESOLUTIONS), variable=self.resolution, width=120)
+        labels = [i18n.label('resolution', value) for value in RESOLUTIONS]
+        self.quality_menu = ui_theme.option_menu(choices, list(RESOLUTIONS), labels=labels, variable=self.resolution,
+                                                 width=max(120, ui_theme.menu_width(choices, labels)))
         self.quality_menu.grid(row=0, column=1, sticky='w', padx=(8, 0))
-        self.subtitle_check = ui_theme.checkbox(choices, '内嵌字幕', variable=self.subtitles)
+        self.subtitle_check = ui_theme.checkbox(choices, i18n.t('download.subtitles'), variable=self.subtitles)
         self.subtitle_check.grid(row=0, column=2, sticky='w', padx=(16, 0))
-        playlist = ui_theme.checkbox(choices, '整个播放列表', variable=self.playlist)
+        playlist = ui_theme.checkbox(choices, i18n.t('download.playlist'), variable=self.playlist)
         playlist.grid(row=0, column=3, sticky='w', padx=(16, 0))
         destination = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
         destination.grid(row=5, column=0, sticky='ew', padx=pad, pady=(8, 14))
         destination.grid_columnconfigure(1, weight=1)
-        self.destination_label = ui_theme.label(destination, '保存到', role='caption', text_color=ui_theme.MUTED)
+        self.destination_label = ui_theme.label(destination, i18n.t('download.save_to'), role='caption',
+                                                text_color=ui_theme.MUTED)
         self.destination_label.grid(row=0, column=0, padx=(0, 8))
         self.output_entry = ui_theme.entry(destination, textvariable=self.output)
         self.output_entry.grid(row=0, column=1, sticky='ew')
-        browse = ui_theme.button(destination, '更改', self.browse, width=60)
+        browse = ui_theme.button(destination, i18n.t('download.change'), self.browse,
+                                 width=self._fitted(destination, 60, 'download.change'))
         browse.grid(row=0, column=2, padx=(8, 0))
-        self.open_output_button = ui_theme.button(destination, '打开文件夹', self.open_folder, width=92)
+        self.open_output_button = ui_theme.button(destination, i18n.t('download.open_folder'), self.open_folder,
+                                                  width=self._fitted(destination, 92, 'download.open_folder'))
         self.open_output_button.grid(row=0, column=3, padx=(8, 0))
-        self.start_button = ui_theme.button(destination, '开始下载', self.start, kind='primary', width=132,
-                                            image=ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white'), compound='left')
+        # The start button fits the wider of its two labels plus its icon: it never changes width
+        # when a job starts (I18N.md 10.1).
+        icon = ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white')
+        extra = START_ICON + IMAGE_SPACING if icon is not None else 0
+        self.start_button = ui_theme.button(destination, i18n.t('download.start'), self.start, kind='primary',
+                                            width=self._fitted(destination, 132, 'download.start', 'download.start.queue',
+                                                               extra=extra),
+                                            image=icon, compound='left')
         self.start_button.grid(row=0, column=4, padx=(16, 0))
         self.controls += [self.format_menu, self.subtitle_check, playlist, self.output_entry, browse]
         self.input_controls += [self.urls, paste, importer, clear, self.start_button]
@@ -266,20 +333,36 @@ class DownloadUI:
         self.task_header = header
         self.current_title = ui_theme.label(header, '', role='heading', anchor='w')
         self.current_title.grid(row=0, column=0, sticky='ew')
-        ui_theme.fit(self.current_title, '准备就绪')
-        self.queue_stats = ui_theme.label(header, '暂无任务', role='caption', text_color=ui_theme.MUTED)
+        ui_theme.fit(self.current_title, i18n.t('download.title.ready'))
+        # (final fix round 3, ENV3-1) While a finished job's stats form depends on the title (English),
+        # a new title text measures the room again (ui_theme.fit's configure, wrapped once more).
+        fitted_configure = self.current_title.configure
+
+        def configure_title(require_redraw=False, **kwargs):
+            fitted_configure(require_redraw=require_redraw, **kwargs)
+            if 'text' in kwargs and getattr(self, 'stats_title_first', False):
+                self._stats_resized()
+        self.current_title.configure = configure_title
+        self.queue_stats =ui_theme.label(header, i18n.t('download.stats.none'), role='caption',
+                                          text_color=ui_theme.MUTED)
         self.queue_stats.grid(row=0, column=1, padx=(12, 0))
-        self.retry_button = ui_theme.button(header, '重试未完成', lambda: self.retry_failed(), state='disabled')
+        self.retry_button = ui_theme.button(header, i18n.t('download.retry_unfinished'), lambda: self.retry_failed(),
+                                            state='disabled')
         self.retry_button.grid(row=0, column=2, padx=(12, 0))
-        self.clear_unfinished_button = ui_theme.button(header, '清除未完成', self.clear_unfinished, kind='ghost',
-                                                       size='sm', state='disabled')
+        self.clear_unfinished_button = ui_theme.button(header, i18n.t('download.clear_unfinished'),
+                                                       self.clear_unfinished, kind='ghost', size='sm', state='disabled')
         self.clear_unfinished_button.grid(row=0, column=3, padx=(8, 0))
-        self.stop_button = ui_theme.button(header, '停止', self.stop, kind='danger', width=64, state='disabled')
+        self.stop_button = ui_theme.button(header, i18n.t('common.stop'), self.stop, kind='danger',
+                                           width=self._fitted(header, 64, 'common.stop'), state='disabled')
         self.stop_button.grid(row=0, column=4, padx=(8, 0))
         self.metrics = ui_theme.label(header, '', role='caption', text_color=ui_theme.MUTED, anchor='w',
                                       height=ui_theme.LABEL_H['caption'])
         self.metrics.grid(row=1, column=0, columnspan=5, sticky='ew')
-        ui_theme.fit(self.metrics, METRICS_IDLE)
+        ui_theme.fit(self.metrics, i18n.t('download.metrics.idle'))
+        # (I18N.md 10.5) The room of the stats line is measured again when the header or one of the
+        # buttons beside it (重试未完成 (N), the stop button's label) changes width.
+        for widget in (header, self.retry_button, self.clear_unfinished_button, self.stop_button):
+            tk.Misc.bind(widget, '<Configure>', self._stats_resized, add='+')
         self.notice_bar = ctk.CTkFrame(tasks, fg_color=ui_theme.SURFACE_ALT, corner_radius=8)
         self.notice_bar.grid(row=1, column=0, sticky='ew', padx=pad, pady=(8, 0))
         self.notice_bar.grid_columnconfigure(0, weight=1)
@@ -295,13 +378,20 @@ class DownloadUI:
         self.task_list = ui_theme.scroll_area(tasks, height=100)
         self.task_list.grid(row=3, column=0, sticky='nsew', padx=8, pady=(0, 8))
         self.task_list.grid_columnconfigure(0, weight=1)
-        self.empty = ui_theme.empty_state(tasks, '你的下载任务会显示在这里', ui_theme.ICON_DOWNLOAD)
+        self.empty = ui_theme.empty_state(tasks, i18n.t('download.empty'), ui_theme.ICON_DOWNLOAD)
         self.empty.grid(row=3, column=0, sticky='nsew', padx=8, pady=(0, 8))
         self.row_footer = ui_theme.label(self.task_list, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
         for sequence in ('<MouseWheel>', '<B1-Motion>'):
             self.bind(sequence, self._list_touched, add='+')
         self.bind_download_keys()
         self.playlist.trace_add('write', lambda *_: self.links_changed())
+
+    @staticmethod
+    def _fitted(parent, width, *keys, size='md', extra=0):
+        """(1.7.0, I18N.md 10.1) max(``width``, the width the widest of the ``keys``' texts needs
+        on an AppButton, plus ``extra`` logical px for an image).  Unlike ui_theme.fitted_width
+        there is no 72 px floor: a 1.6.0 width below 72 whose label fits stays as it was."""
+        return max([width] + [text_button_width(parent, i18n.t(key), size) + extra for key in keys])
 
     # ================================================================ composer
     def on_format(self, _value=None):
@@ -371,21 +461,21 @@ class DownloadUI:
             self.sync_placeholder()
             playlist = self.playlist.get()
             result = links.normalize(links.extract_urls(self.box_text()), playlist)
-            self.link_count.set(f'{len(result.urls)} 条链接')
+            self.link_count.set(i18n.t('download.link_count', count=len(result.urls)))
             kinds = result.kinds
             note = ''
             if result.dropped_lists and not playlist:
-                note = f'已忽略 {result.dropped_lists} 条链接里的播放列表/合辑参数，只下载当前这一首。'
+                note = i18n.t('download.note.lists_dropped', count=result.dropped_lists)
             elif playlist and kinds.get('mix'):
-                note = '自动合辑（RD…）不会整个下载，只下载当前这一首。'
+                note = i18n.t('download.note.mix')
             elif kinds.get('playlist') and not playlist:
-                note = '含播放列表链接：现在只会下载第 1 个；勾选“整个播放列表”可下载全部。'
+                note = i18n.t('download.note.playlist')
             elif kinds.get('search'):
-                note = '含搜索结果页链接：只会下载第一个结果。'
+                note = i18n.t('download.note.search')
             elif kinds.get('channel'):
-                note = '含频道链接：只会下载第一个视频。'
+                note = i18n.t('download.note.channel')
             elif result.duplicates:
-                note = f'{result.duplicates} 条重复链接已合并。'
+                note = i18n.t('download.note.duplicates', count=result.duplicates)
             ui_theme.fit(self.link_note, note)
             if note:
                 self.link_note.grid()
@@ -395,7 +485,7 @@ class DownloadUI:
             applog.get('ui').exception('links_changed failed')
 
     def set_hint(self, text):
-        default = '' if getattr(self, 'foreign_activity', None) else HINT_DEFAULT
+        default = '' if getattr(self, 'foreign_activity', None) else i18n.t('download.hint.default')
         ui_theme.fit(self.link_hint, text or default)
         _cancel(self, self.hint_after)
         self.hint_after = None
@@ -409,7 +499,7 @@ class DownloadUI:
     def add_links(self, text, source='paste'):
         """Append the links found in ``text`` that are not in the box yet; returns how many were added."""
         if self.busy and self.operation != 'download':
-            self.set_hint('当前任务结束后才能添加链接')
+            self.set_hint(i18n.t('download.hint.busy'))
             return 0
         found = links.extract_urls(text or '')
         playlist = self.playlist.get()
@@ -428,16 +518,16 @@ class DownloadUI:
             self.urls.insert('end', prefix + '\n'.join(added))
             self.urls.see('end')
         if not found:
-            hint = '文件里没有找到链接' if source == 'import' else '剪贴板里没有链接'
+            hint = i18n.t('download.hint.no_links_file') if source == 'import' else i18n.t('download.hint.no_links_clip')
         elif skipped:
-            hint = f'已添加 {len(added)} 条 · 跳过 {skipped} 条重复'
+            hint = i18n.t('download.hint.added_skipped', added=len(added), skipped=skipped)
         else:
-            hint = f'已添加 {len(added)} 条'
+            hint = i18n.t('download.hint.added', added=len(added))
         if source == 'import' and found:
             empty = sum(1 for line in (text or '').splitlines()
                         if line.strip() and not line.lstrip().startswith(links.COMMENT) and not links.extract_urls(line))
             if empty:
-                hint += f' · {empty} 行没有链接'
+                hint += i18n.t('download.hint.empty_lines', empty=empty)
         self.set_hint(hint)
         self.links_changed()
         return len(added)
@@ -452,7 +542,7 @@ class DownloadUI:
         try:
             text = self.clipboard_get()
         except tk.TclError:
-            self.set_hint('剪贴板里没有链接')
+            self.set_hint(i18n.t('download.hint.no_links_clip'))
             return 0
         return self.add_links(text, 'paste')
 
@@ -473,22 +563,25 @@ class DownloadUI:
         self.links_changed()
 
     def import_txt(self):
-        path = filedialog.askopenfilename(parent=self, title='导入链接列表', filetypes=[('文本文件', '*.txt'), ('所有文件', '*.*')])
+        path = filedialog.askopenfilename(parent=self, title=i18n.t('dialog.import.title'),
+                                          filetypes=[(i18n.t('dialog.filetype.text_files'), '*.txt'),
+                                                     (i18n.t('dialog.filetype.all'), '*.*')])
         if not path:
             return
         try:
             text = decode_link_file(path)
         except (ValueError, OSError) as error:
-            messagebox.showwarning('导入未完成', str(error), parent=self)
+            messagebox.showwarning(i18n.t('dialog.import.failed'), i18n.localize(str(error)), parent=self)
             return
         self.add_links(text, 'import')
 
     def _box_menu(self, event):
         menu = self._menu()
         usable = 'disabled' if self.busy and self.operation != 'download' else 'normal'
-        menu.add_command(label='粘贴', command=self.paste, state=usable)
-        menu.add_command(label='全选', command=lambda: self.urls.tag_add('sel', '1.0', 'end-1c'))
-        menu.add_command(label='清空', command=self.clear_links, state=usable)
+        menu.add_command(label=i18n.t('download.paste'), command=self.paste, state=usable)
+        menu.add_command(label=i18n.t('download.menu.select_all'),
+                         command=lambda: self.urls.tag_add('sel', '1.0', 'end-1c'))
+        menu.add_command(label=i18n.t('download.clear_box'), command=self.clear_links, state=usable)
         self._popup(menu, event)
         return 'break'
 
@@ -523,7 +616,7 @@ class DownloadUI:
     def refresh_destination(self):
         enabled = self.archive_enabled.get()
         self.output_entry.configure(textvariable=self.archive_root if enabled else self.output)
-        self.destination_label.configure(text='资料库' if enabled else '保存到')
+        self.destination_label.configure(text=i18n.t('download.archive_to') if enabled else i18n.t('download.save_to'))
 
     # ================================================================ clipboard chip (ux-3, safe form)
     def check_clipboard(self):
@@ -550,7 +643,7 @@ class DownloadUI:
                 return self.hide_clipboard()
             self.clip_text, self.clip_digest = text, digest
             self.clip_bar.grid()
-            ui_theme.fit(self.clip_label, f'剪贴板中有 {len(fresh)} 条链接：{link_title(fresh[0])}')
+            ui_theme.fit(self.clip_label, i18n.t('download.clip.found', count=len(fresh), title=link_title(fresh[0])))
         except Exception:
             applog.get('ui').exception('clipboard check failed')
 
@@ -622,8 +715,9 @@ class DownloadUI:
             self.schedule_clipboard_check()
 
     def set_window_title(self, prefix=''):
+        title = i18n.t('app.title')         # TITLE in zh (I18N.md 8.5)
         try:
-            self.title(f'{prefix} — {TITLE}' if prefix else TITLE)
+            self.title(f'{prefix} — {title}' if prefix else title)
         except tk.TclError:
             pass
 
@@ -635,7 +729,8 @@ class DownloadUI:
                 return
         except (KeyError, tk.TclError):
             return
-        self.set_window_title(f'✓ 已完成 {success} 条' if not unfinished else f'✗ {unfinished} 条未完成')
+        self.set_window_title(i18n.t('window.title.done', success=success) if not unfinished
+                              else i18n.t('window.title.unfinished', unfinished=unfinished))
         try:
             procutil.flash_window(int(self.frame(), 16))
         except (ValueError, tk.TclError):
@@ -654,7 +749,7 @@ class DownloadUI:
                                   self.metrics.cget('text_color'), self.progress.target)
         self.foreign_activity = foreign
         if foreign is not None:
-            title, metrics, stop, placeholder = FOREIGN_TEXT[foreign]
+            title, metrics, stop, placeholder = (i18n.t(key) for key in FOREIGN_KEYS[foreign])
             self.current_title.configure(text=title)
             self.metrics.configure(text=metrics, text_color=ui_theme.MUTED)
             self.stop_button.configure(text=stop)
@@ -670,10 +765,10 @@ class DownloadUI:
                 self.current_title.configure(text=saved[0])
                 self.metrics.configure(text=saved[1], text_color=saved[2])
                 self.progress.set(saved[3], immediate=True)
-            self.stop_button.configure(text='停止')
-            ui_theme.fit(self.link_hint, HINT_DEFAULT)
+            self.stop_button.configure(text=i18n.t('common.stop'))
+            ui_theme.fit(self.link_hint, i18n.t('download.hint.default'))
             self.urls.configure(text_color=ui_theme.INK, fg_color=ui_theme.SURFACE_ALT)
-            self.link_placeholder.configure(text=PLACEHOLDER, fg_color=ui_theme.SURFACE_ALT)
+            self.link_placeholder.configure(text=i18n.t('download.placeholder'), fg_color=ui_theme.SURFACE_ALT)
 
     # ================================================================ notices
     def show_notice(self, kind, text, actions=(), timeout=None):
@@ -700,6 +795,17 @@ class DownloadUI:
         self.notice_kind = None
         if kind != 'bot' and self.bot_retry is not None and self.bot_retry.get('deadline') is not None:
             self.render_bot_notice()
+        if kind != 'library' and self.notice_kind is None and getattr(self, 'library_waiting', False):
+            self.show_library_notice()      # (1.7.0 U1) the library is still locked
+
+    # Hints other pages put on this page; their texts are the download page's (catalog i18n_download).
+    def hint_history_loaded(self):
+        """The links of a history record were put into the box (library page, 继续未完成 / 载入)."""
+        self.set_hint(i18n.t('download.hint.history_loaded'))
+
+    def hint_subscription_check(self, name):
+        """A subscription check holds the window; ``name`` is the subscription's shown name."""
+        ui_theme.fit(self.link_hint, i18n.t('download.hint.subscription_check', name=name))
 
     def undo_launch(self):
         self.hide_notice('undo')
@@ -746,23 +852,26 @@ class DownloadUI:
             playlist = own.playlist if own is not None else False
             self.row_model.append({'index': len(self.row_model), 'url': url, 'key': links.link_key(url, playlist),
                                    'options': own, 'state': 'waiting', 'title': link_title(url),
-                                   'detail': '等待解析', 'chip': None, 'tone': None, 'icon': None, 'path': '',
-                                   'error': '', 'entry': None})
+                                   'detail': i18n.t('download.detail.waiting'), 'chip': None, 'tone': None,
+                                   'icon': None, 'path': '', 'error': '', 'entry': None})
         self._append_tail(tail)
         self._rows_changed(start)
         self.refresh_task_view()
 
     def _unfinished_model(self, entry):
         """The row model of a stored unfinished entry (state 'unfinished', below the job's rows)."""
-        reason = REASON_WORDS.get(entry.get('reason'), '上次失败')
+        # (1.7.0, I18N.md 9.3) The reason word and the format in the running language; the entry
+        # keeps its stored values (format key, canonical mode string).
+        reason = i18n.t(REASON_KEYS.get(entry.get('reason'), 'download.reason.failed'))
         try:
-            label = formats.by_key(entry.get('format', '')).label
+            label = i18n.label('format', formats.by_key(entry.get('format', '')).label)
         except ValueError:
-            label = str((entry.get('options') or {}).get('mode', ''))
+            label = i18n.label('mode', str((entry.get('options') or {}).get('mode', '')))
         url = entry.get('url', '')
         return {'index': len(self.row_model), 'url': url, 'key': entry.get('key', ''),
                 'options': self._entry_options(entry, log=False), 'state': 'unfinished',
-                'title': entry.get('title') or link_title(url), 'detail': f'{reason} · {label}',
+                'title': entry.get('title') or link_title(url),
+                'detail': i18n.t('download.detail.unfinished', reason=reason, format=label),
                 'chip': None, 'tone': None, 'icon': None, 'path': '',
                 'error': entry.get('error', ''), 'entry': entry, 'tail': True}
 
@@ -929,7 +1038,8 @@ class DownloadUI:
 
     def _paint_row(self, row, model):
         state = model['state']
-        icon_code, tone, chip_text = STATE_LOOK.get(state, STATE_LOOK['waiting'])
+        icon_code, tone, _chip = STATE_LOOK.get(state, STATE_LOOK['waiting'])
+        chip_text = i18n.label('row_state', state if state in STATE_LOOK else 'waiting')
         tone = model.get('tone') or tone
         icon_code = model.get('icon') or icon_code
         chip_text = model.get('chip') or chip_text
@@ -974,16 +1084,16 @@ class DownloadUI:
                 # (final-fix-ui, polish-function-4) "会照常下载" only until the job has ended; then
                 # the hidden rows that did not finish point at 重试未完成.
                 if not self.job_ended:
-                    parts.append(f'还有 {hidden_job} 条未显示，会照常下载')
+                    parts.append(i18n.t('download.footer.hidden_running', hidden=hidden_job))
                 elif self.unfinished and any(model['state'] in RETRYABLE and not model.get('cleared')
                                              for model in self.row_model[len(self.rows):start]):
-                    parts.append(f'还有 {hidden_job} 条未显示，可点“重试未完成”')
+                    parts.append(i18n.t('download.footer.hidden_retry', hidden=hidden_job))
                 else:
-                    parts.append(f'还有 {hidden_job} 条未显示')
+                    parts.append(i18n.t('download.footer.hidden', hidden=hidden_job))
             if hidden_tail:
-                parts.append(f'另有 {hidden_tail} 条未完成记录未显示' if hidden_job
-                             else f'还有 {hidden_tail} 条未完成记录未显示')
-            ui_theme.fit(self.row_footer, '；'.join(parts))
+                parts.append(i18n.t('download.footer.tail_other', hidden=hidden_tail) if hidden_job
+                             else i18n.t('download.footer.tail', hidden=hidden_tail))
+            ui_theme.fit(self.row_footer, i18n.sep('clause_sep').join(parts))
             self.row_footer.grid(row=len(self.rows), column=0, sticky='ew', padx=12, pady=(4, 8))
         else:
             self.row_footer.grid_remove()
@@ -1048,38 +1158,136 @@ class DownloadUI:
 
     def refresh_stats(self, final=None):
         if final is not None:
-            self.queue_stats.configure(text=final)
+            # (final fix round 1, ENV-1) The finished job's stats follow the room rule of 10.5 too.
+            forms = self.final_stats_forms()
+            self._show_stats(final, short=forms[1:] if final == forms[0] else None, title_first=self._title_first())
             return
         if not self.row_model:
-            self.queue_stats.configure(text='暂无任务')
+            self._show_stats(i18n.t('download.stats.none'))
             return
         states = [row['state'] for row in self.row_model]
         if all(state == 'unfinished' for state in states):
-            self.queue_stats.configure(text=f'未完成 {len(states)} 条')
+            self._show_stats(i18n.t('download.stats.unfinished', count=len(states)))
             return
         if not self.busy and not states.count('waiting') and not states.count('active'):
-            self.queue_stats.configure(text=self.final_stats())
+            forms = self.final_stats_forms()
+            self._show_stats(forms[0], short=forms[1:], title_first=self._title_first())
             return
-        text = (f"完成 {states.count('done')} · 进行中 {states.count('active')} · "
-                f"等待 {states.count('waiting')}")
+        text = i18n.t('download.stats.running', done=states.count('done'), active=states.count('active'),
+                      waiting=states.count('waiting'))
         if states.count('unfinished'):
-            text += f" · 未完成 {states.count('unfinished')}"
-        self.queue_stats.configure(text=text)
+            # (I18N.md 10.5) Without its unfinished part when the title would get less than TITLE_MIN:
+            # 重试未完成 (N) beside it shows the same count.
+            self._show_stats(text + i18n.t('download.stats.running_unfinished', unfinished=states.count('unfinished')),
+                             short=text)
+            return
+        self._show_stats(text)
+
+    def _show_stats(self, text, short=None, title_first=False):
+        """Show the stats line; ``short`` is its form without the unfinished part (10.5), or a
+        sequence of ever shorter forms (a finished job's stats, final fix round 1 ENV-1): the first
+        of ``text`` and the shorter forms that leaves the title its room is shown, else the last.
+
+        (final fix round 3, ENV3-1) ``title_first`` (a finished job's stats in English, _title_first):
+        the first form that leaves the task title room for its whole text is shown, else the shortest
+        one, so a longer stats form never cuts a title that a shorter one would show in full, and a
+        wider window never gives the title less room than a narrower one."""
+        if short is not None and not isinstance(short, str):
+            short = tuple(form for form in short if form != text) or None
+        self.stats_texts = (text, short)
+        self.stats_title_first = bool(title_first and short is not None)
+        if short is not None:
+            forms = (short,) if isinstance(short, str) else short
+            if self.stats_title_first:
+                need = self._title_need()
+                text = next((form for form in (text,) + tuple(forms[:-1]) if self._stats_fit(form, need)), forms[-1])
+            elif not self._stats_fit(text):
+                text = next((form for form in forms[:-1] if self._stats_fit(form)), forms[-1])
+        if self.queue_stats.cget('text') != text:
+            self.queue_stats.configure(text=text)
+
+    def _stats_fit(self, text, title=0):
+        """Whether ``text`` leaves the task title at least TITLE_MIN logical px of the header, and at
+        least ``title`` physical px when given (always True while the header has no width yet: a
+        window that is not shown)."""
+        try:
+            width = self.task_header.winfo_width()
+            if width <= 1:
+                return True
+            scale = ui_theme._scaling(self.task_header) or 1.0
+            buttons = sum(button.winfo_reqwidth() for button in (self.retry_button, self.clear_unfinished_button,
+                                                                  self.stop_button) if button.winfo_manager())
+            room = width - buttons - round(STATS_GAPS * scale) - max(round(TITLE_MIN * scale), title)
+            measure = ui_theme._measure_font(self.queue_stats, self.queue_stats.cget('font'))
+            return measure.measure(text) + 2 <= room
+        except (tk.TclError, AttributeError):
+            return True
+
+    @staticmethod
+    def _title_first():
+        """(final fix round 3, ENV3-1) A finished job's stats form is chosen by the title in English
+        only: the Chinese header keeps the room rule of round 1 (its 1.6.0 look, pixel for pixel)."""
+        return i18n.language() != 'zh'
+
+    def _title_alternatives(self, title, forms=()):
+        """(final fix round 3, ENV3-1) English: the shorter forms (longest first) a finished job's
+        ``title`` shows whole when it would be cut; the counts they leave out are in the stats line
+        and on 重试未完成 (N) beside it.  Chinese: none (its header looks as before)."""
+        forms = [form for form in forms if form != title] if self._title_first() else []
+        ui_theme.fit_alternatives(self.current_title, title, forms)
+
+    def _title_need(self):
+        """Physical px the task title needs to show its whole text (ui_theme.fit's room of the label)."""
+        try:
+            label = self.current_title
+            scale = ui_theme._scaling(label) or 1.0
+            inset = min(label.cget('corner_radius'), round(label.cget('height') / 2))
+            measure = ui_theme._measure_font(label, label.cget('font'))
+            return measure.measure(ui_theme.full_text(label).replace('\n', ' ')) + 2 * round(inset * scale) + 2
+        except (tk.TclError, AttributeError):
+            return 0
+
+    def _stats_resized(self, _event=None):
+        """The header changed width, or a button beside the stats did: measure the room again
+        once the layout is done (at most one pending check)."""
+        if getattr(self, 'stats_after', None) is None:
+            try:
+                self.stats_after = self.after_idle(self._stats_refit)
+            except tk.TclError:
+                pass
+
+    def _stats_refit(self):
+        self.stats_after = None
+        text, short = self.stats_texts
+        if short is not None:
+            self._show_stats(text, short, title_first=self.stats_title_first)
 
     def final_stats(self):
         """The stats line of a finished job, counted from the rows (polish, ui-daily-flow-1): its
         未完成 counts every row that 重试未完成 would retry, the unfinished rows below the job included."""
+        return self.final_stats_forms()[0]
+
+    def final_stats_forms(self):
+        """(final fix round 1, ENV-1) The finished job's stats line and its shorter forms, longest
+        first: the full line; without the 跳过 / 已移出 parts; only 成功 and 共 (the unfinished count
+        is on 重试未完成 (N) beside it, the skipped and removed rows keep their chips).  The room rule
+        of I18N.md 10.5 shows the first one that leaves the task title TITLE_MIN px."""
         states = [row['state'] for row in self.row_model]
         cleared = sum(1 for row in self.row_model if row.get('cleared'))
         # (a row still waiting or active when the job has ended did not finish either)
         unfinished = sum((row['state'] in RETRYABLE or row['state'] in ('waiting', 'active')) and not row.get('cleared')
                          for row in self.row_model)
-        text = f"成功 {states.count('done')}  /  未完成 {unfinished}  /  共 {len(states)}"
+        base = i18n.t('download.stats.final', done=states.count('done'), unfinished=unfinished, total=len(states))
+        text = base
         if states.count('skipped'):
-            text += f"  /  跳过 {states.count('skipped')}"
+            text += i18n.t('download.stats.final_skipped', skipped=states.count('skipped'))
         if cleared:
-            text += f"  /  已移出 {cleared}"
-        return text
+            text += i18n.t('download.stats.final_cleared', cleared=cleared)
+        forms = [text]
+        for form in (base, i18n.t('download.stats.final_short', done=states.count('done'), total=len(states))):
+            if form not in forms:
+                forms.append(form)
+        return forms
 
     def select_row(self, index):
         previous, self.selected_row = self.selected_row, index
@@ -1100,7 +1308,7 @@ class DownloadUI:
             else:
                 procutil.reveal_in_folder(path)
         except OSError as error:
-            messagebox.showerror('无法打开文件', str(error), parent=self)
+            messagebox.showerror(i18n.t('dialog.open_file_failed'), str(error), parent=self)
 
     def row_context(self, event, index):
         if index is None or not 0 <= index < len(self.row_model):
@@ -1113,32 +1321,37 @@ class DownloadUI:
 
         def enabled(flag):
             return 'normal' if flag else 'disabled'
-        menu.add_command(label='播放', command=lambda: self.open_row(index),
+        menu.add_command(label=i18n.t('download.menu.play'), command=lambda: self.open_row(index),
                          state=enabled(state in ('done', 'skipped') and bool(path)))
-        menu.add_command(label='在文件夹中显示', command=lambda: procutil.reveal_in_folder(path),
+        menu.add_command(label=i18n.t('download.menu.show'), command=lambda: procutil.reveal_in_folder(path),
                          state=enabled(bool(path)))
-        menu.add_command(label='复制链接', command=lambda: self.copy_text(model['url']))
-        menu.add_command(label='查看原因', command=lambda: self.show_row_reason(index),
+        menu.add_command(label=i18n.t('download.menu.copy_link'), command=lambda: self.copy_text(model['url']))
+        menu.add_command(label=i18n.t('download.menu.reason'), command=lambda: self.show_row_reason(index),
                          state=enabled(state in REASON_STATES))
         menu.add_separator()
-        menu.add_command(label='重试此条', command=lambda: self.retry_row(index),
+        menu.add_command(label=i18n.t('download.menu.retry'), command=lambda: self.retry_row(index),
                          state=enabled(state in RETRYABLE and not other_busy))
-        menu.add_command(label='仍然下载', command=lambda: self.retry_row(index),
+        menu.add_command(label=i18n.t('download.menu.anyway'), command=lambda: self.retry_row(index),
                          state=enabled(state == 'skipped' and not other_busy))
-        menu.add_command(label='从列表移除', command=lambda: self.remove_row(index), state=enabled(not self.busy))
+        menu.add_command(label=i18n.t('download.menu.remove'), command=lambda: self.remove_row(index),
+                         state=enabled(not self.busy))
         self._popup(menu, event)
 
     def row_reason(self, index):
         """The whole reason of an unfinished row (the row itself may show it cut) and the engine's error."""
         model = self.row_model[index]
         reason = str(model.get('detail') or '')
-        error = str(model.get('error') or '')
-        return reason + (f'\n\n引擎原始错误：\n{error}' if error and error not in reason else '')
+        # (final fix round 3, SWEEP-1) The error of a link that could not start is a core text (a cookies,
+        # proxy, source-address or link-length check of build_command; also stored in failed-downloads.json):
+        # shown in the running language.  A raw yt-dlp line matches no core text and stays as it is (9.2).
+        error = i18n.localize(str(model.get('error') or ''))
+        return reason + (i18n.t('dialog.reason.engine_error', error=error) if error and error not in reason else '')
 
     def show_row_reason(self, index):
         if index is None or not 0 <= index < len(self.row_model):
             return
-        messagebox.showinfo('未完成原因', f"{self.row_model[index]['title']}\n\n{self.row_reason(index)}", parent=self)
+        messagebox.showinfo(i18n.t('dialog.reason.title'), f"{self.row_model[index]['title']}\n\n{self.row_reason(index)}",
+                            parent=self)
 
     def copy_text(self, text):
         self.clipboard_clear()
@@ -1154,7 +1367,7 @@ class DownloadUI:
                                         referers={url: entry['referer']} if entry.get('referer') else {})
         except (ValueError, TypeError, KeyError) as error:
             if log:
-                self.append_log(f'无法重试这条记录：{url}（{error}）')
+                self.append_log(i18n.t('log.retry_failed', url=url, error=i18n.localize(str(error))))
             return None
         if options.archive_root:
             options = dataclasses.replace(options, archive_contexts=self.collection_contexts([url]))
@@ -1182,9 +1395,9 @@ class DownloadUI:
                     self.cancel_bot_retry()
                 self.append_rows(accepted, options)
                 self.totals_changed()
-                self.set_hint(f'已加入队列 {len(accepted)} 条')
+                self.set_hint(i18n.t('download.hint.queued', count=len(accepted)))
             else:
-                self.set_hint('这些链接已经在队列里')
+                self.set_hint(i18n.t('download.hint.already_queued'))
             return
         if self.busy:
             return
@@ -1204,7 +1417,8 @@ class DownloadUI:
                     entries = unfinished_list.remove(engine.load_unfinished(), {signature})
                     engine.save_unfinished(entries)
             except OSError as error:
-                messagebox.showwarning('未能移除', str(error), parent=self)
+                # (final fix round 3, SWEEP-2) unfinished.save's own OSError texts are core texts (8.4).
+                messagebox.showwarning(i18n.t('dialog.remove_failed'), i18n.localize(str(error)), parent=self)
                 return
             self.unfinished = entries
             self.refresh_failed_button()
@@ -1258,11 +1472,11 @@ class DownloadUI:
         result = links.normalize(found, playlist)
         output = self.output.get().strip().strip('"').strip()
         if not output:
-            raise ValueError('请选择保存目录。')
+            raise ValueError(i18n.t('error.output_missing'))
         archive = self.archive_enabled.get()
         root = self.archive_root.get().strip().strip('"').strip()
         if archive and not root:
-            raise ValueError('请选择资料库目录。')
+            raise ValueError(i18n.t('download.error.archive_root_missing'))
         referers = {}
         for url in result.urls:
             referer = self.download_referers.get(url) or self.download_referers.get(result.origin.get(url, url))
@@ -1301,7 +1515,8 @@ class DownloadUI:
         try:
             urls, options, origins = self.read_form()
         except (ValueError, OSError) as error:
-            messagebox.showwarning('检查输入', str(error), parent=self)
+            # A core ValueError (urls.parse_download_text) is canonical Chinese (I18N.md 8.4).
+            messagebox.showwarning(i18n.t('dialog.check_input'), i18n.localize(str(error)), parent=self)
             return
         submitted = self.box_text()
         if self.launch(urls, options, origins=origins):
@@ -1310,7 +1525,8 @@ class DownloadUI:
             self.links_changed()
             self.set_hint('')
             self.undo_count = len(urls)
-            self.show_notice('undo', f'已开始下载 {len(urls)} 条', [('恢复刚才的链接', self.undo_launch)], timeout=10000)
+            self.show_notice('undo', i18n.t('download.notice.started', count=len(urls)),
+                             [(i18n.t('download.notice.restore_links'), self.undo_launch)], timeout=10000)
 
     def launch(self, urls, options, overrides=None, origins=None, auto=False):
         """Start a download job; False (nothing changed) when it cannot start."""
@@ -1322,7 +1538,7 @@ class DownloadUI:
             self.cancel_bot_retry()
         try:
             if not urls:
-                raise ValueError('请先粘贴至少一个视频或音频链接。')
+                raise ValueError(i18n.t('core.links.none'))
             folders = {}
             # (final-fix-ui, polish-function-1) Each option set is checked once (with the first link
             # that uses it, and again for each distinct referer, the only per-link part that
@@ -1351,7 +1567,7 @@ class DownloadUI:
             for folder in folders.values():
                 folder.mkdir(parents=True, exist_ok=True)
         except (ValueError, OSError) as error:
-            messagebox.showwarning('检查输入', str(error), parent=self)
+            messagebox.showwarning(i18n.t('dialog.check_input'), i18n.localize(str(error)), parent=self)
             return False
         self.save_settings()
         job_id = None
@@ -1359,10 +1575,15 @@ class DownloadUI:
             data = {**options.to_dict(), 'urls': urls}
             if overrides:
                 data['overrides'] = {url: own.to_dict() for url, own in overrides.items()}
-            job_id = self.library.create_job('download', f'{len(urls)} 条 · {options.mode}', data)
+            # Stored in canonical Chinese in every language (H2); history_title localizes it.
+            title = stored_text('value.job_title.placeholder', count=len(urls), mode=options.mode)
+            library = self.library
+            # (1.7.0 U1) A library locked by another program: the download starts at once and its
+            # record (a PendingJob until then) is written as soon as the lock is gone.
+            job_id = self.history_create(lambda: library.create_job('download', title, data))
         except Exception as error:
             applog.get('ui').exception('create_job failed')
-            self.append_log(f'历史记录写入失败，下载本身不受影响：{error}')
+            self.append_log(i18n.t('log.history_write_failed', error=i18n.localize(str(error))))
         self.download_job = job_id
         try:
             self.job_options = (options, overrides)
@@ -1375,11 +1596,12 @@ class DownloadUI:
             self.animate(True)
             self.active_index = None
             self.clear_wait()
-            self.current_title.configure(text='正在下载')
-            self.metrics.configure(text='正在连接网站…')
+            self.current_title.configure(text=i18n.t('shell.status.downloading'))
+            self.metrics.configure(text=i18n.t('download.metrics.connecting'))
             self.set_window_title()
-            label = formats.by_mode(options.mode).label
-            self.append_log(f'开始任务：{len(urls)} 条链接，{label}，保存到 {options.archive_root or options.output}')
+            label = i18n.label('format', formats.by_mode(options.mode).label)
+            self.append_log(i18n.t('log.task_started', count=len(urls), format=label,
+                                   folder=options.archive_root or options.output))
             proxied = any(str(own.proxy or '').strip() for own in [options, *overrides.values()])
             emit = self.download_emit(job_id, proxied=proxied)
             self.runner = Runner(emit, library=self.library)
@@ -1405,17 +1627,19 @@ class DownloadUI:
             except Exception:
                 applog.get('ui').exception('task list reset failed')
             self.close_history_job(job_id)
-            self.current_title.configure(text='准备就绪')
-            self.metrics.configure(text=METRICS_IDLE)
-            messagebox.showerror('无法开始下载', str(error), parent=self)
+            self.current_title.configure(text=i18n.t('download.title.ready'))
+            self.metrics.configure(text=i18n.t('download.metrics.idle'))
+            messagebox.showerror(i18n.t('dialog.start_failed'), i18n.localize(str(error)), parent=self)
             return False
 
     def close_history_job(self, job_id):
         """Record a synthetic cancelled end for a history job whose worker never ran or died silently."""
         if not job_id:
             return
+        library = self.library
         try:
-            self.library.download_event(job_id, 'done', synthetic_done())
+            # (1.7.0 U1) Behind the job's waiting writes when the library is locked.
+            self.history_write(lambda: library.download_event(require_job(job_id), 'done', synthetic_done()))
         except Exception:
             applog.get('ui').exception('history job %s could not be closed', job_id)
 
@@ -1430,19 +1654,26 @@ class DownloadUI:
         self.run_token += 1
         token = self.run_token
         library = self.library
-        warned = []
+        writer = self.history_writer
+        warned, deferred = [], []
 
         def emit(kind, value):
             if token != self.run_token:
                 return
             try:
                 if job_id and kind in HISTORY_KINDS:
-                    library.download_event(job_id, kind, history_value(kind, value, proxied))
+                    stored = history_value(kind, value, proxied)
+                    # (1.7.0 U1) Written now on this worker thread (long busy timeout), or behind
+                    # the job's waiting writes (its record waits for a locked library): the event
+                    # reaches the window at once either way, and the history gets it in order.
+                    if not writer.run(lambda: library.download_event(require_job(job_id), kind, stored)) and not deferred:
+                        deferred.append(True)
+                        self.events.put(('library_busy', None))     # the window shows its calm notice
             except Exception:
                 applog.get('ui').exception('history write failed (%s)', kind)
                 if not warned:
                     warned.append(True)
-                    self.events.put(('log', '历史记录写入失败，下载本身不受影响。'))
+                    self.events.put(('log', i18n.t('log.history_write_failed_short')))
             finally:
                 self.events.put((kind, value))
         return emit
@@ -1452,11 +1683,11 @@ class DownloadUI:
         try:
             urls, options, origins = self.read_form()
         except (ValueError, OSError) as error:
-            self.set_hint(str(error))
+            self.set_hint(i18n.localize(str(error)))
             return 0
         runner = self.runner
         if runner is None or not hasattr(runner, 'enqueue'):
-            self.set_hint('当前任务结束后才能添加链接')
+            self.set_hint(i18n.t('download.hint.busy'))
             return 0
         runner.origins.update(origins)
         accepted = runner.enqueue(urls, options)
@@ -1466,12 +1697,12 @@ class DownloadUI:
             self.totals_changed()
             self.urls.delete('1.0', 'end')
             self.links_changed()
-            self.set_hint(f'已加入队列 {len(accepted)} 条')
-            self.append_log(f'已加入队列：{len(accepted)} 条链接')
+            self.set_hint(i18n.t('download.hint.queued', count=len(accepted)))
+            self.append_log(i18n.t('log.queued', count=len(accepted)))
         elif runner.closed or runner.cancelled.is_set():
-            self.set_hint('队列刚结束，请再点一次“开始下载”')
+            self.set_hint(i18n.t('download.hint.queue_ended'))
         else:
-            self.set_hint('这些链接已经在队列里')
+            self.set_hint(i18n.t('download.hint.already_queued'))
         return len(accepted)
 
     def record_enqueued(self, runner, accepted, options):
@@ -1493,7 +1724,16 @@ class DownloadUI:
                 base = (getattr(self, 'job_options', None) or (None,))[0]
             own = options.to_dict()
             different = base is None or own != base.to_dict()
-            self.library.extend_job(job, list(accepted), {url: own for url in accepted} if different else None)
+            library, links = self.library, list(accepted)
+            overrides = {url: own for url in accepted} if different else None
+            # (1.7.0 U1) A locked library: written later by the HistoryWriter, in click order.  (A
+            # caller without the window's writer, such as a test's stand-in window, writes at once.)
+            write = getattr(self, 'history_write', None)
+            task = lambda: library.extend_job(require_job(job), links, overrides)      # noqa: E731
+            if write is None:
+                task()
+            else:
+                write(task)
         except Exception:
             applog.get('ui').exception('加入队列: the added links could not be recorded in the history job')
 
@@ -1514,9 +1754,12 @@ class DownloadUI:
     # ================================================================ unfinished list (ux-7)
     def refresh_failed_button(self):
         count = len(self.unfinished)
-        self.retry_button.configure(text=f'重试未完成 ({count})' if count else '重试未完成',
-                                    state='normal' if count and not self.busy else 'disabled')
+        text = i18n.t('download.retry_unfinished_n', count=count) if count else i18n.t('download.retry_unfinished')
+        resized = self.retry_button.cget('text') != text
+        self.retry_button.configure(text=text, state='normal' if count and not self.busy else 'disabled')
         self.clear_unfinished_button.configure(state='normal' if count and not self.busy else 'disabled')
+        if resized and getattr(self, 'stats_texts', ('', None))[1] is not None:
+            self._stats_resized()       # the Retry button changed width: the stats line's room did too
 
     def retry_failed(self, entries=None, auto=False):
         """Retry unfinished entries with their own options; the form, the box and the settings stay as they are."""
@@ -1538,7 +1781,7 @@ class DownloadUI:
             if not url:
                 continue
             if newest.get(url) is not entry:
-                self.append_log(f'同一链接的另一种格式留待下次重试：{url}')
+                self.append_log(i18n.t('log.retry.other_format_later', url=url))
                 continue
             options = self._entry_options(entry)
             if options is not None:
@@ -1554,12 +1797,14 @@ class DownloadUI:
         count = len(self.unfinished)
         if self.busy or not count:
             return
-        if not messagebox.askyesno('清除未完成', f'要移除 {count} 条未完成记录吗？已下载的文件不受影响。', parent=self):
+        if not messagebox.askyesno(i18n.t('download.clear_unfinished'), i18n.t('dialog.clear_unfinished.text', count=count),
+                                   parent=self):
             return
         try:
             engine.save_unfinished([])
         except OSError as error:
-            messagebox.showwarning('未能清除', str(error), parent=self)
+            # (final fix round 3, SWEEP-2) unfinished.save's own OSError texts are core texts (8.4).
+            messagebox.showwarning(i18n.t('dialog.clear_failed'), i18n.localize(str(error)), parent=self)
             return
         self.unfinished = []
         if self.row_model and all(row['state'] == 'unfinished' for row in self.row_model):
@@ -1572,19 +1817,40 @@ class DownloadUI:
                 if model['state'] in RETRYABLE and not model.get('tail') and not model.get('cleared'):
                     # A failure keeps its reason; 已保留到未完成列表 and the YouTube wait no longer hold.
                     reason = str(model.get('detail') or '') if model['state'] == 'failed' else ''
-                    self.update_row(index, cleared=True, chip=CLEARED_CHIP, tone='idle', icon=ui_theme.ICON_PENDING,
-                                    detail=f'{CLEARED_DETAIL} · {reason}' if reason else CLEARED_DETAIL)
+                    cleared = i18n.t('download.detail.cleared')
+                    self.update_row(index, cleared=True, chip=i18n.t('download.chip.cleared'), tone='idle',
+                                    icon=ui_theme.ICON_PENDING, detail=f'{cleared} · {reason}' if reason else cleared)
             self.show_unfinished_tail()
-            if ui_theme.full_text(self.metrics) in (FINISHED_UNFINISHED, BOT_TEXT, BOT_TEXT_COOKIES):
-                self.metrics.configure(text=CLEARED_METRICS, text_color=ui_theme.MUTED)
+            if ui_theme.full_text(self.metrics) in (i18n.t('download.metrics.finished_unfinished'),
+                                                    i18n.t('download.metrics.bot'), i18n.t('download.metrics.bot_cookies')):
+                self.metrics.configure(text=i18n.t('download.metrics.cleared'), text_color=ui_theme.MUTED)
             self.refresh_stats(final=self.final_stats())
         # (final fix round 1, rv-findings-1-1) The header of the finished job no longer names
-        # unfinished links that the stats line has stopped counting.
-        title = ui_theme.full_text(self.current_title)
-        if title.startswith(FINISHED_PREFIX) and title.endswith(' 条未完成') and '，' in title:
-            self.current_title.configure(text=title[:title.rindex('，')] + CLEARED_TITLE_SUFFIX)
+        # unfinished links that the stats line has stopped counting.  (1.7.0, I18N.md 8.7) It is
+        # rendered from the job's numbers, not cut out of the shown text.
+        success = self._finished_success(ui_theme.full_text(self.current_title))
+        if success is not None:
+            title = i18n.t('download.title.finished_cleared', success=success)
+            self._title_alternatives(title, (i18n.t('download.title.finished'),))
+            self.current_title.configure(text=title)
         self.refresh_failed_button()
         self.cancel_bot_retry()
+
+    def _finished_success(self, title):
+        """The success count when ``title`` is the header of a job that left links unfinished
+        (download.title.finished_unfinished in the running language), else None.  The numbers of
+        the job that ended last (on_done) come first; a header written otherwise is read with
+        the template, numbers only."""
+        summary = getattr(self, 'job_summary', None)
+        if summary is not None:
+            success, unfinished = summary
+            if title == i18n.t('download.title.finished_unfinished', success=success, unfinished=unfinished):
+                return success
+        shape = i18n.t('download.title.finished_unfinished', success='\x00', unfinished='\x01')
+        pattern = ''.join({'\x00': r'(?P<success>\d+)', '\x01': r'\d+'}.get(part, re.escape(part))
+                          for part in re.split('([\x00\x01])', shape))
+        match = re.fullmatch(pattern, title)
+        return int(match.group('success')) if match else None
 
     # ================================================================ bot-check retry (SPEC 3.11)
     def arm_bot_retry(self, round_number):
@@ -1614,9 +1880,10 @@ class DownloadUI:
         if state is None or state.get('deadline') is None or (self.notice_kind == 'undo' and self.busy):
             return
         remaining = max(0, math.ceil(state['deadline'] - time.monotonic()))
-        self.show_notice('bot', f"将在 {time_text(remaining)} 后自动重试（第 {state['round']}/{len(BOT_RETRY_DELAYS)} 次），"
-                                '期间可以正常使用',
-                         [('立即重试', self.retry_blocked_now), ('取消', self.cancel_bot_retry)])
+        self.show_notice('bot', i18n.t('download.notice.bot_retry', time=time_text(remaining), round=state['round'],
+                                       rounds=len(BOT_RETRY_DELAYS)),
+                         [(i18n.t('download.notice.retry_now'), self.retry_blocked_now),
+                          (i18n.t('common.cancel'), self.cancel_bot_retry)])
 
     def bot_retry_tick(self):
         """Every second while armed: countdown; when due and idle, retry the blocked entries."""
@@ -1663,8 +1930,8 @@ class DownloadUI:
             next_round = state['round'] + 1
             if next_round > len(BOT_RETRY_DELAYS):
                 self.bot_retry = None
-                self.show_notice('bot_end', '已自动重试 3 次仍被拒绝。可稍后手动重试，或在偏好设置选择 cookies。',
-                                 [('知道了', lambda: self.hide_notice('bot_end'))])
+                self.show_notice('bot_end', i18n.t('download.notice.bot_gave_up'),
+                                 [(i18n.t('common.got_it'), lambda: self.hide_notice('bot_end'))])
                 return
             self.arm_bot_retry(next_round)
         elif state is None:
@@ -1683,9 +1950,9 @@ class DownloadUI:
         if seconds == self.wait_seconds:
             return
         self.wait_seconds = seconds
-        reason = self.wait_context['reason']
-        self.live_metrics(f'{reason} · 剩余 {time_text(seconds)} · 可随时停止')
-        self.update_row(self.active_index, chip='等待中', tone='warn', icon=ui_theme.ICON_CLOCK,
+        reason = i18n.localize(self.wait_context['reason'])        # a canonical core text (I18N.md 9.3)
+        self.live_metrics(i18n.t('download.metrics.wait', reason=reason, time=time_text(seconds)))
+        self.update_row(self.active_index, chip=i18n.t('download.chip.waiting'), tone='warn', icon=ui_theme.ICON_CLOCK,
                         detail=f'{reason} · {time_text(seconds)}')
         self.refresh_shell()
 
@@ -1707,15 +1974,15 @@ class DownloadUI:
         self.metrics_base = text
         row = self.active_index
         if self.operation == 'download' and row is not None and len(self.rows) <= row < len(self.row_model):
-            text = f"{text}   ·   当前：{self.row_model[row]['title']}"
+            text = i18n.t('download.metrics.current', text=text, title=self.row_model[row]['title'])
         self.metrics.configure(text=text)
 
     def on_log(self, value):
         self.append_log(value)
         if self.operation == 'download' and str(value).startswith(CONVERTING):
             self.clear_wait()
-            self.update_row(self.active_index, chip='转换中', tone='info', icon=None)
-            self.live_metrics('音视频处理中，请稍候…')
+            self.update_row(self.active_index, chip=i18n.t('download.chip.converting'), tone='info', icon=None)
+            self.live_metrics(i18n.t('download.metrics.converting'))
             self.animate(True)
 
     def on_item(self, value):
@@ -1725,12 +1992,12 @@ class DownloadUI:
         self.active_index = index - 1
         if self.active_index >= self._tail_start():
             self.append_rows([value.get('url', '')])
-        self.update_row(self.active_index, state='active', detail='正在获取媒体信息')
+        self.update_row(self.active_index, state='active', detail=i18n.t('download.detail.fetching'))
         self.current_title.configure(text=self._active_title(index, total))
         self.metrics.configure(text_color=ui_theme.MUTED)
-        self.live_metrics('正在连接网站…')
+        self.live_metrics(i18n.t('download.metrics.connecting'))
         self.animate(True)
-        self.append_log(f"链接 {index} / {total}：{value['url']}")
+        self.append_log(i18n.t('log.link_n', index=index, total=total, url=value['url']))
         self.set_window_title(f'{index}/{total}')
         self.title_stamp = time.monotonic()
         self.refresh_stats()
@@ -1740,7 +2007,8 @@ class DownloadUI:
     def _active_title(self, index, total):
         """The task title while item ``index`` of ``total`` runs.  An item whose row has no widgets
         (beyond the row cap, ui-performance-1) is named in the title, so that it stays in view."""
-        text = f'正在下载 {index} / {total}' if total != 1 else '正在下载'
+        text = (i18n.t('download.title.downloading_n', index=index, total=total) if total != 1
+                else i18n.t('shell.status.downloading'))
         row = index - 1
         if row >= len(self.rows) and 0 <= row < len(self.row_model):
             text += f" · {self.row_model[row]['title']}"
@@ -1769,8 +2037,8 @@ class DownloadUI:
 
     def on_resuming(self, value):
         self.clear_wait()
-        self.live_metrics('等待结束，继续处理…')
-        self.update_row(self.active_index, chip='处理中', tone='info', icon=None)
+        self.live_metrics(i18n.t('download.metrics.resuming'))
+        self.update_row(self.active_index, chip=i18n.t('download.chip.processing'), tone='info', icon=None)
         self.animate(True)
         self.refresh_shell()
 
@@ -1780,20 +2048,22 @@ class DownloadUI:
         self.animate(fraction is None)
         if fraction is not None:
             self.progress.set(fraction)
-        percent = f'{100 * fraction:.1f}%' if fraction is not None else '下载中'
+        percent = f'{100 * fraction:.1f}%' if fraction is not None else i18n.t('download.chip.downloading')
         speed = bytes_text(value.get('speed')) + '/s' if value.get('speed') is not None else '—'
-        text = f"{percent}   ·   {bytes_text(value.get('downloaded'))} / {bytes_text(value.get('total'))}   ·   {speed}   ·   剩余 {time_text(value.get('eta'))}"
+        text = i18n.t('download.metrics.progress', percent=percent, done=bytes_text(value.get('downloaded')),
+                      total=bytes_text(value.get('total')), speed=speed, eta=time_text(value.get('eta')))
         if not self.foreign_activity:       # an update's legacy progress event keeps the update header
             self.live_metrics(text)
         if self.operation == 'download':
-            self.update_row(self.active_index, chip=percent if value.get('status') == 'downloading' else '处理中',
+            self.update_row(self.active_index,
+                            chip=percent if value.get('status') == 'downloading' else i18n.t('download.chip.processing'),
                             tone='info', icon=None, detail=speed)
             now = time.monotonic()
             if self.active_index is not None and now - self.title_stamp >= 1:
                 self.title_stamp = now
                 self.set_window_title(f'{self.active_index + 1}/{self.job_row_count()} · {percent}')
         else:
-            self.update_status.configure(text=f'正在下载新版引擎… {percent}')
+            self.update_status.configure(text=i18n.t('settings.update.downloading_pct', percent=percent))
 
     def on_media(self, value):
         if not isinstance(value, dict):
@@ -1811,7 +2081,7 @@ class DownloadUI:
             self.update_row(index - 1, **fields)
 
     def on_file(self, value):
-        self.append_log(f'文件已保存：{value}')
+        self.append_log(i18n.t('log.file_saved', path=value))
         if isinstance(value, str) and value:
             self.last_saved_path = value
             index = self.active_index
@@ -1827,8 +2097,36 @@ class DownloadUI:
         missing = first + len(urls) - self._tail_start()
         if first >= 0 and missing > 0:
             base = self.job_options[0] if self.job_options else None
-            self.append_rows(urls[len(urls) - missing:], base)
+            entries = value.get('items')
+            if isinstance(entries, list) and len(entries) == len(urls):
+                # (1.7.0, request of fix-core) The additive 'items' carry each moved item's own
+                # options, so a link queued in two formats gets a row per format.  Consecutive
+                # entries with the same options are appended together.
+                runs = []
+                for entry, url in zip(entries[len(entries) - missing:], urls[len(urls) - missing:]):
+                    own = self._queued_options(entry, base)
+                    if runs and runs[-1][1] == own:
+                        runs[-1][0].append(url)
+                    else:
+                        runs.append(([url], own))
+                for run_urls, own in runs:
+                    self.append_rows(run_urls, own)
+            else:
+                self.append_rows(urls[len(urls) - missing:], base)
         self.totals_changed()
+
+    def _queued_options(self, entry, base):
+        """The options of one entry of a queued event's 'items' (the job's base options when it
+        names none or they cannot be used); the session's proxy and cookies come from the base."""
+        own = entry.get('options') if isinstance(entry, dict) else None
+        if not isinstance(own, dict):
+            return base
+        try:
+            if base is not None:
+                return Options.from_dict(own, proxy=base.proxy, cookies=base.cookies)
+            return Options.from_dict(own)
+        except (ValueError, TypeError):
+            return base
 
     def on_item_done(self, value):
         self.clear_wait()
@@ -1845,34 +2143,38 @@ class DownloadUI:
         skipped = value.get('skipped') or ''
         if skipped == 'downloaded':
             # The title is on the line above; the earlier file (when known) says where it is.
-            earlier = Path(path).name if path else '已跳过'
-            self.update_row(index, state='skipped', detail=f'{earlier} · 右键可“仍然下载”', **fields)
+            earlier = Path(path).name if path else i18n.t('download.detail.skipped')
+            self.update_row(index, state='skipped', detail=i18n.t('download.detail.skipped_anyway', earlier=earlier),
+                            **fields)
         elif skipped == 'bot_check':
-            self.update_row(index, state='blocked', detail=BLOCKED_DETAIL, **fields)
+            self.update_row(index, state='blocked', detail=i18n.t('download.detail.blocked'), **fields)
         elif value['cancelled']:
-            self.update_row(index, state='stopped', detail='已保留到未完成列表', **fields)
+            self.update_row(index, state='stopped', detail=i18n.t('download.detail.kept'), **fields)
         elif value['success']:
-            detail = '已完成 · 无新文件'
+            detail = i18n.t('download.detail.no_new_file')
             if path:
                 try:
                     detail = f'{Path(path).name} · {bytes_text(os.path.getsize(path))}'
                 except OSError:
                     detail = Path(path).name
             elif value.get('files'):
-                detail = f"已保存 {value['files']} 个文件"
+                detail = i18n.t('download.detail.files_saved', files=value['files'])
             self.update_row(index, state='done', detail=detail, **fields)
         else:
-            reason = value.get('reason') or (engine.explain_error('', bot_check=True) if value.get('bot_check')
-                                             else '详情见任务日志')
+            canonical = value.get('reason') or (engine.explain_error('', bot_check=True) if value.get('bot_check')
+                                                else None)
+            # (1.7.0, I18N.md 9.3) The engine's reason is canonical Chinese: compared as it is, shown
+            # localized; the raw engine error (the row's 'error') stays raw.
+            reason = i18n.localize(canonical) if canonical else i18n.t('download.detail.see_log')
             # (polish, ui-daily-flow-2) A transport failure is never an outdated engine; through a
             # proxy it names the proxy (a deviation from WP2/WP4, which add the prefix on every stale flag).
-            network = reason == engine.NETWORK_REASON
+            network = canonical == engine.NETWORK_REASON
             if network and self._row_proxy(model):
-                reason = PROXY_REASON
+                reason = i18n.t('download.reason.proxy')
             if value.get('stale_engine') and not network:
                 # The way out comes first: the end of a long reason is what the row cuts.
-                reason = (f'{reason}，可在偏好设置更新' if reason == engine.STALE_REASON
-                          else f'引擎可能过旧，可在偏好设置更新 · {reason}')
+                reason = (i18n.t('download.detail.stale_update', reason=reason) if canonical == engine.STALE_REASON
+                          else i18n.t('download.detail.stale_maybe', reason=reason))
             self.update_row(index, state='failed', detail=reason, error=value.get('error') or '', **fields)
         self.refresh_stats()
 
@@ -1896,38 +2198,46 @@ class DownloadUI:
         for index, model in enumerate(self.row_model):
             if model['state'] == 'active':
                 self.update_row(index, state='stopped' if cancelled else 'failed',
-                                detail='已保留到未完成列表' if cancelled else '详情见任务日志')
+                                detail=i18n.t('download.detail.kept') if cancelled else i18n.t('download.detail.see_log'))
             elif model['state'] == 'waiting' and (cancelled or engine_error):
-                self.update_row(index, state='unstarted', detail='已保留到未完成列表')
+                self.update_row(index, state='unstarted', detail=i18n.t('download.detail.kept'))
         self.active_index = None
         success = value['success']
         unfinished = max(len(value['pending_urls']) if 'pending_urls' in value else 0, value['failed'])
         skipped = value.get('skipped') or 0
+        self.job_summary = (success, unfinished)
         color = ui_theme.MUTED
         # (polish, ui-daily-flow-1) The leftovers of earlier jobs come back below this job's rows.
         self.show_unfinished_tail()
+        shorter = ()        # (final fix round 3, ENV3-1) shorter forms of the title (_title_alternatives)
         if cancelled:
-            title, metrics = '任务已停止', '已下载的片段会保留，重新开始可续传。'
+            title, metrics = i18n.t('download.title.stopped'), i18n.t('download.metrics.stopped')
         elif engine_error:
-            title, metrics, color = '下载引擎无法运行', '请到“偏好设置 → 下载引擎”恢复内置引擎后重试。', ui_theme.WARN
+            title, metrics, color = (i18n.t('download.title.engine_error'), i18n.t('download.metrics.engine_error'),
+                                     ui_theme.WARN)
         elif value.get('bot_check'):
-            title = 'YouTube 暂时拒绝了当前网络'
-            metrics = BOT_TEXT_COOKIES if self.cookies.get().strip() else BOT_TEXT
+            title = i18n.t('download.title.bot')
+            metrics = i18n.t('download.metrics.bot_cookies') if self.cookies.get().strip() else i18n.t('download.metrics.bot')
             color = ui_theme.WARN
         elif unfinished:
-            title = f'{FINISHED_PREFIX}{success} 条成功，{unfinished} 条未完成'
-            metrics = FINISHED_UNFINISHED
+            title = i18n.t('download.title.finished_unfinished', success=success, unfinished=unfinished)
+            metrics = i18n.t('download.metrics.finished_unfinished')
+            shorter = (i18n.t('download.title.finished_unfinished_short', unfinished=unfinished),
+                       i18n.t('download.title.finished'))
         elif skipped and not success:
             # (polish, ui-daily-flow-4; WP4 has no text for a job that only skipped links)
-            title, metrics = f'已下载过 · 跳过 {skipped} 条', SKIPPED_TEXT
+            title, metrics = i18n.t('download.title.all_skipped', skipped=skipped), i18n.t('download.metrics.skipped')
         elif skipped:
-            title = f'下载完成 · {success} 条成功，跳过 {skipped} 条'
-            metrics = '文件已保存：双击任务可播放，Ctrl+E 在文件夹中显示。'
+            title = i18n.t('download.title.done_skipped', success=success, skipped=skipped)
+            metrics = i18n.t('download.metrics.files_saved')
+            shorter = (i18n.t('download.title.done_skipped_short', skipped=skipped), i18n.t('download.title.done_short'))
         else:
-            title = f'下载完成 · {success} 条成功'
-            metrics = '文件已保存：双击任务可播放，Ctrl+E 在文件夹中显示。'
+            title = i18n.t('download.title.done', success=success)
+            metrics = i18n.t('download.metrics.files_saved')
+            shorter = (i18n.t('download.title.done_short'),)
+        self._title_alternatives(title, shorter)
         if value.get('archive_errors'):
-            metrics, color = '媒体已保存，但部分归档信息失败，请查看任务日志。', ui_theme.WARN
+            metrics, color = i18n.t('download.metrics.archive_errors'), ui_theme.WARN
         if not cancelled and not value['failed'] and not unfinished:
             self.progress.set(1)
         elif not cancelled and unfinished:
@@ -1939,10 +2249,10 @@ class DownloadUI:
         self.append_log(title)
         if value.get('failed_path') and (value.get('unfinished') or unfinished):
             # (polish, ui-wording-consistency-8; WP4.md:77 says 失败清单) the list is 未完成 everywhere else.
-            self.append_log(f"未完成列表：{value['failed_path']}")
+            self.append_log(i18n.t('log.unfinished_list', path=value['failed_path']))
         if self.notice_kind == 'undo':
             # (polish, ui-daily-flow-3) The job has ended: the undo no longer reads as a start.
-            ui_theme.fit(self.notice_text, f'刚才的 {self.undo_count} 条链接可放回输入框')
+            ui_theme.fit(self.notice_text, i18n.t('download.notice.undo', count=self.undo_count))
         try:
             self.notify_result(success, 0 if cancelled else unfinished)
         except Exception:
@@ -1962,5 +2272,5 @@ class DownloadUI:
             self.show_unfinished_rows()
         since = time.time() - float(self.prefs.get('bot_check_at') or 0)
         if 0 <= since < 1800:
-            self.metrics.configure(text=f'上次 YouTube 验证失败在 {max(1, int(since // 60))} 分钟前，可能尚未恢复。')
+            self.metrics.configure(text=i18n.t('download.metrics.bot_recent', minutes=max(1, int(since // 60))))
         self.after(300, self.check_clipboard)

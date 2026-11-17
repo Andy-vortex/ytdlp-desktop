@@ -15,11 +15,17 @@ Two modes:
   YTDLP_VERIFY_BASE=DIR uses and keeps DIR).
 
 No src module is imported here.
+
+(1.7.0) Tests run in Chinese: YTDLP_DESKTOP_LANG=zh in this process and its children.
+language(lang, env=True) runs a block in another language (env=False: without the variable, like
+a normal start); fake_system(ui_langid, locale) fixes what i18n.detect() sees.  Both import i18n
+when they are used.
 """
 from __future__ import annotations
 
 import argparse
 import atexit
+import contextlib
 import difflib
 import hashlib
 import json
@@ -49,6 +55,13 @@ def _inside(path, base) -> bool:
         return False
 
 
+# (1.7.0, I18N.md 11.1) Tests run in Chinese.  _sandbox.language() changes the language of a
+# block (and of the processes started in it); while it does, LANG_OVERRIDE marks the environment
+# so that a sandboxed child accepts a variable that is not 'zh' (or absent).
+LANG_ENV = 'YTDLP_DESKTOP_LANG'
+LANG_OVERRIDE = 'YTDLP_VERIFY_LANG_OVERRIDE'
+
+
 def _sandbox_variables(base) -> dict:
     return {'LOCALAPPDATA': str(base / 'localappdata'),
             'YTDLP_DESKTOP_APP_DIR': str(base / 'app'),
@@ -57,7 +70,8 @@ def _sandbox_variables(base) -> dict:
             'VERIFY_OUT': str(base / 'out'),
             'XDG_CACHE_HOME': str(base / 'cache'),
             'PYTHONIOENCODING': 'utf-8',
-            'YTDLP_DESKTOP_INSTANCE': instance_name(base)}
+            'YTDLP_DESKTOP_INSTANCE': instance_name(base),
+            LANG_ENV: 'zh'}
 
 
 def _remove_base():
@@ -79,6 +93,8 @@ if RUNNER_MODE:
         _problems.append('YTDLP_DESKTOP_INSTANCE')
     if os.environ.get('YTDLP_DESKTOP_STATE'):
         _problems.append('YTDLP_DESKTOP_STATE (must be absent)')
+    if os.environ.get(LANG_ENV) != 'zh' and not os.environ.get(LANG_OVERRIDE):
+        _problems.append(f'{LANG_ENV} (must be zh)')
     if _problems:
         raise RuntimeError('verification sandbox is not isolated; refusing to run. BASE=%s; offending variables: %s'
                            % (BASE, ', '.join(_problems)))
@@ -107,6 +123,9 @@ else:
 
 # Children started from here (collect worker, nested scripts) must not write __pycache__ either.
 os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+# (1.7.0) Chinese, in this process and in every child, unless a test changed it on purpose.
+if not os.environ.get(LANG_OVERRIDE):
+    os.environ[LANG_ENV] = 'zh'
 OUT = Path(os.environ['VERIFY_OUT'])
 for _name in ('LOCALAPPDATA', 'YTDLP_DESKTOP_APP_DIR', 'TEMP', 'TMP', 'VERIFY_OUT', 'XDG_CACHE_HOME'):
     if os.environ.get(_name):
@@ -185,6 +204,67 @@ def set_state_dir(path) -> None:
     path = _checked_state(path)
     for module in _state_modules():
         module.STATE_DIR = path
+
+
+@contextlib.contextmanager
+def language(lang, env=True):
+    """(1.7.0) Run a block in ``lang`` ('zh' / 'en'): i18n.set_language(lang), restored afterwards
+    (also on an error).
+
+    env=True also sets YTDLP_DESKTOP_LANG=lang, so the processes started in the block run in
+    ``lang`` too.  env=False removes the variable for the block, so the app under test behaves like
+    a normal start (its stored choice and detection decide; combine with fake_system).
+    """
+    import i18n
+    saved = {name: os.environ.get(name) for name in (LANG_ENV, LANG_OVERRIDE)}
+    previous = i18n._current
+    try:
+        os.environ[LANG_OVERRIDE] = '1'
+        if env:
+            os.environ[LANG_ENV] = lang
+        else:
+            os.environ.pop(LANG_ENV, None)
+        i18n.set_language(lang)
+        yield lang
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        i18n.set_language(previous)
+
+
+class _FakeWindows:
+    """Stand-in for i18n._win32: fixed answers, or an exception (a class or an instance) raised."""
+
+    def __init__(self, ui_langid, locale):
+        self._ui, self._locale = ui_langid, locale
+
+    @staticmethod
+    def _answer(value):
+        if isinstance(value, BaseException) or (isinstance(value, type) and issubclass(value, BaseException)):
+            raise value
+        return value
+
+    def ui_language(self):
+        return self._answer(self._ui)
+
+    def locale_name(self):
+        return self._answer(self._locale)
+
+
+@contextlib.contextmanager
+def fake_system(ui_langid, locale):
+    """(1.7.0) Make i18n.detect() see this Windows display language (LANGID, e.g. 0x0409) and user
+    locale (e.g. 'zh-CN'); either may be an exception to raise.  Restored afterwards."""
+    import i18n
+    saved = i18n._win32
+    i18n._win32 = _FakeWindows(ui_langid, locale)
+    try:
+        yield i18n._win32
+    finally:
+        i18n._win32 = saved
 
 
 def app_args(smoke_url=None, smoke_output=None) -> argparse.Namespace:

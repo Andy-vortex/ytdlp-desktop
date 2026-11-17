@@ -1,8 +1,8 @@
-"""Release gate for the staged onedir build (1.6.0 WP6).
+"""Release gate for the staged onedir build (1.6.0 WP6; the version comes from src/engine.py since 1.7.0).
 
     python -B verification\\verify_release.py [--stage PATH]
 
-PATH defaults to build\\package-1.6.0\\YT-DLP下载器.  The gate fails with a clear message on the first violated
+PATH defaults to build\\package-<APP_VERSION>\\YT-DLP下载器 (APP_VERSION read from src\\engine.py, as build.py does).  The gate fails with a clear message on the first violated
 check and cannot pass on stale evidence:
   1. layout: YT-DLP下载器.exe + _internal\\; no av*.dll / sw*.dll directly in _internal; _internal\\vendor\\bin holds
      exactly the files the bundled vendor\\manifest.json lists (no hard-coded FFmpeg DLL names; ffmpeg.exe,
@@ -12,13 +12,13 @@ check and cannot pass on stale evidence:
   2. --self-test twice: sandboxed (LOCALAPPDATA and YTDLP_DESKTOP_APP_DIR in a temp folder), then with only
      LOCALAPPDATA redirected, where app_dir must be the stage folder and state_dir must lie in the temp folder;
   3. download smoke through the packaged exe against an in-process fixture server (with archive);
-  4. GUI smoke: visible window titled "... YT-DLP 下载器" within 10 s, WM_CLOSE, exit code 0 within 10 s; the
+  4. GUI smoke: visible window titled "... YT-DLP 下载器" (or, 1.7.0, "... YT-DLP Downloader") within 10 s, WM_CLOSE, exit code 0 within 10 s; the
      program's own log must not report that icons could not be drawn;
   5. build\\verify\\report.json of a full run (no -k) with the tiers all and exe, every result passed or skipped,
-     app_version 1.6.0, source_sha256 = the sources now, exe sha256 = the staged exe; build\\package-1.6.0\\build.json
+     app_version APP_VERSION, source_sha256 = the sources now, exe sha256 = the staged exe; build\\package-<version>\\build.json
      ties the staged exe to the same sources;
   6. the stage must still match the list of step 1 file by file (the program's runs did not change it);
-  7. writes build\\verify\\release-1.6.0.json with that list under "file_list" ({count, size, sha256 of the list,
+  7. writes build\\verify\\release-<version>.json with that list under "file_list" ({count, size, sha256 of the list,
      files}) and prints it without the per-file entries.  install_release.py checks the stage and its copy against
      the list.
 None of the old verification\\*.json reports is read.  Standard library only; no src import.  The helpers
@@ -45,10 +45,23 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
-VERSION = '1.6.0'
+
+
+def _app_version() -> str:
+    """APP_VERSION of src/engine.py, read as text (no src import; the same rule as run_tests.app_version)."""
+    text = (ROOT / 'src' / 'engine.py').read_text(encoding='utf-8')
+    match = re.search(r'''^APP_VERSION\s*=\s*['"]([^'"]+)['"]''', text, re.M)
+    if not match:
+        raise SystemExit('APP_VERSION cannot be read from src/engine.py')
+    return match.group(1)
+
+
+VERSION = _app_version()
 APP_NAME = 'YT-DLP下载器'
 EXE_NAME = APP_NAME + '.exe'
 TITLE_SUFFIX = 'YT-DLP 下载器'
+# (1.7.0) the window title follows the interface language (I18N.md 8.5); either title counts
+TITLE_SUFFIXES = (TITLE_SUFFIX, 'YT-DLP Downloader')
 DEFAULT_STAGE = BUILD / f'package-{VERSION}' / APP_NAME
 BUILD_RECORD = BUILD / f'package-{VERSION}' / 'build.json'
 REPORT = BUILD / 'verify' / 'report.json'
@@ -269,7 +282,7 @@ def gui_smoke(exe, folder, smoke_url, window_timeout=10, close_timeout=10) -> di
     try:
         window = None
         while time.perf_counter() - started < window_timeout:
-            matches = [(hwnd, title) for hwnd, title in _visible_windows(process.pid) if title.endswith(TITLE_SUFFIX)]
+            matches = [(hwnd, title) for hwnd, title in _visible_windows(process.pid) if title.endswith(TITLE_SUFFIXES)]
             if matches:
                 window = matches[0]
                 break

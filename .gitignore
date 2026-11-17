@@ -19,10 +19,12 @@ docs/1.6.0/audit/
 docs/1.6.0/baseline/
 docs/1.6.0/handoff/
 docs/1.6.0/prototype/
+docs/*/handoff/
 
 # Old test outputs and local backups
 verification/backup-*/
 verification/*.json
+!verification/i18n_inventory.json
 verification/collection-test/
 verification/packaged-collection/
 

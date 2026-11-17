@@ -235,7 +235,8 @@ class B_ClearTests(Base):
         self.assertEqual(app.unfinished, [])
         self.assertEqual(app.queue_stats.cget('text'), '成功 1  /  未完成 0  /  共 2  /  已移出 1')
         # (final fix round 1, rv-findings-1-1) The header no longer names the unfinished link.
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 1 条成功，未完成记录已清除')
+        # (1.7.0 U5) Shorter, so that it fits at 1000x740; the metrics line says 未完成记录已清除.
+        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 1 条成功')
         self.assertEqual((app.retry_button.cget('text'), app.retry_button.cget('state')), ('重试未完成', 'disabled'))
         self.assertEqual(ui_theme.full_text(app.metrics), ui_download.CLEARED_METRICS)
         model = app.row_model[0]
@@ -556,7 +557,9 @@ class H_CollectionStartTests(Base):
         app.collect_urls.insert('1.0', 'https://example.invalid/page')
         errors, boxes = [], []
         app.report_callback_exception = lambda *exc: errors.append(exc[1])
-        locked = sqlite3.OperationalError('database is locked')
+        # (1.7.0 U1) A lock held by another program no longer ends here (it waits and retries by
+        # itself: test_v170_ui.U1_LockTests); a history that cannot be written still does.
+        locked = sqlite3.OperationalError('disk I/O error')
         with mock.patch.object(app.library, 'create_job', side_effect=locked), \
                 mock.patch.object(collection_ui.messagebox, 'showwarning',
                                   side_effect=lambda *a, **k: boxes.append(a[0])):
@@ -711,7 +714,7 @@ class K_FixRound1Tests(Base):
         app = self.make_app(smoke=False, visible=False, output=str(_sandbox.out('downloads')))
         entry = {'url': 'https://example.org/x', 'key': 'example.org/x', 'format': 'audio_mp3', 'reason': 'failed',
                  'options': {}, 'time': 1}
-        for title, expected in (('任务结束 · 3 条成功，2 条未完成', '任务结束 · 3 条成功，未完成记录已清除'),
+        for title, expected in (('任务结束 · 3 条成功，2 条未完成', '任务结束 · 3 条成功'),       # (1.7.0 U5)
                                 ('任务已停止', '任务已停止'), ('YouTube 暂时拒绝了当前网络', 'YouTube 暂时拒绝了当前网络'),
                                 ('下载完成 · 2 条成功', '下载完成 · 2 条成功')):
             with self.subTest(title=title):

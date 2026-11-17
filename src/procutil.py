@@ -2,6 +2,7 @@
 
 Child processes: HIDDEN, process_environment, alive, JobObject, terminate_tree.
 Windows shell: single_instance, focus_window, reveal_in_folder, flash_window, is_foreground.
+Restart (1.7.0): relaunch_command, restart_environment, spawn_detached, wait_exit.
 Every ctypes function gets explicit restype/argtypes (handles are 64-bit).  Nothing here
 raises because a Windows API is missing or fails: the helpers report False / None instead.
 """
@@ -12,6 +13,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 
@@ -118,6 +120,10 @@ def _kernel32():
         kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
         kernel32.CloseHandle.restype = ctypes.c_int
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.OpenProcess.restype = ctypes.c_void_p                 # (1.7.0) wait_exit
+        kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
         _libraries['kernel32'] = kernel32
     return kernel32
 
@@ -352,7 +358,8 @@ def release_instance(handle) -> None:
 
 
 def _find_window(title_suffix):
-    """Handle of a visible Tk top-level window whose title ends with the suffix, or None."""
+    """Handle of a visible Tk top-level window whose title ends with the suffix (or one of a
+    tuple of suffixes), or None."""
     user32 = _user32()
     found = []
 
@@ -379,9 +386,15 @@ def _find_window(title_suffix):
 
 
 def focus_window(title_suffix='YT-DLP 下载器', timeout=3.0) -> bool:
-    """Bring the running instance's window forward; False when none shows up in time."""
+    """Bring the running instance's window forward; False when none shows up in time.
+
+    (1.7.0) ``title_suffix`` may be a tuple: the running window may show its title in the other
+    language (app.py passes ``i18n.all_values('app.title')``; this module imports paths only).
+    """
     if os.name != 'nt':
         return False
+    if isinstance(title_suffix, (list, tuple)):
+        title_suffix = tuple(str(item) for item in title_suffix if item) or ('YT-DLP 下载器',)
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -397,6 +410,78 @@ def focus_window(title_suffix='YT-DLP 下载器', timeout=3.0) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.2)
+
+
+# --- restart (1.7.0, I18N.md 6.3) ---------------------------------------------------------
+
+SYNCHRONIZE = 0x00100000
+WAIT_OBJECT_0 = 0
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+RESTARTED_FROM = '--restarted-from'
+
+
+def relaunch_command() -> list:
+    """The command that starts this program again: the exe when frozen, else this Python with
+    app.py; plus ``--restarted-from <this pid>`` (no smoke arguments are carried over)."""
+    if getattr(sys, 'frozen', False):
+        command = [sys.executable]
+    else:
+        command = [sys.executable, '-X', 'utf8', str(Path(__file__).resolve().with_name('app.py'))]
+    return command + [RESTARTED_FROM, str(os.getpid())]
+
+
+def restart_environment() -> dict:
+    """The environment of the restarted program: this one, plus PYINSTALLER_RESET_ENVIRONMENT=1
+    so that the new exe unpacks as a program of its own and may outlive this one.  PATH is not
+    extended (process_environment's PATH grows on every call)."""
+    environment = os.environ.copy()
+    environment['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    return environment
+
+
+def spawn_detached(command, env=None):
+    """Start ``command`` detached from this process (it outlives it); the subprocess.Popen.
+
+    Under the test runner (YTDLP_VERIFY_SANDBOX set) it refuses with OSError: no test may start
+    a real second program by accident; tests hand their own launcher to the restart instead.
+    """
+    if os.environ.get('YTDLP_VERIFY_SANDBOX'):
+        raise OSError('spawn_detached is refused under the test runner (install a launcher)')
+    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+    return subprocess.Popen(command, cwd=str(paths.APP_DIR), env=env, close_fds=True, creationflags=flags)
+
+
+def wait_exit(pid, timeout=20.0) -> bool:
+    """Wait until process ``pid`` has ended, at most ``timeout`` seconds.  True when it is gone
+    (also at once for a pid that does not exist), False after the timeout.  Never raises."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    if pid == os.getpid():
+        return False
+    if os.name != 'nt':
+        deadline = time.monotonic() + timeout
+        while alive(pid):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
+        return True
+    try:
+        kernel32 = _kernel32()
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            return True             # gone (or not ours to wait for: nothing to wait on)
+        try:
+            return kernel32.WaitForSingleObject(handle, max(0, int(timeout * 1000))) == WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception as error:
+        _log.warning('waiting for process %s failed: %s', pid, error)
+        return True
 
 
 # --- shell --------------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import traceback
 from engine import diagnostics
 
 _instance = None  # the single-instance mutex; held until the process ends
+RESTART_WAIT = 20  # s: (1.7.0) a restarted program waits this long for the old one to end
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
     parser.add_argument('--smoke-output')
     parser.add_argument('--smoke-archive', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--collect-worker', metavar='JOB', help=argparse.SUPPRESS)
+    # (1.7.0) The language row's restart: the pid of the program that started this one.
+    parser.add_argument('--restarted-from', metavar='PID', type=int, help=argparse.SUPPRESS)
     arguments = parser.parse_args()
     if arguments.collect_worker:
         from collector import worker_main
@@ -27,6 +30,10 @@ def main():
         report.parent.mkdir(parents=True, exist_ok=True)
         try:
             result = diagnostics()
+            # (1.7.0) What the language would be (read-only; before any --restarted-from wait).
+            import i18n
+            import settings
+            result['language'] = i18n.diagnostics(i18n.stored_choice(settings.load()))
             if arguments.smoke_url:
                 if not arguments.smoke_output:
                     raise ValueError('下载自检需要 --smoke-output 指定测试目录。')
@@ -51,16 +58,21 @@ def main():
         report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         return code
     import applog
+    import i18n
     import paths
     import procutil
     import updater
+    if arguments.restarted_from:
+        # (1.7.0) Started by the language row's 立即重启: the old window still holds the
+        # single-instance mutex for a moment.  After the timeout the 1.6.0 rule below applies.
+        procutil.wait_exit(arguments.restarted_from, timeout=RESTART_WAIT)
     if not arguments.smoke_url:
         _instance = procutil.single_instance()
         if _instance is None:
             # Another window is running: bring it forward and leave.  A sandboxed launch has its
             # own instance name and must never raise the owner's real window.
             if not os.environ.get('YTDLP_DESKTOP_INSTANCE'):
-                procutil.focus_window()
+                procutil.focus_window(i18n.all_values('app.title'))
             return 0
     applog.setup()
     applog.install_hooks()
@@ -73,7 +85,16 @@ def main():
         # (WP7) the stored 外观 choice; settings.load() turns an absent or invalid value into 'light'.
         # Smoke mode stays light (StudioApp's default).
         import settings
-        arguments.appearance = settings.load()['appearance']
+        prefs = settings.load()
+        arguments.appearance = prefs['appearance']
+        # (1.7.0) The language of this process: YTDLP_DESKTOP_LANG > the stored choice > Windows.
+        choice = i18n.stored_choice(prefs)
+    else:
+        choice = 'system'           # smoke mode: the environment decides (tests: zh)
+    i18n.init(choice)
+    info = i18n.diagnostics(choice)
+    applog.get('app').info('language: %s (choice %s, env %s, ui %s, locale %s)', info['resolved'], choice,
+                           info['env'], info['ui_language'], info['locale'])
     from studio import StudioApp
     app = StudioApp(arguments)
     app.mainloop()

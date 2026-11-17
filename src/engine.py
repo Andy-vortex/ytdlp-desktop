@@ -8,6 +8,7 @@ from pathlib import Path
 import queue
 import random
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -27,7 +28,7 @@ import updater
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '1.6.0'
+APP_VERSION = '1.7.0'
 # Names kept for 1.5.1 importers (from engine import ...). They are copies made at import:
 # code in this module reads paths.X when it runs.
 RESOURCE_ROOT = paths.RESOURCE_ROOT
@@ -502,6 +503,10 @@ def probe_args() -> list[str]:
                                                  subtitles=True, proxy='http://127.0.0.1:9',
                                                  referers={link: 'https://example.invalid/'}))[1:-2]
     arguments += build_command(link, Options(Path(tempfile.gettempdir())))[1:-2]
+    # (1.7.0) The words the Runner adds for a playlist or archive run (_present_filters, a config
+    # file for many of them: '-' reads the probe's empty stdin) and for an older file in another
+    # format (_keeping_source).
+    arguments += ['--match-filters', "id!~='^x$'", '--config-locations', '-', KEEP_SOURCE]
     return arguments
 
 
@@ -811,6 +816,184 @@ def _other_formats(listing, url, preset) -> list:
     return sorted(found)
 
 
+# A subtitle file the engine writes under the work name before it embeds it ('Title [id].en.vtt').
+# Without -k the engine deletes it after embedding; with -k it stays (rv-findings-2-2).
+_WORK_SUBTITLE = re.compile(r' \[([^\[\]]+)\]\.[^.\\/\[\]]+\.(?:vtt|srt|ass|ssa|ttml|srv[123]|json3|sbv|lrc|dfxp)$', re.I)
+# (1.7.0, v-core-3-c3-stop-leaves-temp-mkv) What the engine's ffmpeg steps write beside a file they change
+# and then rename onto it ('Title [id].temp.mkv' of the subtitle, tag and cover steps; 'Title [id].temp'
+# for a file without an extension; the chapter list 'Title [id].meta').  A Stop or a failure while such a
+# step runs leaves it.  Group 1 is the id.
+_WORK_INTERMEDIATE = re.compile(r' \[([^\[\]]+)\]\.(?:temp(?:\.[^.\\/\[\]]+)?|meta)$', re.I)
+# How many word characters of a file's title the match filter of a playlist or archive run compares
+# (_present_filters): enough to tell two titles apart, short enough for many files.
+SKELETON_CHARS = 12
+# "[download] <title> does not pass filter (<filter>), skipping .." (the engine's line for an entry
+# that _present_filters keeps from being processed again).
+_FILTERED = re.compile(r'^\[download\] (.*?) does not pass filter \(.*\), skipping \.\.\s*$', re.S)
+
+
+# (1.7.0 fix round 2, v-core-2-c5-audio-best-other-format) audio_best ('--audio-format best') keeps
+# the site's audio as it is, so its finished file can have an extension that another preset's fixed
+# conversion gives as well: '.mp3' (audio_mp3), '.flac' (audio_flac), '.wav' (audio_wav) and '.m4a'
+# (audio_m4a).  Such a file is the one audio_best would take as already downloaded (or convert onto)
+# only when the entry's chosen format is of that kind; with any other format the engine makes
+# another file and never touches it (an MP3 of audio_mp3 when audio_best now gets the original
+# AAC as '.m4a', an M4A of audio_m4a when audio_best gets Opus from a WebM).
+BEST_SHARED_EXTENSIONS = ('.mp3', '.flac', '.wav', '.m4a')
+# The chosen formats ('ext' of the entry's format, as the engine's match filter sees it before the
+# download) that never hold AAC audio, so that audio_best never makes an '.m4a' from them.
+_BEST_NO_AAC = ('webm', 'opus', 'ogg', 'oga', 'mp3', 'flac', 'wav')
+
+
+def _keeps_source_audio(preset) -> bool:
+    """Whether the preset is audio_best's kind: '--audio-format best'."""
+    arguments = list(getattr(preset, 'args', ()) or ())
+    return '--audio-format' in arguments[:-1] and arguments[arguments.index('--audio-format') + 1] == 'best'
+
+
+def _present_media(folder, preset, shared=None) -> dict:
+    """{id: [title, ...]} of the files directly in ``folder`` that are already this preset's finished
+    file under the engine's work name ('Title [id].mp3' for audio_mp3; never a format part, a partial
+    download or a link), with the names as the folder spells them.  {} when the folder cannot be
+    read or the preset has no fixed extension.
+
+    For audio_best, ``shared`` (a dict, when given) receives {(id, title): {extension, ...}} for the
+    titles whose files there all have an extension of BEST_SHARED_EXTENSIONS: those count only for
+    an entry whose chosen format could make them (_present_filters)."""
+    finals = _final_extensions(preset)
+    found = {}
+    if not finals:
+        return found
+    try:
+        with os.scandir(folder) as entries:
+            names = [entry.name for entry in entries if entry.is_file(follow_symlinks=False)]
+    except (OSError, ValueError):
+        return found
+    extensions = {}
+    for name in sorted(names):
+        match = _WORK_MEDIA.search(name)
+        extension = '.' + match.group(2).lower() if match else ''
+        if not match or _FORMAT_PART.search(name) or extension not in finals:
+            continue
+        title = name[:match.start()]
+        found.setdefault(match.group(1), [])
+        if title not in found[match.group(1)]:
+            found[match.group(1)].append(title)
+        extensions.setdefault((match.group(1), title), set()).add(extension)
+    if shared is not None and _keeps_source_audio(preset):
+        for key, kinds in extensions.items():
+            if kinds <= set(BEST_SHARED_EXTENSIONS):
+                shared[key] = kinds
+    return found
+
+
+def _filter_text(text) -> str:
+    """``text`` as a literal in a regular expression of a yt-dlp match filter: letters, digits and _
+    as they are, everything else as a \\uXXXX escape, so that the filter holds no quote, no & and
+    no space (the characters the engine's filter syntax gives a meaning)."""
+    return ''.join(character if character.isascii() and (character.isalnum() or character == '_')
+                   else ('\\u%04x' % ord(character) if ord(character) < 0x10000 else '\\U%08x' % ord(character))
+                   for character in str(text))
+
+
+# What may stand between two characters of a skeleton: anything that is not a letter or a digit.
+# The underscore is part of it because the engine writes one for characters it replaces in a file
+# name ('10:30' becomes '10_30'), so an underscore of the file name may stand for a colon of the
+# site's title (1.7.0 fix round 1).
+SKELETON_GAP = '[\\W_]*'
+
+
+def _skeleton(title) -> str:
+    """The pattern of a file's title for the match filter: its first SKELETON_CHARS letters and
+    digits with anything else allowed between them (SKELETON_GAP).  The engine's file name keeps
+    every letter and digit of the site's title in order (it only replaces or drops the others, a
+    colon of a time by '_', and cuts the end), so the site's title of the same media always starts
+    with this pattern."""
+    characters = [character for character in str(title)
+                  if character != '_' and re.match(r'\w', character)][:SKELETON_CHARS]
+    return SKELETON_GAP.join(_filter_text(character) for character in characters)
+
+
+def _title_test(titles) -> str:
+    """The match-filter test "the title is none of these files' titles" (_skeleton).  It ignores
+    letter case, as Windows file names do: the engine finds 'my song [id].mp3' under the site's new
+    spelling 'My Song' (1.7.0 fix round 2, v-core-2-c5-case-only-title-change).  Python wants a
+    global inline flag at the very start of the pattern."""
+    return f"title!~='(?i)^{SKELETON_GAP}(?:" + '|'.join(sorted({_skeleton(title) for title in titles})) + ")'"
+
+
+def _format_test(extensions) -> str:
+    """The match-filter test on the entry's chosen format ('ext') under which audio_best leaves
+    files of ``extensions`` (BEST_SHARED_EXTENSIONS) alone: for '.mp3', '.flac' and '.wav' any
+    format but that one; with '.m4a' only a format that never holds AAC (_BEST_NO_AAC) and is none
+    of the others.  '' when no format is safe."""
+    if '.m4a' in extensions:
+        allowed = [kind for kind in _BEST_NO_AAC if '.' + kind not in extensions]
+        return "ext~='^(?:" + '|'.join(allowed) + ")$'" if allowed else ''
+    return "ext!~='^(?:" + '|'.join(sorted(extension[1:] for extension in extensions)) + ")$'"
+
+
+def _present_filters(present, shared=None) -> list:
+    """--match-filters arguments that keep the engine away from the media of ``present``
+    (_present_media) in a playlist or archive run (final-data-safety-1): an entry whose id is not
+    there passes the first filter; an entry with such an id passes only when its title is another
+    one (then the engine would not find the file either and downloads it under the new name).  An
+    entry that passes no filter is skipped before the engine touches anything of it: no download, no
+    tags, no cover, no subtitles.
+
+    ``shared`` (from _present_media, audio_best only): an entry whose title matches only such files
+    also passes when its chosen format is one with which audio_best makes another file (_format_test);
+    the engine checks that after it has chosen the format and before anything is downloaded or
+    written.  Where an id has both kinds, the format test applies to any title but those of the
+    other files, which errs towards leaving a file alone."""
+    shared = shared or {}
+    ids = sorted(present)
+    words = ['--match-filters', "id!~='^(?:" + '|'.join(_filter_text(media_id) for media_id in ids) + ")$'"]
+    for media_id in ids:
+        same_id = f"id~='^{_filter_text(media_id)}$'"
+        words += ['--match-filters', f"{same_id}&{_title_test(present[media_id])}"]
+        loose = [title for title in present[media_id] if (media_id, title) in shared]
+        if not loose:
+            continue
+        test = _format_test(set().union(*(shared[(media_id, title)] for title in loose)))
+        firm = [title for title in present[media_id] if title not in loose]
+        if test:
+            words += ['--match-filters', same_id + (f"&{_title_test(firm)}" if firm else '') + '&' + test]
+    return words
+
+
+# The config file that carries the filters of a playlist or archive run when they do not fit on the
+# command line (1.7.0 fix round 1): the engine reads it through --config-locations, which
+# --ignore-config still honours.
+FILTER_CONFIG = 'filters.conf'
+
+
+def _filter_config(words, folder):
+    """Write ``words`` (_present_filters) as a yt-dlp config file in ``folder``; returns the engine
+    arguments that load it, or None when the file cannot be written or its path would be changed by
+    the engine (it expands '~', %NAME% and $NAME in a config location).  One option per line, each
+    word quoted for the engine's shlex reading; the words are ASCII (_filter_text)."""
+    path = os.path.abspath(os.path.join(str(folder), FILTER_CONFIG))
+    if '%' in path or '$' in path or os.path.expandvars(os.path.expanduser(path)) != path:
+        return None     # (the engine's own environment may define other names than this process)
+    lines = ['# coding: utf-8']
+    for position in range(0, len(words), 2):
+        lines.append(' '.join(shlex.quote(word) for word in words[position:position + 2]))
+    try:
+        with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write('\n'.join(lines) + '\n')
+    except (OSError, ValueError):
+        return None
+    return ['--config-locations', path]
+
+
+def _with_filters(command, words):
+    """The command with ``words`` before its '--' (the link stays last)."""
+    command = list(command)
+    position = command.index('--') if '--' in command else len(command)
+    return command[:position] + list(words) + command[position:]
+
+
 def _source_line(name) -> str:
     """The log line for an older file of the link in another format that the item converts."""
     return f'保存位置已有这个链接的另一种格式（{name}，之前下载的）；本条用它转换成所选格式，原文件保留不动。'
@@ -903,6 +1086,18 @@ class Runner:
         # Whether the engine's own sealed before_dl line (the title) came for the running item:
         # its "already downloaded" line comes after it, never before.
         self._at_download = False
+        # Per item (1.7.0): the HTTP 429 retries used so far, shared by the item's main run and its
+        # reruns (_cooled); the media ids the engine reported (media lines), for the clean-up of
+        # what -k kept (_discard_subtitles); the files that were the preset's finished files in the
+        # output folder before a playlist or archive item and that the engine was kept away from
+        # (_present_media, _present_filters).
+        self._rate_attempt = 0
+        self._media_ids = []
+        self._present = {}
+        self._filters = []
+        # The run folder of the item's filter config file when its filters did not fit on the
+        # command line (1.7.0 fix round 1, _skip_present / _drop_filter_config).
+        self._filter_dir = None
         # This runner's seal for the private output markers (see _seal_command).
         self._seal = '__GUI' + os.urandom(8).hex() + '_'
         # The queue.  queue_lock guards items, inbox, opened and closed, nothing else; nothing is
@@ -998,6 +1193,11 @@ class Runner:
                 if _cookie_echo(value, self._uses_cookies()):
                     # Never the line itself: it repeats a line of the cookies file.
                     return 'log', COOKIE_LINE_FAILED if value.startswith('ERROR:') else COOKIE_LINE_SKIPPED
+                filtered = _FILTERED.match(value)
+                if filtered and self._present:
+                    # An entry whose finished file was there before the item (_present_filters): the
+                    # engine's line repeats the whole filter; one short line instead.
+                    return 'log', f'保存位置已有这一条（{filtered.group(1)}，之前下载的），已跳过，原文件保留不动。'
                 written = _THUMBNAIL_WRITTEN.match(value)
                 if written and _normal(Path(written.group(1)).parent) in self._cover_folders:
                     self._covers.append(written.group(1))     # removed when the item ends (_discard_covers)
@@ -1028,6 +1228,8 @@ class Runner:
             if kind == 'media' and isinstance(value, dict) and isinstance(value.get('filepath'), str) \
                     and value.get('id') not in (None, ''):
                 filepath = final = value['filepath']
+                if str(value['id']) not in self._media_ids:
+                    self._media_ids.append(str(value['id']))
                 options = item.options if item is not None else None
                 if options is not None and naming.renames(options.naming, options.playlist, options.archive_root):
                     source, folder = filepath, None
@@ -1234,12 +1436,25 @@ class Runner:
         return accepted
 
     def _queued(self, moved, total):
-        """The payload of a queued event for items that left the inbox."""
+        """The payload of a queued event for items that left the inbox.
+
+        'urls' and 'overrides' (keyed by link) as in 1.6.0; 'items' (1.7.0, additive, q-minor-2)
+        holds one entry per moved item in queue order, {'url', 'format'} plus 'options' when they
+        differ from the run's, so that the same link in two formats keeps both in the history
+        record (Library.download_event).  'overrides' alone keeps only the last format of a link."""
         payload = {'urls': [item.url for item in moved], 'first_index': moved[0].index, 'total': total}
         base = self.base_options.to_dict()
         different = {item.url: item.options.to_dict() for item in moved if item.options.to_dict() != base}
         if different:
             payload['overrides'] = different
+        entries = []
+        for item in moved:
+            entry = {'url': item.url, 'format': item.format}
+            own = item.options.to_dict()
+            if own != base:
+                entry['options'] = own
+            entries.append(entry)
+        payload['items'] = entries
         return payload
 
     def _next(self):
@@ -1328,6 +1543,211 @@ class Runner:
             except (OSError, ValueError):
                 continue
 
+    def _discard_subtitles(self, item, folder):
+        """Remove the subtitle files an item that ran with -k left after embedding them
+        (rv-findings-2-2): '<work name>.<language>.vtt' and the other subtitle formats in the
+        output folder and the work folder, which the engine itself deletes without -k.  Only files
+        that were not in the output folder before the item (self._existing) and whose [id] is
+        this link's (_link_id), the id of the older file the item converted (self._source) or an
+        id the engine reported for the item (self._media_ids).  Never through a link; never raises."""
+        ids, link_id = self._own_ids(item)
+        for place in dict.fromkeys(str(entry) for entry in (folder, self._work) if entry is not None):
+            try:
+                entries = sorted(_listing(place))
+            except (OSError, ValueError):
+                continue
+            for path in entries:
+                try:
+                    match = _WORK_SUBTITLE.search(os.path.basename(path))
+                    if not match or path in self._existing:
+                        continue
+                    tag = match.group(1).lower()
+                    if tag not in ids and not _belongs_to(tag, link_id):
+                        continue
+                    if os.path.isfile(path) and not _is_link(path):
+                        os.remove(path)
+                except (OSError, ValueError):
+                    continue
+
+    def _own_ids(self, item):
+        """The ids that mark the files of the running item (the rule of _discard_subtitles): the set
+        of the ids the engine reported for it (self._media_ids) and the id of the older file it
+        converted (self._source), all lower case, and the link's own id (_link_id, for _belongs_to)."""
+        ids = {media_id.lower() for media_id in self._media_ids if media_id}
+        if self._source:
+            match = _WORK_MEDIA.search(os.path.basename(self._source))
+            if match:
+                ids.add(match.group(1).lower())
+        return ids, _link_id(item.url).lower()
+
+    def _discard_intermediates(self, item, folder):
+        """(1.7.0, v-core-3-c3-stop-leaves-temp-mkv) Remove the intermediate files of the engine's
+        ffmpeg steps that the item left in the output folder (_WORK_INTERMEDIATE: '<work name>.temp.mkv'
+        and the like).  An item with -k converts the older file of its link in place and an item
+        without a work folder post-processes beside its file, so those steps run in the owner's folder,
+        and a Stop or a failure while one of them runs leaves its file there for good.  Called whatever
+        the outcome.  Only files that were not in the output folder before the item (self._existing) and
+        whose [id] is the item's (_own_ids, the rule of _discard_subtitles); the work folder is the
+        app's own (clean_app_work).  Never through a link; never raises."""
+        try:
+            ids, link_id = self._own_ids(item)
+            entries = sorted(_listing(folder))
+        except (OSError, ValueError, TypeError):
+            return
+        for path in entries:
+            try:
+                match = _WORK_INTERMEDIATE.search(os.path.basename(path))
+                if not match or path in self._existing:
+                    continue
+                tag = match.group(1).lower()
+                if tag not in ids and not _belongs_to(tag, link_id):
+                    continue
+                if os.path.isfile(path) and not _is_link(path):
+                    os.remove(path)
+            except (OSError, ValueError):
+                continue
+
+    def _discard_unfinished(self, item, files):
+        """(1.7.0, v-core-3-c3-stop-leaves-temp-mkv) For an item with -k that converted the older file
+        of its link in place (self._source) and then did not deliver (a Stop or a failure): remove the
+        preset's file the conversion had begun beside the older file, e.g. 'Title [id].mkv' beside
+        'Title [id].mp4', remuxed but without the subtitles, tags or cover still to come, or cut short.
+        Left there, the next run of the link would take it as the finished file and keep it as it is
+        (_kept).  Only the names the conversion gives (the older file's name with the preset's
+        extensions), only files that were not in the output folder before the item (self._existing)
+        and that the item did not report.  Never through a link; never raises."""
+        try:
+            source = Path(self._source)
+            reported = {_normal(path) for path in files}
+            if item.path:
+                reported.add(_normal(item.path))
+            for extension in _final_extensions(item.preset):
+                made = source.with_suffix(extension)
+                key = _normal(made)
+                if key == _normal(source) or key in self._existing or key in reported:
+                    continue
+                try:
+                    if made.is_file() and not _is_link(made):
+                        os.remove(made)
+                except OSError:
+                    continue
+        except (OSError, ValueError, TypeError):
+            return
+
+    def _cooled(self, command, index, files):
+        """_run_once(command) with the queue's HTTP 429 handling: the attempt loop of 1.6.0's main
+        path, moved here unchanged (c3-retry-ratelimit) so that the item's reruns (with -k, without
+        subtitles) go through it too.  A 429 cools down and runs the command again, at most
+        MAX_RATE_LIMIT_RETRIES times per item (self._rate_attempt, shared by the main run and the
+        reruns, reset per item); when they are used up the item fails and the whole queue pauses
+        for the cooldown if anything still waits, so the next item never starts before it ends.
+        Stop ends a wait at once.  A subtitle 429 is no rate limit of the queue (RATE_LIMIT_PATTERN).
+        Returns (result, start_failed); result is None when nothing ran (Stop came first, or the
+        engine could not be started)."""
+        result, start_failed = None, False
+        while not self.cancelled.is_set():
+            try:
+                result, limited, retry_after = self._run_once(command, index, len(self.items), files)
+            except OSError as error:
+                self.engine_error = start_failed = True
+                self.emit('log', f'无法启动下载引擎：{_sentence(error)}。可在“偏好设置”恢复内置引擎。')
+                break
+            if not limited or self.cancelled.is_set():
+                break
+            cooldown = min(RATE_LIMIT_COOLDOWN * 2 ** self._rate_attempt, MAX_RATE_LIMIT_COOLDOWN)
+            # A visible server Retry-After may be longer than our normal cap.
+            cooldown = max(cooldown, retry_after or 0)
+            if self._rate_attempt >= MAX_RATE_LIMIT_RETRIES:
+                result = result or 1
+                self.emit('log', '此链接多次触发 HTTP 429，已记入失败清单。')
+                # The whole queue pauses when anything still waits: a later item, or a
+                # link that enqueue() accepted meanwhile (still in the inbox).
+                with self.queue_lock:
+                    more = bool(self.inbox) or any(entry.state == 'pending' for entry in self.items)
+                if more:
+                    self._wait(cooldown, index, len(self.items), '网站限流，暂停整个下载队列')
+                break
+            self._rate_attempt += 1
+            if not self._wait(cooldown, index, len(self.items),
+                              f'网站限流，冷却后重试此链接（{self._rate_attempt}/{MAX_RATE_LIMIT_RETRIES}）'):
+                break
+        return result, start_failed
+
+    def _skip_present(self, item, effective, command):
+        """For a playlist or archive item: keep the engine away from what was already in the output
+        folder as this preset's finished file (final-data-safety-1).  Such a run of 1.6.0 took each
+        of those files as "already downloaded" and wrote tags, the cover and subtitles into it in
+        place.  Returns (effective, command): the command with _present_filters (on the command
+        line, or, when they do not fit there, from a config file, _filter_config), or, only when
+        that file cannot be written either, the item without tags, cover and subtitles (the engine
+        then leaves a file that is there as it is, as 1.5.1 did)."""
+        shared = {}
+        self._present = _present_media(effective.output, item.preset, shared)
+        if not self._present:
+            return effective, command
+        words = _present_filters(self._present, shared)
+        filtered = _with_filters(command, words)
+        if len(subprocess.list2cmdline(filtered)) <= COMMAND_LINE_LIMIT:
+            self._filters = words
+            return effective, filtered
+        # (1.7.0 fix round 1) Too many files for the command line (a large music folder): the same
+        # filters from a config file in a private run folder, removed after the item
+        # (_drop_filter_config; a folder left by a killed run goes with paths.purge_stale).
+        try:
+            self._filter_dir = paths.run_dir(paths.tmp_dir())
+        except OSError:
+            self._filter_dir = None
+        loaded = _filter_config(words, self._filter_dir) if self._filter_dir is not None else None
+        if loaded:
+            filtered = _with_filters(command, loaded)
+            if len(subprocess.list2cmdline(filtered)) <= COMMAND_LINE_LIMIT:
+                self._filters = loaded
+                return effective, filtered
+        self._drop_filter_config()
+        plain = replace(effective, embed_metadata=False, embed_cover=False, subtitles=False)
+        command = build_command(item.url, plain) if self._work == temp_path(plain) \
+            else build_command(item.url, plain, temp=False)
+        self.emit('log', f'保存位置已有本条的 {sum(len(titles) for titles in self._present.values())} 个文件；'
+                         '为了不改动它们，本次新下载的文件不写入标签、封面和字幕。')
+        return plain, command
+
+    def _drop_filter_config(self):
+        """Remove the run folder of _skip_present's config file, if the item had one; never raises."""
+        folder, self._filter_dir = getattr(self, '_filter_dir', None), None
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def _present_done(self, item, effective, files, first_file):
+        """After a playlist or archive item that ended well: the files _skip_present kept the engine
+        away from stay in its archive record (Archive.media adds a file that is missing there, as
+        the engine's own line did in 1.6.0), and an archived single link that delivered nothing new
+        reports its file as it is, like a single link's file that was there before (_kept)."""
+        if not self._filters or not item.options.archive_root or not self.archive or self.archive_folder is None:
+            return
+        folder = Path(effective.output)
+        kept = []
+        for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+            match = _WORK_MEDIA.search(path.name)
+            if match and match.group(1) in self._present and path.name[:match.start()] in self._present[match.group(1)] \
+                    and path.is_file() and not _is_link(path) and _normal(path) in self._existing:
+                kept.append(str(path))
+        for path in kept:
+            try:
+                self.archive.media(self.archive_folder, {'filepath': path})
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                self.emit('log', f'归档信息保存失败（媒体已保留）：{error}')
+                self.archive_errors.append(str(error))
+        if kept and not item.multi and len(files) == first_file:
+            found = kept[0]
+            item.path = found
+            files.append(found)
+            stem = Path(found).stem
+            media_id = stem[stem.rfind(' [') + 2:-1] if stem.endswith(']') and ' [' in stem else ''
+            self.emit('log', f'保存位置已有这个文件（之前下载的），保留原文件名：{Path(found).name}')
+            self.emit('media', {'id': media_id, 'extractor_key': '', 'title': item.title or stem,
+                                'webpage_url': item.url, 'filepath': found, 'index': item.index})
+            self.emit('file', found)
+
     @staticmethod
     def _finished_here(item, files, first_file) -> bool:
         """Whether a link for one file delivered its final file in this run (the media event or
@@ -1392,6 +1812,8 @@ class Runner:
                 self._kept = None
                 self._source, self._keep_source, self._at_download = None, False, False
                 self._keep_early = False
+                self._drop_filter_config()      # (an earlier item that ended before its own clean-up)
+                self._rate_attempt, self._media_ids, self._present, self._filters = 0, [], {}, []
                 # A YouTube bot check earlier in this run: the other YouTube links are not sent
                 # to the refused address; they stay in the unfinished list.
                 if self.blocked and urltools.is_youtube(item.url):
@@ -1403,7 +1825,11 @@ class Runner:
                 if item.options.skip_downloaded and not item.multi and self.library and not item.options.archive_root:
                     row = None
                     try:
-                        row = self.library.find_download([item.key], item.format)
+                        # (1.7.0 fix round 1) Another program's lock does not hold the start for the
+                        # worker timeout: after FIND_TIMEOUT the item is downloaded as usual.
+                        from library import FIND_TIMEOUT, worker_wait
+                        with worker_wait(FIND_TIMEOUT):
+                            row = self.library.find_download([item.key], item.format)
                     except Exception as error:
                         self.emit('log', f'下载记录无法读取，照常下载：{error}')
                     if row and row.get('exists'):
@@ -1483,6 +1909,9 @@ class Runner:
                         self._cleaned.add(_normal(work))
                         clean_app_work(work)
                     self._work = work
+                    if item.multi or item.options.archive_root:
+                        # (final-data-safety-1) What is already there is skipped, never post-processed again.
+                        effective, command = self._skip_present(item, effective, command)
                 except (ValueError, OSError, KeyError, TypeError, sqlite3.Error) as error:
                     self.emit('log', f'此链接无法开始：{error}')
                     item.state = 'failed'
@@ -1499,35 +1928,9 @@ class Runner:
                     self._keep_source = self._keep_early = True
                 self._cover_folders = {_normal(folder) for folder in (effective.output, work) if folder is not None}
                 self._current = item
-                result, start_failed = None, False
-                rate_attempt = 0
                 self.bot_check = False
-                while not self.cancelled.is_set():
-                    try:
-                        result, limited, retry_after = self._run_once(command, index, len(self.items), files)
-                    except OSError as error:
-                        self.engine_error = start_failed = True
-                        self.emit('log', f'无法启动下载引擎：{_sentence(error)}。可在“偏好设置”恢复内置引擎。')
-                        break
-                    if not limited or self.cancelled.is_set():
-                        break
-                    cooldown = min(RATE_LIMIT_COOLDOWN * 2 ** rate_attempt, MAX_RATE_LIMIT_COOLDOWN)
-                    # A visible server Retry-After may be longer than our normal cap.
-                    cooldown = max(cooldown, retry_after or 0)
-                    if rate_attempt >= MAX_RATE_LIMIT_RETRIES:
-                        result = result or 1
-                        self.emit('log', '此链接多次触发 HTTP 429，已记入失败清单。')
-                        # The whole queue pauses when anything still waits: a later item, or a
-                        # link that enqueue() accepted meanwhile (still in the inbox).
-                        with self.queue_lock:
-                            more = bool(self.inbox) or any(entry.state == 'pending' for entry in self.items)
-                        if more:
-                            self._wait(cooldown, index, len(self.items), '网站限流，暂停整个下载队列')
-                        break
-                    rate_attempt += 1
-                    if not self._wait(cooldown, index, len(self.items),
-                                      f'网站限流，冷却后重试此链接（{rate_attempt}/{MAX_RATE_LIMIT_RETRIES}）'):
-                        break
+                # The 429 loop (moved verbatim into _cooled in 1.7.0, so that the reruns below use it too).
+                result, start_failed = self._cooled(command, index, files)
                 if self._source is not None and self._kept is None and not self._keep_early \
                         and not start_failed and not self.cancelled.is_set():
                     # The engine reported another format of this link that was there before the
@@ -1536,13 +1939,10 @@ class Runner:
                     self.emit('log', _source_line(Path(self._source).name))
                     self._keep_source, self._at_download = True, False
                     self.last_error, self.stale, self.subs_failed = '', False, False
-                    try:
-                        result, limited, retry_after = self._run_once(_keeping_source(command), index, len(self.items), files)
-                        if limited:
-                            result = result or 1
-                    except OSError as error:
-                        self.engine_error = start_failed = True
-                        self.emit('log', f'无法启动下载引擎：{_sentence(error)}。可在“偏好设置”恢复内置引擎。')
+                    # (c3-retry-ratelimit) Through the same 429 cooldown as the main run.
+                    again, start_failed = self._cooled(_keeping_source(command), index, files)
+                    if again is not None or not start_failed:
+                        result = again
                 if self._kept is not None:
                     # The engine reported a file that was there before this item and was stopped
                     # before it could change it: the item is done with that file, as it is.
@@ -1568,23 +1968,38 @@ class Runner:
                             else build_command(item.url, rerun, temp=False)
                         if self._keep_source:
                             command = _keeping_source(command)     # the older file still stays
+                        if self._filters:
+                            command = _with_filters(command, self._filters)   # what is there stays skipped
                     except (ValueError, OSError) as error:
                         self.emit('log', f'此链接无法开始：{error}')
                         self.last_error = str(error)
                     else:
-                        try:
-                            result, limited, retry_after = self._run_once(command, index, len(self.items), files)
-                            if limited:
-                                result = result or 1
-                        except OSError as error:
-                            self.engine_error = start_failed = True
-                            self.emit('log', f'无法启动下载引擎：{_sentence(error)}。可在“偏好设置”恢复内置引擎。')
+                        # (c3-retry-ratelimit) Through the same 429 cooldown as the main run.
+                        again, start_failed = self._cooled(command, index, files)
+                        if again is not None or not start_failed:
+                            result = again
                 if self._keep_early and self._source is None and result == 0:
                     # The engine downloaded afresh instead of converting the older file (its title
                     # changed, or the id only looked alike): -k kept the new download's source.
                     self._discard_kept(item, effective.output, files)
+                if self._keep_source and item.options.subtitles:
+                    # (rv-findings-2-2) -k also kept the subtitle file the engine embedded.  (1.7.0 fix
+                    # round 2, v-core-2-c3-stop-after-delivery-leaves-vtt) Whatever the outcome: after
+                    # a Stop or a failure the file would be there before the retry (self._existing),
+                    # which with -k would never remove it; the retry fetches the subtitles again.
+                    self._discard_subtitles(item, effective.output)
+                if self._keep_source and self._source is not None and (result != 0 or self.cancelled.is_set()) \
+                        and not self._finished_here(item, files, first_file):
+                    # (1.7.0, v-core-3-c3-stop-leaves-temp-mkv) Stopped or failed while converting the
+                    # older file in place: the half-made file would pass for finished on the next run.
+                    self._discard_unfinished(item, files)
+                # (same finding) Whatever the outcome: ffmpeg's '<work name>.temp.mkv' and the like.
+                self._discard_intermediates(item, effective.output)
+                if result == 0 and not self.cancelled.is_set():
+                    self._present_done(item, effective, files, first_file)
                 self._current = None
                 self._discard_covers()
+                self._drop_filter_config()
                 if result == 0:
                     Runner.last_media_end = time.monotonic()
                 item.error = _masked(self.last_error, item.options)[:200] if result != 0 else ''

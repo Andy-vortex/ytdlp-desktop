@@ -22,6 +22,7 @@ written to build\\verify\\report.json:
   name, then app.spec), exe, tiers, filter (-k, null for a full run), not_run,
   started, finished, results [{file, tier, status, seconds, tail, leftover_processes}],
   reports {"<test stem>/<path inside its out folder>": parsed JSON}.
+Every test file starts with YTDLP_DESKTOP_LANG=zh (1.7.0: the tests run in Chinese).
 Exit code 0 only when nothing failed.  The sandbox is removed after a green run
 (--keep keeps it) and kept, with its path printed, after a failure; the captured
 output of every file is in <sandbox>\\_logs.
@@ -149,7 +150,7 @@ def app_version():
 def child_environment(sandbox: Path, real: Path, exe, net: bool) -> dict:
     environment = os.environ.copy()
     for name in ('YTDLP_DESKTOP_STATE', 'YTDLP_VERIFY_BASE', 'YTDLP_VERIFY_KEEP', 'GOLDEN_UPDATE',
-                 'VERIFY_EXE', 'VERIFY_NET'):
+                 'VERIFY_EXE', 'VERIFY_NET', 'YTDLP_VERIFY_LANG_OVERRIDE'):
         environment.pop(name, None)
     environment.update({
         'YTDLP_VERIFY_SANDBOX': str(sandbox),
@@ -163,6 +164,8 @@ def child_environment(sandbox: Path, real: Path, exe, net: bool) -> dict:
         'YTDLP_DESKTOP_INSTANCE': instance_name(sandbox),
         'YTDLP_VERIFY_REAL_STATE': str(real),
         'PYTHONDONTWRITEBYTECODE': '1',
+        # (1.7.0, I18N.md 11.1) every test file starts in Chinese; _sandbox refuses anything else
+        'YTDLP_DESKTOP_LANG': 'zh',
     })
     if exe:
         environment['VERIFY_EXE'] = str(exe)

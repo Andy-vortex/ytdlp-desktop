@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 from contextlib import contextmanager
 from dataclasses import asdict
+import functools
 import hashlib
 import json
 import logging
@@ -13,11 +14,13 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 from urllib.parse import urlsplit
 import uuid
 
 import formats
+import i18n                 # (1.7.0) the labels of the files written for the owner (I18N.md 8.8)
 import paths
 import procutil
 from urls import identity   # moved to urls.py unchanged; kept here for importers
@@ -26,6 +29,119 @@ from urls import identity   # moved to urls.py unchanged; kept here for importer
 CATALOG = paths.data_dir() / 'library.sqlite3'
 WRITE_CHECK_TIMEOUT = 2   # seconds open_library waits for another writer before it stops checking
 _log = logging.getLogger('YtDlpDesktop.library')
+
+# --- (1.7.0 U1) the busy timeout of the window's own thread ----------------------------------
+# Worker threads, the collector process and every other caller wait up to WORKER_TIMEOUT for a
+# lock held by another connection, as before.  The thread that runs the window (set_ui_thread)
+# never waits that long: another program holding library.sqlite3 (1.5.1 at the same time, a DB
+# browser with an unsaved edit, a backup tool) froze the window for 22 to 28 s per call.  On that
+# thread a public Library method tries with SQLite's busy timeout 0 and repeats the whole call
+# (each method is one transaction, or ends in a state another call may repeat) for up to UI_WAIT
+# seconds, enough for this program's own short transactions; then it raises the "database is
+# locked" error, which the window turns into a calm notice and a later retry (library_ui).  After
+# such an error the next calls of that thread try once only, for UI_QUIET seconds.  On Windows one
+# try against an exclusive lock costs about 30 ms, so a call waits about 0.15 s at most.
+WORKER_TIMEOUT = 20       # s
+UI_WAIT = 0.12            # s: how long the window's thread repeats a call that met a lock
+UI_PAUSE = 0.015          # s between those tries
+UI_QUIET = 2.0            # s: after a call gave up, the next ones try once only
+UI_DIRECT_TIMEOUT = 0.05  # s: db()/tx() used directly on the window's thread (not through a method)
+FIND_TIMEOUT = 2.0        # s: the Runner's find_download on its worker thread (worker_wait)
+_ui_thread = None         # threading.get_ident() of the window's thread; None in other processes
+_ui_quiet_until = 0.0     # time.monotonic() until which the window's thread does not repeat calls
+_local = threading.local()
+
+
+def set_ui_thread(ident=None):
+    """Name the thread that runs the window (default: the calling thread)."""
+    global _ui_thread
+    _ui_thread = threading.get_ident() if ident is None else ident
+
+
+def on_ui_thread():
+    return _ui_thread is not None and threading.get_ident() == _ui_thread
+
+
+def is_busy(error):
+    """True for SQLite's "database is locked" (SQLITE_BUSY or SQLITE_LOCKED): another connection
+    holds the lock; trying again later can succeed.  Other errors are not busy."""
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    code = getattr(error, 'sqlite_errorcode', None)
+    if isinstance(code, int):
+        return code & 0xFF in (5, 6)
+    text = str(error).lower()
+    return 'database is locked' in text or 'database table is locked' in text or 'database is busy' in text
+
+
+@contextmanager
+def worker_wait(seconds):
+    """(1.7.0 fix round 1) Connections opened by the calling thread (not the window's) inside this
+    block wait at most ``seconds`` for a lock instead of WORKER_TIMEOUT: for a read whose failure
+    the caller already handles (the Runner's "already downloaded" check, find_download, which then
+    downloads as usual), so that another program's lock does not hold the download's start."""
+    previous = getattr(_local, 'timeout', None)
+    _local.timeout = seconds
+    try:
+        yield
+    finally:
+        _local.timeout = previous
+
+
+def _timeout():
+    """The busy timeout for a connection opened by the calling thread."""
+    if not on_ui_thread():
+        override = getattr(_local, 'timeout', None)
+        return WORKER_TIMEOUT if override is None else override
+    return 0 if getattr(_local, 'depth', 0) else UI_DIRECT_TIMEOUT
+
+
+@contextmanager
+def ui_wait(seconds):
+    """(1.7.0 fix round 1) The Library calls of the window's thread inside this block repeat a call
+    that met a lock for at most ``seconds`` instead of UI_WAIT: for a call whose busy result the
+    caller handles calmly anyway (a write the HistoryWriter defers, a read whose failure keeps what
+    is shown), so that a lock held by another program costs the window one try, not four.  0 = try
+    once.  Other threads: no effect."""
+    previous = getattr(_local, 'wait', None)
+    _local.wait = seconds
+    try:
+        yield
+    finally:
+        _local.wait = previous
+
+
+def _ui_retrying(method):
+    """Wrap a public Library method: on the window's thread a call that meets a lock is repeated
+    (busy timeout 0) for up to UI_WAIT seconds (or what ui_wait() names), then it raises.  Other
+    threads: unchanged."""
+    @functools.wraps(method)
+    def call(self, *args, **kwargs):
+        global _ui_quiet_until
+        if not on_ui_thread() or getattr(_local, 'depth', 0):
+            return method(self, *args, **kwargs)
+        _local.depth = 1
+        try:
+            now = time.monotonic()
+            wait = getattr(_local, 'wait', None)
+            deadline = now if now < _ui_quiet_until else now + (UI_WAIT if wait is None else wait)
+            while True:
+                try:
+                    result = method(self, *args, **kwargs)
+                except sqlite3.OperationalError as error:
+                    if not is_busy(error):
+                        raise
+                    if time.monotonic() >= deadline:
+                        _ui_quiet_until = time.monotonic() + UI_QUIET
+                        raise
+                    time.sleep(UI_PAUSE)
+                    continue
+                _ui_quiet_until = 0.0
+                return result
+        finally:
+            _local.depth = 0
+    call.ui_retrying = True
+    return call
 # A job's options['mode'] is read by the 1.5.1 window (继续未完成, 查看结果), which only knows
 # the five old formats.  A 1.6.0-only format is therefore stored as the nearest old one in
 # 'mode' and as itself in this additive key; Library.job() and history() give 1.6.0 callers
@@ -119,6 +235,17 @@ def job_downloads(data):
     return result
 
 
+# (final fix round 3, SWEEP-3) The app-made page and link titles of the collector (the fallback 网页,
+# 媒体直链, 动态页面媒体请求; library_ui.PAGE_TITLE_KEYS has the same value) are written in the
+# running language into the files for the owner (网页正文.txt / .md, 阅读说明.txt; I18N.md 8.8, 9.3);
+# the record keeps the stored title, and any other title (user data) is written as it is.
+PAGE_TITLE_KEYS = ('value.page_title.', 'value.link_kind.direct', 'value.link_kind.dynamic_request')
+
+
+def _shown_title(title):
+    return i18n.localize(title, keys=PAGE_TITLE_KEYS) if isinstance(title, str) else title
+
+
 def safe_name(value, limit=60):
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(value)).strip(' .')[:limit].rstrip(' .') or '未命名'
     if re.fullmatch(r'(?i)(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', value):
@@ -150,29 +277,60 @@ def _storable(value):
     return value
 
 
+SCHEMA = '''
+    CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT, title TEXT,
+        status TEXT, updated REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS pages(job TEXT, url TEXT, data TEXT, PRIMARY KEY(job,url));
+    CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, name TEXT,
+        enabled INTEGER, interval INTEGER, next_check REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS entries(subscription TEXT, key TEXT, pending INTEGER,
+        data TEXT, PRIMARY KEY(subscription,key));
+    CREATE TABLE IF NOT EXISTS archives(folder TEXT PRIMARY KEY, updated REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS downloads(key TEXT, format TEXT, url TEXT, title TEXT, path TEXT,
+        finished REAL, job TEXT, PRIMARY KEY(key, format));
+'''
+HISTORY_PAGE = 300        # jobs per page of the history list (1.7.0 U2: more are loaded on request)
+
+
+def _like(text):
+    """A LIKE pattern (ESCAPE '\\') that finds ``text`` anywhere."""
+    return '%' + re.sub(r'([\\%_])', r'\\\1', str(text)) + '%'
+
+
+# (1.7.0 U2) The history search: the job's title or one of its links contains the text.  A
+# record that is not valid JSON is found by its title only (json_each would stop the query).
+_HISTORY_MATCH = ('''(title LIKE :pattern ESCAPE '\\' OR CASE WHEN json_valid(data) THEN EXISTS(
+    SELECT 1 FROM json_each(data, '$.options.urls') WHERE json_each.value LIKE :pattern ESCAPE '\\')
+    ELSE 0 END)''')
+
+
 class Library:
     def __init__(self, path=None):
         self.path = Path(path or paths.catalog_path()).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.db() as db:
-            db.executescript('''
-                CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT, title TEXT,
-                    status TEXT, updated REAL, data TEXT);
-                CREATE TABLE IF NOT EXISTS pages(job TEXT, url TEXT, data TEXT, PRIMARY KEY(job,url));
-                CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, name TEXT,
-                    enabled INTEGER, interval INTEGER, next_check REAL, data TEXT);
-                CREATE TABLE IF NOT EXISTS entries(subscription TEXT, key TEXT, pending INTEGER,
-                    data TEXT, PRIMARY KEY(subscription,key));
-                CREATE TABLE IF NOT EXISTS archives(folder TEXT PRIMARY KEY, updated REAL, data TEXT);
-                CREATE TABLE IF NOT EXISTS downloads(key TEXT, format TEXT, url TEXT, title TEXT, path TEXT,
-                    finished REAL, job TEXT, PRIMARY KEY(key, format));
-            ''')
+        self._schema_ready = False
+        try:
+            with self.db():
+                pass
+        except sqlite3.OperationalError as error:
+            # (1.7.0 U1) On the window's thread a lock held by another program does not stop the
+            # start: the file exists and is usable; the tables are made by the first call that
+            # gets the lock (_ensure_schema).
+            if not (on_ui_thread() and is_busy(error)):
+                raise
+            _log.warning('the history is locked by another program at start-up (%s); retried later', error)
+
+    def _ensure_schema(self, db):
+        if not self._schema_ready:
+            db.executescript(SCHEMA)
+            self._schema_ready = True
 
     @contextmanager
     def db(self):
-        db = sqlite3.connect(self.path, timeout=20)
+        db = sqlite3.connect(self.path, timeout=_timeout())
         db.row_factory = sqlite3.Row
         try:
+            self._ensure_schema(db)
             with db:
                 yield db
         finally:
@@ -189,9 +347,10 @@ class Library:
         that is shared goes into private helpers that take the open connection or the
         loaded data (_record_download, _extend).
         """
-        db = sqlite3.connect(self.path, timeout=20)
+        db = sqlite3.connect(self.path, timeout=_timeout())
         db.row_factory = sqlite3.Row
         try:
+            self._ensure_schema(db)
             with db:
                 db.execute('BEGIN IMMEDIATE')
                 yield db
@@ -247,15 +406,49 @@ class Library:
                 data['errors'].append(value)
             db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (json.dumps(data, ensure_ascii=False), time.time(), job))
 
-    def history(self, limit=300):
+    def history(self, limit=HISTORY_PAGE, search=''):
+        """The newest ``limit`` jobs, newest first; with ``search``, only the jobs whose title or
+        one of whose links contains it (1.7.0 U2: the database filters, the list pages).
+
+        A job still marked running whose process is gone is marked interrupted.  When that write
+        meets a lock (another program holds the file), the row is shown interrupted anyway and
+        the next history() writes it (1.7.0 U1)."""
+        search = str(search or '').strip()
         with self.db() as db:
-            rows = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY updated DESC LIMIT ?', (limit,))]
+            if search:
+                query = f'SELECT * FROM jobs WHERE {_HISTORY_MATCH} ORDER BY updated DESC LIMIT :limit'
+                rows = [dict(r) for r in db.execute(query, {'pattern': _like(search), 'limit': limit})]
+            else:
+                rows = [dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY updated DESC LIMIT ?', (limit,))]
         for row in rows:
-            row['data'] = _read_record(json.loads(row['data']))
+            try:
+                data = json.loads(row['data'])
+            except (ValueError, TypeError):
+                data = None
+            if not isinstance(data, dict):
+                # (1.7.0 fix round 1) A record that is not a JSON object (never written by this
+                # program) is listed by its title with empty data, as the search's json_valid guard
+                # intends; its status is shown as stored and nothing is written to it.
+                row['data'] = {}
+                continue
+            row['data'] = _read_record(data)
             if row['status'] == 'running' and not alive(row['data'].get('worker') or row['data'].get('owner')):
-                self.change_job(row['id'], status='interrupted')
+                try:
+                    self.change_job(row['id'], status='interrupted')
+                except sqlite3.OperationalError as error:
+                    if not is_busy(error):
+                        raise
                 row['status'] = 'interrupted'
         return rows
+
+    def history_count(self, search=''):
+        """How many jobs history(search=search) could list without a limit."""
+        search = str(search or '').strip()
+        with self.db() as db:
+            if search:
+                return db.execute(f'SELECT count(*) FROM jobs WHERE {_HISTORY_MATCH}',
+                                  {'pattern': _like(search)}).fetchone()[0]
+            return db.execute('SELECT count(*) FROM jobs').fetchone()[0]
 
     @staticmethod
     def _extend(data, urls, overrides=None):
@@ -402,7 +595,17 @@ class Library:
                 if value not in data['files']:
                     data['files'].append(value)
             elif kind == 'queued':
-                self._extend(data, value.get('urls') or [], value.get('overrides'))
+                entries = value.get('items')
+                if isinstance(entries, list) and entries:
+                    # (1.7.0, q-minor-2) One entry per queued item, in queue order: the same link in
+                    # two formats keeps both (a link plus a variant), as when each 加入队列 is recorded
+                    # on its own.  'overrides' is keyed by link and keeps the last format only.
+                    for entry in entries:
+                        if isinstance(entry, dict) and isinstance(entry.get('url'), str):
+                            own = entry.get('options')
+                            self._extend(data, [entry['url']], {entry['url']: own} if isinstance(own, dict) else None)
+                else:
+                    self._extend(data, value.get('urls') or [], value.get('overrides'))
             elif kind == 'item_done':
                 if value.get('skipped') == 'downloaded':
                     # No item event came before it: data['current'] is not this link.
@@ -520,6 +723,17 @@ class Library:
         return result
 
 
+# (1.7.0 U1) Every public method that opens the database repeats itself briefly on the window's
+# thread instead of waiting WORKER_TIMEOUT there (_ui_retrying); other threads are not affected.
+UI_RETRIED = ('create_job', 'job', 'change_job', 'collection_event', 'history', 'history_count', 'extend_job',
+              'rename_job', 'record_download', 'find_download', 'download_event', 'subscription',
+              'subscriptions', 'configure_subscription', 'finish_subscription', 'pending', 'downloaded',
+              'archive_index', 'archives', 'contexts')
+for _name in UI_RETRIED:
+    setattr(Library, _name, _ui_retrying(getattr(Library, _name)))
+del _name
+
+
 def _prove_writable(path) -> None:
     """Raise sqlite3.Error unless this database can be written.
 
@@ -530,7 +744,9 @@ def _prove_writable(path) -> None:
     rolled back, so the file itself stays as it was.  A database that is only busy
     (another writer is at work right now) counts as writable.
     """
-    db = sqlite3.connect(path, timeout=WRITE_CHECK_TIMEOUT, isolation_level=None)
+    # (1.7.0 U1) The window's thread does not wait 2 s for a lock here either: busy counts as writable.
+    db = sqlite3.connect(path, timeout=UI_DIRECT_TIMEOUT if on_ui_thread() else WRITE_CHECK_TIMEOUT,
+                         isolation_level=None)
     try:
         db.execute('BEGIN IMMEDIATE')
         try:
@@ -603,9 +819,12 @@ class Archive:
             data['title'] = context['title']
         if context.get('page'):
             page = context['page']
-            note = '\n说明：源正文超过长度上限，以下内容已截断。' if page.get('text_truncated') else ''
+            # (1.7.0) The labels are in the running language (zh: the 1.6.0 bytes); the file names stay (D10).
+            note = i18n.t('filetext.truncated_source') if page.get('text_truncated') else ''
             for filename, body in [('网页正文.txt', page.get('text', '')), ('网页正文.md', page.get('markdown', ''))]:
-                (folder / filename).write_text(f"{page['title']}\n来源：{page['url']}{note}\n\n{body}\n", encoding='utf-8-sig')
+                (folder / filename).write_text(i18n.t('filetext.page_text', title=_shown_title(page['title']),
+                                                      url=page['url'],
+                                                      note=note, body=body), encoding='utf-8-sig')
             data['page_title'] = page['title']
         self.save(folder, data)
         return folder
@@ -632,10 +851,13 @@ class Archive:
         if not folder.is_relative_to(self.root):
             raise ValueError('归档目录超出资料库范围。')
         write_json(folder / '资料信息.json', data)
+        # (1.7.0) The readme's labels are in the running language (zh: the 1.6.0 bytes); it is rewritten
+        # on every save, so a readme of the other language is replaced the next time (I18N.md 8.8).
         (folder / '阅读说明.txt').write_text(
-            f"{data['title']}\n原链接：{data['url']}\n采集来源：{data['source']}\n作者：{data.get('uploader') or '来源未提供'}\n\n"
-            + data.get('description', '') + '\n\n媒体文件：\n' + '\n'.join(data['files'])
-            + '\n\n关联转写稿：\n' + '\n'.join(data['transcripts']) + '\n', encoding='utf-8-sig')
+            i18n.t('filetext.readme_head', title=_shown_title(data['title']), url=data['url'], source=data['source'],
+                   author=data.get('uploader') or i18n.t('filetext.author_unknown'))
+            + data.get('description', '') + i18n.t('filetext.readme_media') + '\n'.join(data['files'])
+            + i18n.t('filetext.readme_transcripts') + '\n'.join(data['transcripts']) + '\n', encoding='utf-8-sig')
         if self.library:
             self.library.archive_index(folder, data)
 

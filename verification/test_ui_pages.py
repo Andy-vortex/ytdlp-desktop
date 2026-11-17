@@ -426,12 +426,19 @@ class FixRound1Tests(Base):
             app = self.make_app()
             lines = self.logged(app)
             self.assertEqual(app.library_warning_bar.winfo_manager(), 'grid')
-            self.assertEqual(ui_theme.full_text(app.library_warning_label), '历史记录暂时无法读取：database is locked')
+            # (1.7.0 U1) A lock held by another program is said calmly and retried by itself.
+            self.assertEqual(ui_theme.full_text(app.library_warning_label), library_ui.LIBRARY_BUSY)
             app.refresh_library()       # the same error again: logged once only
             self.assertEqual(lines, [])
         app.refresh_library()           # readable again: the strip goes
         self.assertEqual(app.library_warning_bar.winfo_manager(), '')
         self.assertEqual(app.library_problem, '')
+        # Any other read error still shows itself in the strip, as before.
+        with mock.patch.object(store, 'history', side_effect=library.sqlite3.DatabaseError('file is not a database')):
+            app.refresh_library()
+        self.assertEqual(ui_theme.full_text(app.library_warning_label), '历史记录暂时无法读取：file is not a database')
+        app.refresh_library()
+        self.assertEqual(app.library_warning_bar.winfo_manager(), '')
 
     def test_a_failing_automatic_check_backs_off(self):
         """WP5-bughunt-4: a check that cannot start (locked history) is not retried every 15 s."""

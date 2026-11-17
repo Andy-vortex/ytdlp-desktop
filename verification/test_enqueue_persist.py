@@ -287,7 +287,8 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(app.busy)
             self.assertTrue(app.download_job)
             app.urls.insert('1.0', 'https://example.org/late')
-            with mock.patch.object(app.library, 'extend_job', side_effect=sqlite3.OperationalError('database is locked')) as extend, \
+            # (1.7.0 U1) A lock is retried later (test_v170_ui.U1_LockTests); another error is logged.
+            with mock.patch.object(app.library, 'extend_job', side_effect=sqlite3.OperationalError('disk I/O error')) as extend, \
                     mock.patch.object(ui_download.applog.get('ui'), 'exception') as logged:
                 self.assertEqual(app.enqueue_links(), 1)
             self.assertEqual(extend.call_count, 1)

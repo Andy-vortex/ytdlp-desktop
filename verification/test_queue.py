@@ -129,6 +129,18 @@ class QueueCase(unittest.TestCase):
     def of(self, kind):
         return [value for name, value in self.events if name == kind]
 
+    def queued(self):
+        """The queued payloads as 1.6.0 sent them.  The additive 'items' of 1.7.0 (q-minor-2) must
+        name the same links in the same order, each with its format."""
+        result = []
+        for value in self.of('queued'):
+            value = dict(value)
+            items = value.pop('items')
+            self.assertEqual([entry['url'] for entry in items], value['urls'])
+            self.assertTrue(all(isinstance(entry.get('format'), str) and entry['format'] for entry in items), items)
+            result.append(value)
+        return result
+
     def done(self):
         return self.of('done')[-1]
 
@@ -386,7 +398,7 @@ class EnqueueTests(QueueCase):
         runner = self.run_queue([A], [first, ok, ok])
         self.assertEqual(accepted, [[B, C]])
         self.assertEqual(self.started(), [A, B, C])
-        self.assertEqual(self.of('queued'), [{'urls': [B, C], 'first_index': 2, 'total': 3}])
+        self.assertEqual(self.queued(), [{'urls': [B, C], 'first_index': 2, 'total': 3}])
         kinds = [kind for kind, _ in self.events]
         self.assertEqual(kinds, ['item', 'item_done', 'queued', 'item', 'item_done', 'item', 'item_done', 'done'])
         self.assertEqual([(value['index'], value['total']) for value in self.of('item')], [(1, 1), (2, 3), (3, 3)])
@@ -486,7 +498,7 @@ class EnqueueTests(QueueCase):
             return 0, False, None
 
         self.run_queue([A], [again, ok])
-        self.assertEqual(self.of('queued'), [{'urls': [B], 'first_index': 2, 'total': 2}])
+        self.assertEqual(self.queued(), [{'urls': [B], 'first_index': 2, 'total': 2}])
 
     def test_stop_keeps_queued_links_as_unstarted(self):
         def first(runner, command, index, total, files):
@@ -497,7 +509,7 @@ class EnqueueTests(QueueCase):
 
         runner = self.run_queue([A, B], [first])
         self.assertEqual([kind for kind, _ in self.events], ['item', 'item_done', 'queued', 'done'])
-        self.assertEqual(self.of('queued'), [{'urls': [C, D], 'first_index': 3, 'total': 4}])
+        self.assertEqual(self.queued(), [{'urls': [C, D], 'first_index': 3, 'total': 4}])
         done = self.done()
         self.assertEqual((done['cancelled'], done['success'], done['failed'], done['total']), (True, 0, 0, 4))
         self.assertEqual(done['pending_urls'], [A, B, C, D])
@@ -547,7 +559,7 @@ class EnqueueTests(QueueCase):
         with self.assertLogs('YtDlpDesktop.engine', 'ERROR'):
             runner = self.run_queue([A, B], [first])
         self.assertEqual([kind for kind, _ in self.events], ['item', 'log', 'queued', 'done'])
-        self.assertEqual(self.of('queued'), [{'urls': [C], 'first_index': 3, 'total': 3}])
+        self.assertEqual(self.queued(), [{'urls': [C], 'first_index': 3, 'total': 3}])
         done = self.done()
         self.assertEqual((done['failed'], done['failed_urls'], done['pending_urls'], done['total']), (1, [A], [A, B, C], 3))
         self.assertEqual(self.stored(), {(A, 'audio_best'): 'failed', (B, 'audio_best'): 'unstarted',
