@@ -20,6 +20,7 @@ from unittest import mock
 
 import engine
 import library
+import messages
 import ui_download
 import ui_settings
 import updater
@@ -39,7 +40,8 @@ def settings_window():
 class RestoreEngineTests(unittest.TestCase):
     def test_a_failed_restore_shows_the_warning_and_refreshes_the_labels_only(self):
         window = settings_window()
-        error = updater.UpdateError(updater.MSG_RESTORE)
+        # (1.8.0) what restore_bundled raises: the message of MSG_RESTORE (C-F46, MESSAGES.md 3.3)
+        error = updater.UpdateError(messages.msg('core.update.restore_failed'))
         with mock.patch.object(ui_settings.messagebox, 'askyesno', return_value=True), \
                 mock.patch.object(ui_settings.messagebox, 'showwarning') as warning, \
                 mock.patch.object(updater, 'restore_bundled', side_effect=error):

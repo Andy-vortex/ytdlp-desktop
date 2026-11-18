@@ -12726,6 +12726,56 @@
    "context": "shorter form of a finished job's task title (final fix round 3, ENV3-1): English only, shown whole instead of download.title.done / done_skipped cut with \"…\" when the task header has no room for it; the counts it leaves out are in the stats line and on 重试未完成 (N) beside it.  Chinese never shows it (its header is unchanged)"
   }
  ],
+ "new_strings_1_8_0": [
+  {
+   "key": "core.cookies.line_failed_item",
+   "zh": "cookies 文件中有一行格式不对，无法读取（内容不记录）",
+   "en": "A line of the cookies file has a wrong format and cannot be read (content not logged)",
+   "context": "1.8.0 (MESSAGES.md Appendix A, D-H-1): the stored item error of an echoed cookies line; zh = the fragment 1.7.0 stored (line[6:].strip() of core.cookies.line_failed)"
+  },
+  {
+   "key": "core.options.not_object",
+   "zh": "Options data must be an object",
+   "en": "Options data must be an object",
+   "context": "1.8.0 (Appendix A, D-H-3): engine.Options.from_dict raise; English-only in 1.7.0, zh = en (zh parity, D13)"
+  },
+  {
+   "key": "core.options.no_output",
+   "zh": "Options data has no usable output folder",
+   "en": "Options data has no usable output folder",
+   "context": "1.8.0 (Appendix A, D-H-3): engine.Options.from_dict raise; zh = en (D13)"
+  },
+  {
+   "key": "core.options.bad_resolution",
+   "zh": "Unsupported resolution: {resolution}",
+   "en": "Unsupported resolution: {resolution}",
+   "context": "1.8.0 (Appendix A, D-H-3): engine.Options.from_dict raise; resolution = repr(...); zh = en (D13)"
+  },
+  {
+   "key": "core.options.unsupported",
+   "zh": "Unsupported output option",
+   "en": "Unsupported output option",
+   "context": "1.8.0 (Appendix A, D-H-3): engine.build_command raise; zh = en (D13)"
+  },
+  {
+   "key": "core.formats.bad_mode",
+   "zh": "Unsupported output format: {mode}",
+   "en": "Unsupported output format: {mode}",
+   "context": "1.8.0 (Appendix A, D-H-3): engine.Options.from_dict and formats.by_mode raise; mode = repr(...); zh = en (D13)"
+  },
+  {
+   "key": "core.formats.bad_id",
+   "zh": "Unsupported output format id: {id}",
+   "en": "Unsupported output format id: {id}",
+   "context": "1.8.0 (Appendix A, D-H-3): formats.by_id raise; id = repr(...); zh = en (D13)"
+  },
+  {
+   "key": "core.formats.bad_label",
+   "zh": "Unsupported output format label: {label}",
+   "en": "Unsupported output format label: {label}",
+   "context": "1.8.0 (Appendix A, D-H-3): formats.by_label raise; label = repr(...); zh = en (D13)"
+  }
+ ],
  "localize_zh_variants": [
   {
    "key": "value.job_title.placeholder",

@@ -4,22 +4,33 @@
 
 Reads the inventory copy verification/i18n_inventory.json (written by i18n_tool.py catalog from
 docs/1.7.0/spec/strings-inventory.json) and the sources.  The checks that need a converted UI
-module (completeness, every key used, suspects) apply to a module once it imports i18n (the L1
-work); until then they print what is still open.  No window, no network.
+module (completeness, every key used) apply to a module once it imports i18n (the L1 work); until
+then they print what is still open.  No window, no network.
+
+(1.8.0 WP-1, MESSAGES.md 6.4 / 8.3) The localize tests (round trips, the 9.2 cases, the 1.5.1
+collector forms, the timing) moved to test_messages.py as legacy-reader tests; test 6 reads the
+frozen release sources (the legacy corpus) as well as src; test 10 (the suspects scan) is replaced
+by the G5 sink rule of test_text_guard.py.  The inventory has the section new_strings_1_8_0.
+
+(1.8.0 WP-6, MESSAGES.md 6.4) i18n.localize and the reverse sections of i18n_maps (LOCALIZE,
+VARIANTS, NUMERIC, RECURSE) are gone.  The checks that read them now read what replaced them: the
+keys the core names in msg() calls and the frozen legacy templates of i18n_legacy_data (the 1.7.0
+LOCALIZE keys and VARIANTS, generated from release-sources/1.7.0); the generated-files check
+compares the whole i18n_maps.py with what the generator writes.
 """
 import _sandbox
 import ast
 import importlib
 import io
+import json
 import logging
 import re
 import string
-import time
 import unittest
 from collections import Counter
-from contextlib import redirect_stdout
 
 import i18n
+import i18n_legacy_data
 import i18n_maps
 import i18n_tool
 
@@ -41,6 +52,24 @@ def modules():
 
 def converted(file):
     return i18n_tool.imports_i18n(i18n_tool.SRC / file)
+
+
+def msg_keys():
+    """(1.8.0) Every key a src module names in a msg() call (a literal or a conditional of literals)."""
+    keys = set()
+    for path in sorted(i18n_tool.SRC.glob('*.py')):
+        if path.stem in i18n_tool.G1_EXCLUDED:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if isinstance(node, ast.Call) and i18n_tool._func_name(node)[0] == 'msg' and node.args:
+                keys |= set(i18n_tool._key_literals(node.args[0]) or ())
+    keys.discard('common.clauses')
+    return keys
+
+
+def legacy_keys():
+    """(1.8.0) The keys of the frozen legacy templates (what 1.7.0's LOCALIZE and VARIANTS named)."""
+    return {key for key, _template in i18n_legacy_data.TEMPLATES}
 
 
 class CatalogTests(unittest.TestCase):
@@ -204,11 +233,12 @@ class ParityTests(unittest.TestCase):
 
     def test_5_every_catalog_key_is_used_or_reserved(self):
         used = {call['name'] for call in i18n_tool.api_calls() if call['kind'] == 'key'}
-        used |= set(i18n_maps.LOCALIZE) | set(i18n_maps.RESERVED)
+        # (1.8.0 WP-6) the core's msg() keys and the frozen legacy templates (they render what older
+        # versions stored) replace the LOCALIZE / VARIANTS maps of 1.7.0
+        used |= msg_keys() | legacy_keys() | set(i18n_maps.RESERVED)
+        used |= {item['key'] for item in INVENTORY[i18n_tool.NEW_SECTION_1_8_0]}
         used |= {key for mapping in i18n_maps.GROUPS.values() for key in mapping.values() if key}
         used |= {row['key'] for row in self.table}
-        for key, _template in i18n_maps.VARIANTS:
-            used.add(key)
         pending = []
         for name, module in modules().items():
             users = i18n_tool.MODULE_USERS[name]
@@ -220,29 +250,39 @@ class ParityTests(unittest.TestCase):
 
 
 class CoreParityTests(unittest.TestCase):
-    """Item 6: the core keeps its canonical Chinese texts and LOCALIZE knows every one of them."""
+    """Item 6: the core keeps its canonical Chinese texts, and (1.8.0) every one of them is a msg() key
+    or a frozen legacy template."""
 
     @classmethod
     def setUpClass(cls):
         cls.records = i18n_tool.cjk_literals()
         cls.shapes = {i18n_tool.record_shape(record) for record in cls.records}
         cls.used = {call['name'] for call in i18n_tool.api_calls() if call['kind'] == 'key'}
+        # (1.8.0 WP-1) the stored-text shapes of the frozen 1.5.1 / 1.6.0 / 1.7.0 producers: once a
+        # producer emits msg(key), its literal leaves src but the shape stays in the corpus.
+        corpus = json.loads(i18n_tool.CORPUS.read_text(encoding='utf-8'))
+        cls.corpus = {i18n_tool.shape(item['shape']) for item in corpus['shapes']}
 
-    def test_6_every_localize_template_occurs_in_the_sources(self):
-        for key in i18n_maps.LOCALIZE:
-            template = i18n.CATALOG['zh'][key]
-            self.assertTrue(i18n_tool.shape(template) in self.shapes or key in self.used,
-                            f'{key}: {template!r} is not produced by any source line')
-        for key, template in i18n_maps.VARIANTS:
-            self.assertIn(key, i18n_maps.LOCALIZE)
-            self.assertEqual(fields(template), fields(i18n.CATALOG['zh'][key]))
+    def test_6_every_frozen_legacy_template_occurs_in_the_sources(self):
+        """(1.8.0 WP-6) The 1.7.0 test 6 read LOCALIZE / VARIANTS; they live on as the frozen legacy
+        templates.  Each names a catalog key with the same placeholders and is produced by a source
+        line, a msg() call or a released source (the corpus)."""
+        produced = self.used | msg_keys()
+        templates = list(i18n_legacy_data.TEMPLATES)
+        self.assertGreater(len(templates), 100)
+        for key, template in templates:
+            self.assertIn(key, i18n.CATALOG['zh'], key)
+            self.assertEqual(fields(template), fields(i18n.CATALOG['zh'][key]), key)
+            self.assertTrue(i18n_tool.shape(template) in self.shapes or key in produced
+                            or i18n_tool.shape(template) in self.corpus,
+                            f'{key}: {template!r} is not produced by any source line or released source')
 
     def test_6_every_cjk_literal_of_a_core_file_is_known(self):
         by_file = {}
         for entry in INVENTORY['entries']:
             by_file.setdefault(entry['file'].split('/')[-1], []).append(entry)
         grouped = {key for mapping in i18n_maps.GROUPS.values() for key in mapping.values() if key}
-        localize = set(i18n_maps.LOCALIZE)
+        localize = legacy_keys() | msg_keys()          # (1.8.0) what replaced LOCALIZE
         for record in self.records:
             if record['file'] not in i18n_tool.CORE_FILES:
                 continue
@@ -256,115 +296,11 @@ class CoreParityTests(unittest.TestCase):
                 if not entry['translate']:
                     continue
                 self.assertTrue(key in localize or key in grouped or key == 'app.title' or key.startswith('filetext.'),
-                                f'{record["file"]}:{record["line"]} {key} is neither in LOCALIZE nor shown by key')
+                                f'{record["file"]}:{record["line"]} {key} is neither a message / legacy key nor shown by key')
 
 
-class LocalizeTests(unittest.TestCase):
-    """Item 7 to 10: localize round trips, t() fallbacks, speed, suspects."""
-
-    # Captured values that are core texts themselves (I18N.md 9.2 RECURSE), by key.
-    SAMPLE = {'reason': 'core.wait.pace', 'error': 'core.reason.http_404', 'mode': 'value.mode.audio_mp3',
-              'name': 'value.subscription.untitled'}
-
-    def sample(self, name, number):
-        if name in i18n_maps.NUMERIC:
-            return str(number)
-        if name == 'problem':
-            return i18n.CATALOG['zh']['core.unfinished.problem.dropped'].format(dropped=number)
-        if name in self.SAMPLE:
-            return i18n.CATALOG['zh'][self.SAMPLE[name]]
-        return f'Sample{name.capitalize()}'
-
-    def expected(self, key, values):
-        shown = {}
-        for name, value in values.items():
-            if name in i18n_maps.RECURSE:
-                shown[name] = i18n.localize(value)
-            else:
-                shown[name] = value
-        return i18n.t(key, **shown)
-
-    def test_7_every_template_and_variant_round_trips(self):
-        templates = [(key, i18n.CATALOG['zh'][key]) for key in i18n_maps.LOCALIZE] + list(i18n_maps.VARIANTS)
-        failures = []
-        with _sandbox.language('en'):
-            for number in (1, 23):
-                for key, template in templates:
-                    values = {name: self.sample(name, number) for name in fields(template)}
-                    text = FORMATTER.vformat(template, (), values)
-                    want = self.expected(key, values)
-                    got = i18n.localize(text)
-                    if got != want:
-                        failures.append(f'{key}: {text!r} -> {got!r}, expected {want!r}')
-        self.assertEqual(failures, [])
-
-    def test_7_the_cases_of_9_2(self):
-        with _sandbox.language('en'):
-            self.assertEqual(i18n.localize('网站返回 HTTP 403，可尝试动态模式或稍后重试。；页面超过 8 MB，请缩小采集范围。'),
-                             'The site returned HTTP 403. Try dynamic mode or try again later. '
-                             'The page is larger than 8 MB. Narrow the collection scope.')
-            self.assertEqual(i18n.localize('3条 · 音频 · MP3 320K'), 'Links: 3 · Audio · MP3 320K')
-            self.assertEqual(i18n.localize('1 条 · 音频 · MP3 320K'), 'Links: 1 · Audio · MP3 320K')
-            self.assertEqual(i18n.localize('周杰伦 等 群星 等 3 条'), '周杰伦 等 群星 and others (3 links)')
-            self.assertEqual(i18n.localize('订阅：未命名订阅'), 'Subscription: Untitled subscription')
-            self.assertEqual(i18n.localize('检查中断；下次重试，不更新已见记录'),
-                             i18n.t('value.subscription.interrupted'))
-            job_title = ('value.job_title.', 'value.subscription.untitled')
-            self.assertEqual(i18n.localize('检查未完成', keys=job_title), '检查未完成')
-            self.assertEqual(i18n.localize('检查未完成'), 'Check not finished')
-            self.assertEqual(i18n.localize('未命名订阅', keys=job_title), 'Untitled subscription')
-            self.assertEqual(i18n.localize('网页', keys=('value.page_title.',)), 'Web page')
-            self.assertEqual(i18n.localize('网页正文', keys=('value.page_title.',)), '网页正文')
-            # nested: a waiting reason inside the engine's waiting line, a problem inside the kept-aside note
-            self.assertEqual(i18n.localize('网站限流，暂停整个下载队列，等待 300 秒；可随时点击停止。'),
-                             'The site is rate-limiting; pausing the whole queue: waiting 300 s; you can stop at any time.')
-            kept = [key for key in i18n_maps.LOCALIZE if key == 'core.unfinished.kept_aside']
-            if kept:
-                template = i18n.CATALOG['zh'][kept[0]]
-                values = {name: self.sample(name, 4) for name in fields(template)}
-                text = FORMATTER.vformat(template, (), values)
-                self.assertNotIn('有 2 条记录无法识别', i18n.localize(text))
-            # unknown text and raw engine output pass unchanged; the proxy mask is a token
-            for raw in ('ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies',
-                        '[download]  12.5% of 3.00MiB at 1.2MiB/s ETA 00:02', '周杰伦 - 晴天', ''):
-                self.assertEqual(i18n.localize(raw), raw)
-            self.assertEqual(i18n.localize('[代理] 无响应'), '[proxy] 无响应')
-            self.assertEqual(i18n.localize(None), '')
-            self.assertEqual(i18n.localize(5), '5')
-        for text in ('网页', '3条 · 音频 · MP3 320K', '已内置'):
-            self.assertEqual(i18n.localize(text), text, 'zh: identity')
-
-    def test_7_the_collector_texts_1_5_1_stored(self):
-        """(final fix round 1, ENV-2 / zh-2) 1.5.1 wrote its collector texts without the spaces 1.6.0 put
-        around Latin text and numbers; the owner's shared library.sqlite3 keeps them (collect job errors,
-        subscription last_error).  Every CJK literal of the 1.5.1 collector.py (an f-string rendered with
-        a number) reads English, also '；'-joined as collection_ui stores two of them."""
-        backup = i18n_tool.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src' / 'collector.py'
-        tree = ast.parse(backup.read_text(encoding='utf-8'))
-        inner = {id(part) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for part in node.values}
-        texts = []
-        for node in ast.walk(tree):
-            if id(node) in inner:
-                continue
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                text = node.value
-            elif isinstance(node, ast.JoinedStr):
-                text = ''.join(part.value if isinstance(part, ast.Constant) else '503' for part in node.values)
-            else:
-                continue
-            if CJK.search(text):
-                texts.append(text)
-        self.assertGreaterEqual(len(texts), 15)
-        with _sandbox.language('en'):
-            left = [(text, i18n.localize(text)) for text in texts if CJK.search(i18n.localize(text))]
-            self.assertEqual(left, [], 'a 1.5.1 collector text stays Chinese')
-            self.assertEqual(i18n.localize('网站返回HTTP 503，可尝试动态模式或稍后重试。；页面超过8MB，请缩小采集范围。'),
-                             'The site returned HTTP 503. Try dynamic mode or try again later. '
-                             'The page is larger than 8 MB. Narrow the collection scope.')
-            self.assertEqual(i18n.localize('采集进程退出（-1），请检查页面或动态模式所需的Chrome。'),
-                             i18n.t('core.collect.worker_exit', code='-1'))
-        for text in texts:
-            self.assertEqual(i18n.localize(text), text, 'zh: identity')
+class LookupTests(unittest.TestCase):
+    """Item 8: t() fallbacks (the localize tests of items 7 and 9 are in test_messages.py since 1.8.0)."""
 
     def test_8_missing_key_and_missing_placeholder(self):
         logger = logging.getLogger('YtDlpDesktop.i18n')
@@ -394,31 +330,6 @@ class LocalizeTests(unittest.TestCase):
                 self.assertEqual(i18n.t('test.broken', count=1), 'broken {count')
         finally:
             del i18n.CATALOG['en']['test.broken']
-
-    def test_9_ten_thousand_lines_in_under_a_second(self):
-        lines = ['下载未完成（退出码 {}）', '此链接未完成（退出码 {}），继续处理队列中的下一项。', '[download] {}% of 3MiB',
-                 '文件已保存：C:\\x\\{}.mp3', '网站限流，冷却后重试此链接（{}/2）', '错误：页面 {} 不存在；稍后重试',
-                 'ERROR: [generic] {}: Unable to download webpage', '周杰伦 等 {} 条']
-        mixed = [lines[n % len(lines)].format(n) for n in range(10000)]
-        with _sandbox.language('en'):
-            started = time.perf_counter()
-            for line in mixed:
-                i18n.localize(line)
-            seconds = time.perf_counter() - started
-        print(f'10,000 mixed lines localized in {seconds:.3f} s')
-        self.assertLess(seconds, 1.0)
-
-    def test_10_suspects_are_fixed_or_allowed_in_converted_modules(self):
-        pending = []
-        for item in i18n_tool.unexplained_suspects():
-            if converted(item['file']):
-                self.fail(f'{item["file"]}:{item["line"]} shows {item["expr"]} without localize/label/t')
-            pending.append(f'{item["file"]}:{item["line"]} {item["expr"]}')
-        for (file, expr), reason in i18n_tool.SUSPECT_ALLOW.items():
-            self.assertIn(file, i18n_tool.UI_FILES)
-            self.assertTrue(reason)
-        print('suspects pending (module does not use i18n yet): ' + ('; '.join(pending) or 'none'))
-
 
 class HelperTests(unittest.TestCase):
     def test_label_choices_all_values_prefixes_and_joiners(self):
@@ -455,10 +366,13 @@ class HelperTests(unittest.TestCase):
         for name, keys in plan['modules'].items():
             module = importlib.import_module(f'i18n_{name}')
             self.assertEqual(sorted(module.ZH), keys, f'i18n_{name} has the keys the inventory gives it')
-        self.assertEqual(list(i18n_maps.LOCALIZE), plan['localize'])
         self.assertEqual({group: dict(mapping) for group, mapping in plan['groups'].items()},
                          {group: dict(mapping) for group, mapping in i18n_maps.GROUPS.items()})
-        self.assertEqual([tuple(item) for item in plan['variants']], [tuple(item) for item in i18n_maps.VARIANTS])
+        # (1.8.0 WP-6) the whole generated map module, without the reverse sections (MESSAGES.md 6.4)
+        self.assertEqual((i18n_tool.SRC / 'i18n_maps.py').read_text(encoding='utf-8'),
+                         i18n_tool._maps_module(plan['groups'], plan['reserved'], plan['new_keys']))
+        for name in ('LOCALIZE', 'VARIANTS', 'NUMERIC', 'RECURSE'):
+            self.assertFalse(hasattr(i18n_maps, name), name)
 
     def test_i18n_imports_no_app_module(self):
         tree = ast.parse((i18n_tool.SRC / 'i18n.py').read_text(encoding='utf-8'))

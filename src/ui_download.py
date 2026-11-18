@@ -22,6 +22,7 @@ import applog
 import engine
 import formats
 import i18n
+import messages
 import procutil
 import ui_theme
 import unfinished as unfinished_list
@@ -96,8 +97,9 @@ FOREIGN_TEXT = {'update': ('正在更新下载引擎…', '更新结束后即可
                 'collect': ('正在网页采集…', '采集结束后即可添加链接、开始下载；进度见“网页采集”。', '停止采集',
                             '网页采集中，结束后可在这里粘贴链接')}
 BOT_TEXT_COOKIES = 'YouTube 仍要求验证：cookies 可能已过期。可稍后重试，或在“偏好设置 → 网络”重新选择 cookies。'
-# (polish, ui-daily-flow-2) A network failure of a job that went through a proxy.
-PROXY_REASON = '无法连接代理或网站，请检查代理地址'
+# (polish, ui-daily-flow-2) A network failure of a job that went through a proxy.  (1.8.0, D-F46) A
+# message: the history stores it with its key; its value is the 1.7.0 text.
+PROXY_REASON = messages.msg('download.reason.proxy')
 # (polish, ui-daily-flow-4) A job whose links were all downloaded before.
 SKIPPED_TEXT = '这些链接以前下载过，文件仍在；右键可“仍然下载”。'
 # (1.7.0, I18N.md 8.1) The constants above keep their Chinese values (tests and other modules read
@@ -140,7 +142,7 @@ def decode_link_file(path):
     """Text of a link file, decoded like engine.read_url_file (UTF-16 with BOM, UTF-8, GB18030; 5 MB)."""
     path = Path(path)
     if path.stat().st_size > 5 * 1024 * 1024:
-        raise ValueError(i18n.t('core.links.file_too_large'))
+        raise ValueError(messages.msg('core.links.file_too_large'))
     data = path.read_bytes()
     encodings = ('utf-16',) if data.startswith((b'\xff\xfe', b'\xfe\xff')) else ('utf-8-sig', 'gb18030')
     for encoding in encodings:
@@ -148,7 +150,7 @@ def decode_link_file(path):
             return data.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise ValueError(i18n.t('core.links.encoding'))
+    raise ValueError(messages.msg('core.links.encoding'))
 
 
 def link_title(url):
@@ -181,12 +183,6 @@ def text_button_width(parent, text, size='md'):
     measure = ui_theme._measure_font(parent, ui_theme.font('caption' if size == 'sm' else 'body'))
     needed = measure.measure(text) + 2 + 2 * round(ui_theme.RADIUS * scale)
     return int(-(-needed // scale))
-
-
-def stored_text(key, **values):
-    """The canonical (Chinese) text of ``key``: what the history stores in every language (H2),
-    e.g. the job title placeholder '3 条 · 音频 · MP3 320K' that history_title localizes later."""
-    return i18n.all_values(key)[0].format(**values)
 
 
 def synthetic_done():
@@ -571,7 +567,7 @@ class DownloadUI:
         try:
             text = decode_link_file(path)
         except (ValueError, OSError) as error:
-            messagebox.showwarning(i18n.t('dialog.import.failed'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.import.failed'), messages.error_text(error), parent=self)
             return
         self.add_links(text, 'import')
 
@@ -1308,7 +1304,7 @@ class DownloadUI:
             else:
                 procutil.reveal_in_folder(path)
         except OSError as error:
-            messagebox.showerror(i18n.t('dialog.open_file_failed'), str(error), parent=self)
+            messagebox.showerror(i18n.t('dialog.open_file_failed'), messages.error_text(error), parent=self)
 
     def row_context(self, event, index):
         if index is None or not 0 <= index < len(self.row_model):
@@ -1341,10 +1337,10 @@ class DownloadUI:
         """The whole reason of an unfinished row (the row itself may show it cut) and the engine's error."""
         model = self.row_model[index]
         reason = str(model.get('detail') or '')
-        # (final fix round 3, SWEEP-1) The error of a link that could not start is a core text (a cookies,
+        # (final fix round 3, SWEEP-1) The error of a link that could not start is a core message (a cookies,
         # proxy, source-address or link-length check of build_command; also stored in failed-downloads.json):
-        # shown in the running language.  A raw yt-dlp line matches no core text and stays as it is (9.2).
-        error = i18n.localize(str(model.get('error') or ''))
+        # shown in the running language.  A raw yt-dlp line is plain or Raw and stays as it is.
+        error = messages.show(model.get('error') or '')
         return reason + (i18n.t('dialog.reason.engine_error', error=error) if error and error not in reason else '')
 
     def show_row_reason(self, index):
@@ -1367,7 +1363,7 @@ class DownloadUI:
                                         referers={url: entry['referer']} if entry.get('referer') else {})
         except (ValueError, TypeError, KeyError) as error:
             if log:
-                self.append_log(i18n.t('log.retry_failed', url=url, error=i18n.localize(str(error))))
+                self.append_log(i18n.t('log.retry_failed', url=url, error=messages.error_text(error)))
             return None
         if options.archive_root:
             options = dataclasses.replace(options, archive_contexts=self.collection_contexts([url]))
@@ -1417,8 +1413,8 @@ class DownloadUI:
                     entries = unfinished_list.remove(engine.load_unfinished(), {signature})
                     engine.save_unfinished(entries)
             except OSError as error:
-                # (final fix round 3, SWEEP-2) unfinished.save's own OSError texts are core texts (8.4).
-                messagebox.showwarning(i18n.t('dialog.remove_failed'), i18n.localize(str(error)), parent=self)
+                # (final fix round 3, SWEEP-2) unfinished.save's own OSErrors carry core messages.
+                messagebox.showwarning(i18n.t('dialog.remove_failed'), messages.error_text(error), parent=self)
                 return
             self.unfinished = entries
             self.refresh_failed_button()
@@ -1515,8 +1511,8 @@ class DownloadUI:
         try:
             urls, options, origins = self.read_form()
         except (ValueError, OSError) as error:
-            # A core ValueError (urls.parse_download_text) is canonical Chinese (I18N.md 8.4).
-            messagebox.showwarning(i18n.t('dialog.check_input'), i18n.localize(str(error)), parent=self)
+            # A core ValueError (urls.parse_download_text) carries a message.
+            messagebox.showwarning(i18n.t('dialog.check_input'), messages.error_text(error), parent=self)
             return
         submitted = self.box_text()
         if self.launch(urls, options, origins=origins):
@@ -1538,7 +1534,7 @@ class DownloadUI:
             self.cancel_bot_retry()
         try:
             if not urls:
-                raise ValueError(i18n.t('core.links.none'))
+                raise ValueError(messages.msg('core.links.none'))
             folders = {}
             # (final-fix-ui, polish-function-1) Each option set is checked once (with the first link
             # that uses it, and again for each distinct referer, the only per-link part that
@@ -1567,7 +1563,7 @@ class DownloadUI:
             for folder in folders.values():
                 folder.mkdir(parents=True, exist_ok=True)
         except (ValueError, OSError) as error:
-            messagebox.showwarning(i18n.t('dialog.check_input'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.check_input'), messages.error_text(error), parent=self)
             return False
         self.save_settings()
         job_id = None
@@ -1575,15 +1571,16 @@ class DownloadUI:
             data = {**options.to_dict(), 'urls': urls}
             if overrides:
                 data['overrides'] = {url: own.to_dict() for url, own in overrides.items()}
-            # Stored in canonical Chinese in every language (H2); history_title localizes it.
-            title = stored_text('value.job_title.placeholder', count=len(urls), mode=options.mode)
+            # (1.8.0, D-F45) A message: stored as its zh text in every language (H2) with its key.
+            title = messages.msg('value.job_title.placeholder', count=len(urls),
+                                 mode=messages.value('mode', options.mode))
             library = self.library
             # (1.7.0 U1) A library locked by another program: the download starts at once and its
             # record (a PendingJob until then) is written as soon as the lock is gone.
             job_id = self.history_create(lambda: library.create_job('download', title, data))
         except Exception as error:
             applog.get('ui').exception('create_job failed')
-            self.append_log(i18n.t('log.history_write_failed', error=i18n.localize(str(error))))
+            self.append_log(i18n.t('log.history_write_failed', error=messages.error_text(error)))
         self.download_job = job_id
         try:
             self.job_options = (options, overrides)
@@ -1629,7 +1626,7 @@ class DownloadUI:
             self.close_history_job(job_id)
             self.current_title.configure(text=i18n.t('download.title.ready'))
             self.metrics.configure(text=i18n.t('download.metrics.idle'))
-            messagebox.showerror(i18n.t('dialog.start_failed'), i18n.localize(str(error)), parent=self)
+            messagebox.showerror(i18n.t('dialog.start_failed'), messages.error_text(error), parent=self)
             return False
 
     def close_history_job(self, job_id):
@@ -1683,7 +1680,7 @@ class DownloadUI:
         try:
             urls, options, origins = self.read_form()
         except (ValueError, OSError) as error:
-            self.set_hint(i18n.localize(str(error)))
+            self.set_hint(messages.error_text(error))
             return 0
         runner = self.runner
         if runner is None or not hasattr(runner, 'enqueue'):
@@ -1803,8 +1800,8 @@ class DownloadUI:
         try:
             engine.save_unfinished([])
         except OSError as error:
-            # (final fix round 3, SWEEP-2) unfinished.save's own OSError texts are core texts (8.4).
-            messagebox.showwarning(i18n.t('dialog.clear_failed'), i18n.localize(str(error)), parent=self)
+            # (final fix round 3, SWEEP-2) unfinished.save's own OSErrors carry core messages.
+            messagebox.showwarning(i18n.t('dialog.clear_failed'), messages.error_text(error), parent=self)
             return
         self.unfinished = []
         if self.row_model and all(row['state'] == 'unfinished' for row in self.row_model):
@@ -1950,7 +1947,7 @@ class DownloadUI:
         if seconds == self.wait_seconds:
             return
         self.wait_seconds = seconds
-        reason = i18n.localize(self.wait_context['reason'])        # a canonical core text (I18N.md 9.3)
+        reason = messages.show(self.wait_context['reason'])        # a core message (core.wait.*)
         self.live_metrics(i18n.t('download.metrics.wait', reason=reason, time=time_text(seconds)))
         self.update_row(self.active_index, chip=i18n.t('download.chip.waiting'), tone='warn', icon=ui_theme.ICON_CLOCK,
                         detail=f'{reason} · {time_text(seconds)}')
@@ -2016,7 +2013,7 @@ class DownloadUI:
 
     def on_title(self, value):
         if self.operation == 'download' and self.active_index is not None:
-            self.update_row(self.active_index, title=str(value))
+            self.update_row(self.active_index, title=messages.show(value))
             if self.active_index >= len(self.rows):
                 total = max(self.job_row_count(), self.active_index + 1)
                 self.current_title.configure(text=self._active_title(self.active_index + 1, total))
@@ -2163,9 +2160,9 @@ class DownloadUI:
         else:
             canonical = value.get('reason') or (engine.explain_error('', bot_check=True) if value.get('bot_check')
                                                 else None)
-            # (1.7.0, I18N.md 9.3) The engine's reason is canonical Chinese: compared as it is, shown
-            # localized; the raw engine error (the row's 'error') stays raw.
-            reason = i18n.localize(canonical) if canonical else i18n.t('download.detail.see_log')
+            # (1.8.0) The engine's reason is a message: compared as it is (its value is the 1.7.0 text),
+            # shown in the running language; the raw engine error (the row's 'error') stays raw.
+            reason = messages.show(canonical) if canonical else i18n.t('download.detail.see_log')
             # (polish, ui-daily-flow-2) A transport failure is never an outdated engine; through a
             # proxy it names the proxy (a deviation from WP2/WP4, which add the prefix on every stale flag).
             network = canonical == engine.NETWORK_REASON

@@ -24,6 +24,10 @@ written (load_for_merge, and save itself as a guard).  The file is written as co
 JSON and kept below SAFE_SIZE, well inside the 5 MB that the loaders of 1.5.1 and 1.6.0
 read; when a list would be larger, its oldest entries are moved to
 failed-downloads.overflow-<time>.json instead of being dropped.  Both are logged in Chinese.
+
+(1.8.0) The problems and notices are messages (MESSAGES.md 3.2 D-F23); an entry's ``error`` is
+read through messages.decode and written through messages.encode (record kind failed_entry,
+4.3), so the file keeps the 1.7.0 text and gains only the additive ``msgs`` key of the entry.
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ import threading
 import time
 
 import formats
+import messages
 import paths
 import urls
 
@@ -105,8 +110,8 @@ def _clean(raw):
     if not isinstance(raw.get('options'), dict):
         return None
     stamp = raw.get('time')
-    result = dict(raw)
-    result.update(title=_text(raw.get('title')), error=_text(raw.get('error')), referer=_text(raw.get('referer')),
+    result = messages.decode(raw, 'failed_entry')     # (1.8.0) a copy of raw: error decoded, msgs removed
+    result.update(title=_text(raw.get('title')), error=_text(result.get('error')), referer=_text(raw.get('referer')),
                   reason=raw['reason'] if raw.get('reason') in REASONS else 'failed',
                   time=float(stamp) if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) else 0.0,
                   options=_full_options(_options(raw['options'])))
@@ -163,42 +168,43 @@ def _read(path):
     """(entries, problem, stamp) of the list file.
 
     ``problem`` is '' when there is no file or when every part of it was understood, else a
-    short Chinese reason why the file cannot be read completely; ``entries`` are then the
+    short reason (a core.unfinished.problem.* message) why the file cannot be read completely; ``entries`` are then the
     entries that could be used (often none).  ``stamp`` identifies the file that was read
     completely (path, size, mtime), else None.  Never raises.
     """
     try:
         status = path.stat()
     except OSError as error:
-        return [], ('' if _missing(error) else '无法读取'), None
+        return [], ('' if _missing(error) else messages.msg('core.unfinished.problem.unreadable')), None
     if status.st_size > MAX_SIZE:
-        return [], f'超过 5 MB（{status.st_size / 1024 / 1024:.1f} MB）', None
+        return [], messages.msg('core.unfinished.problem.too_large', size=f'{status.st_size / 1024 / 1024:.1f}'), None
     try:
         data = json.loads(_read_text(path))
     except OSError as error:
-        return [], ('' if _missing(error) else '无法读取'), None
+        return [], ('' if _missing(error) else messages.msg('core.unfinished.problem.unreadable')), None
     except ValueError:
-        return [], '内容已损坏', None
+        return [], messages.msg('core.unfinished.problem.damaged'), None
     stamp = (str(path), status.st_size, status.st_mtime_ns)
     try:
         if not isinstance(data, dict) or data.get('version') != VERSION:
-            return [], '格式无法识别', None
+            return [], messages.msg('core.unfinished.problem.unknown_format'), None
         if 'entries' in data:
             stored = data['entries']
             if not isinstance(stored, list):
-                return [], '格式无法识别', None
+                return [], messages.msg('core.unfinished.problem.unknown_format'), None
             entries = [item for item in (_clean(raw) for raw in stored) if item is not None]
             dropped = len(stored) - len(entries)
-            return entries, (f'有 {dropped} 条记录无法识别' if dropped else ''), (None if dropped else stamp)
+            problem = messages.msg('core.unfinished.problem.dropped', dropped=dropped) if dropped else ''
+            return entries, problem, (None if dropped else stamp)
         entries = _migrate(data, status.st_mtime)
         links = data.get('urls')
         listed = bool(links) and (not isinstance(links, list) or any(
             not isinstance(link, str) or (link.strip() and not link.strip().startswith(urls.COMMENT)) for link in links))
         if not entries and listed:
-            return [], '链接或设置无法识别', None
+            return [], messages.msg('core.unfinished.problem.bad_entries'), None
         return entries, '', stamp
     except Exception:
-        return [], '格式无法识别', None
+        return [], messages.msg('core.unfinished.problem.unknown_format'), None
 
 
 def load() -> list[dict]:
@@ -209,9 +215,10 @@ def load() -> list[dict]:
 
 
 def _report(text, log=None) -> None:
-    """One Chinese line to download.log and, when given, to ``log`` (the task log page)."""
+    """One Chinese line to download.log and, when given, to ``log`` (the task log page).  (1.8.0)
+    ``text`` is a message: download.log gets its zh text, as in 1.7.0; ``log`` the message."""
     try:
-        _log.warning('%s', text)
+        _log.warning('%s', messages.zh(text))     # (1.8.0) the plain zh text: a handler composes it
     except Exception:
         pass
     if log is not None:
@@ -243,13 +250,12 @@ def _set_aside(path):
                 if attempt + 1 >= paths.REPLACE_ATTEMPTS:
                     raise
                 time.sleep(paths.REPLACE_PAUSE)
-    raise OSError(f'无法保留读不出的未完成清单：{path}')
+    raise OSError(messages.msg('core.unfinished.cannot_set_aside', path=os.fspath(path)))
 
 
 def _keep_unreadable(path, problem, log) -> None:
     target = _set_aside(path)
-    _report(f'未完成清单（failed-downloads.json）{problem}，已原样保留为 {target.name}（没有删除），'
-            f'本次结果写入新的清单。', log)
+    _report(messages.msg('core.unfinished.kept_aside', problem=problem, target=target.name), log)
 
 
 def load_for_merge(log=None) -> list[dict]:
@@ -293,11 +299,54 @@ def _written(item) -> dict:
     return dict(item, options=_written_options(item['options']))
 
 
+def _stored(item) -> dict:
+    """An entry as it is written: _written, plus (1.8.0) the ``msgs`` of its error (messages.encode,
+    record kind failed_entry).  An entry of the map is kept only when the stored text alone would
+    not give the same message back (a text cut inside a parameter, a raw text the legacy reader
+    would translate, an entry of a later version): an error that reads back unchanged without it
+    keeps the entry's 1.7.0 bytes, which the golden transcripts of the failed list compare."""
+    stored = messages.encode(_written(item), 'failed_entry')
+    sidecar = stored.get('msgs')
+    if sidecar:
+        needed = {text: entry for text, entry in sidecar.items() if not _redundant(text, entry)}
+        if needed:
+            stored['msgs'] = needed
+        else:
+            del stored['msgs']
+    return stored
+
+
+def _redundant(text, entry) -> bool:
+    """Whether a sidecar entry gives exactly the message the legacy reader lifts from ``text``."""
+    if entry is None:
+        return False
+    kept = messages.decode({'error': text, 'msgs': {text: entry}}, 'failed_entry')['error']
+    if not isinstance(kept, messages.Message) or kept.origin != 'stored':
+        return False
+    return _same(kept, messages.decode({'error': text}, 'failed_entry')['error'])
+
+
+def _same(one, other) -> bool:
+    """Same key and params, recursively (a Raw and a plain text are the same text: both are shown
+    as they are)."""
+    if isinstance(one, messages.Message):
+        return isinstance(other, messages.Message) and one.key == other.key and set(one.params) == set(other.params) \
+            and all(_same(one.params[name], other.params[name]) for name in one.params)
+    if isinstance(one, messages.Value):
+        return isinstance(other, messages.Value) and one.group == other.group and messages.zh(one) == messages.zh(other)
+    if isinstance(one, str):
+        return isinstance(other, str) and not isinstance(other, (messages.Message, messages.Value)) \
+            and messages.zh(one) == messages.zh(other)
+    if isinstance(one, (list, tuple)):
+        return isinstance(other, (list, tuple)) and len(one) == len(other) and all(map(_same, one, other))
+    return type(one) is type(other) and one == other
+
+
 def _encode(entries) -> str:
     """The file text: the legacy view in full (1.5.1 reads it), the entries without their
     default option values."""
     links, options = legacy_view(entries)
-    data = {'version': VERSION, 'urls': links, 'options': options or {}, 'entries': [_written(item) for item in entries]}
+    data = {'version': VERSION, 'urls': links, 'options': options or {}, 'entries': [_stored(item) for item in entries]}
     return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
 
 
@@ -309,7 +358,7 @@ def _fit(entries):
     if size <= SAFE_SIZE:
         return entries, [], text
     order = sorted(range(len(entries)), key=lambda index: (entries[index].get('time') or 0, index))
-    sizes = [len(json.dumps(_written(item), ensure_ascii=False, separators=(',', ':')).encode('utf-8')) + 1
+    sizes = [len(json.dumps(_stored(item), ensure_ascii=False, separators=(',', ':')).encode('utf-8')) + 1
              for item in entries]
     moved, position, excess = set(), 0, size - SAFE_SIZE
     while True:
@@ -346,14 +395,14 @@ def _write_overflow(path, moved, log) -> None:
             except FileExistsError:
                 continue
         else:
-            raise OSError(f'找不到可用的文件名保存未完成清单的较早部分：{path}')
+            raise OSError(messages.msg('core.unfinished.no_overflow_name', path=os.fspath(path)))
     finally:
         try:
             if temporary.exists():
                 temporary.unlink()
         except OSError:
             pass
-    _report(f'未完成清单过长，已把最早的 {len(moved)} 条移到 {target.name}（没有删除）。', log)
+    _report(messages.msg('core.unfinished.overflow', count=len(moved), target=target.name), log)
 
 
 def newest_group(entries) -> list[dict]:
@@ -426,7 +475,8 @@ def entry(url, options_dict, reason, *, playlist=False, error='', title='', refe
     options = _options(options_dict)
     preset = formats.by_mode(options.get('mode'))
     return {'key': urls.link_key(url, playlist), 'format': formats.format_key(preset, options.get('resolution')), 'url': url,
-            'title': _text(title), 'reason': reason if reason in REASONS else 'failed', 'error': _text(error)[:200],
+            'title': _text(title), 'reason': reason if reason in REASONS else 'failed',
+            'error': messages.cut(_text(error), 200),
             'time': time.time(), 'referer': _text(referer), 'options': options}
 
 
@@ -472,7 +522,7 @@ def merge(entries, results) -> list[dict]:
         if not all(mark) or mark in finished:
             continue
         item = {'key': mark[0], 'format': mark[1], 'url': result.get('url'), 'title': _text(result.get('title')),
-                'reason': outcome, 'error': _text(result.get('error'))[:200], 'time': time.time(),
+                'reason': outcome, 'error': messages.cut(_text(result.get('error')), 200), 'time': time.time(),
                 'referer': _text(result.get('referer')), 'options': _options(result.get('options') or {})}
         if mark in position:
             older = merged[position[mark]]

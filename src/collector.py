@@ -18,6 +18,8 @@ import time
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import applog
+import messages
+from messages import PROXY_TOKEN, cut, masked, message_of, msg, raw
 import paths
 import procutil
 from engine import parse_urls
@@ -53,7 +55,7 @@ def ca_bundle():
             return str(target)
         except OSError:
             continue
-    raise RuntimeError('无法建立 HTTPS 证书缓存，请将程序放到可写目录后重试。')
+    raise RuntimeError(msg('core.collect.ca_cache'))
 
 
 def web_url(value, base=''):
@@ -98,18 +100,18 @@ class CollectOptions:
     def validate(self):
         self.urls = parse_urls('\n'.join(self.urls))
         if len(self.urls) > 20:
-            raise ValueError('一次最多采集 20 个起始网页。')
+            raise ValueError(msg('core.collect.too_many_pages'))
         if not 0 <= self.scrolls <= 5 or not 1 <= self.max_pages <= 5:
-            raise ValueError('滚动次数需为 0–5，单个起始页的翻页上限需为 1–5。')
+            raise ValueError(msg('core.collect.limits'))
         if any(not web_url(url) for url in self.urls):
-            raise ValueError('采集地址须为不含用户名或密码的 HTTP / HTTPS 链接。')
+            raise ValueError(msg('core.collect.bad_address'))
         if self.proxy and not re.match(r'^(https?|socks5h?)://[^\s]+$', self.proxy):
-            raise ValueError('请在偏好设置中填写有效代理地址。')
+            raise ValueError(msg('core.collect.bad_proxy'))
         if self.dynamic and not browser_available():
-            raise ValueError('动态采集需要安装 Google Chrome；普通网页模式无需浏览器。')
+            raise ValueError(msg('core.collect.needs_chrome'))
         if self.resume:
             if any(not web_url(task['url']) or not 0 <= task['depth'] < self.max_pages for task in self.resume['todo']):
-                raise ValueError('历史续采位置无效。')
+                raise ValueError(msg('core.collect.bad_resume'))
         return self
 
 
@@ -119,14 +121,15 @@ def parse_page(response, requested_url, selector='', captured=()):
     from markdownify import markdownify
 
     base = str(response.url or requested_url)
-    title = ' '.join(response.css('title::text').getall()).strip() or urlsplit(base).hostname or '网页'
-    title = title[:300]
+    # (1.8.0, C-F08) The page's own title or host name is raw text; the fallback is a message.
+    title = raw((' '.join(response.css('title::text').getall()).strip() or urlsplit(base).hostname or '')[:300]) \
+        or msg('value.page_title.fallback')
     base_tag = response.css('base::attr(href)').get()
     document_base = web_url(base_tag, base) if base_tag else base
     document_base = document_base or base
     roots = response.css(selector) if selector else [response]
     if selector and not roots:
-        raise ValueError('该页没有匹配的内容，请检查 CSS 范围或尝试动态模式。')
+        raise ValueError(msg('core.collect.no_match'))
     links = {}
 
     def add(href, label='', media=False):
@@ -136,7 +139,10 @@ def parse_page(response, requested_url, selector='', captured=()):
         if not url:
             return
         kind = link_kind(url, media)
-        item = {'url': url, 'title': re.sub(r'\s+', ' ', label).strip()[:200] or title,
+        # (1.8.0, C-F08 / C-H-10) A label from the page is raw text; without one the link takes the
+        # page title (the same object); an app-made label (a message) is kept as it is.
+        item = {'url': url, 'title': label if isinstance(label, messages.Message)
+                else raw(re.sub(r'\s+', ' ', label).strip()[:200]) or title,
                 'kind': kind, 'source': base}
         # Prefer the media classification when a URL appears as both link and source.
         if url not in links or kind == '媒体地址':
@@ -153,7 +159,7 @@ def parse_page(response, requested_url, selector='', captured=()):
     for meta in response.css('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[property="og:audio"]'):
         add(meta.attrib.get('content'), media=True)
     for url in captured:
-        add(url, '动态页面媒体请求', True)
+        add(url, msg('value.link_kind.dynamic_request'), True)
 
     if selector:
         text_roots = roots
@@ -196,12 +202,13 @@ def collect(options, emit):
             url, page_number = task['url'], task['depth']
             if not url or url in visited:
                 continue
-            emit('collect_status', f'正在采集第 {len(visited) + 1} 页…')
+            emit('collect_status', msg('core.collect.page_n', page=len(visited) + 1))
             try:
                 if MEDIA_EXT.search(urlsplit(url).path):
                     visited.add(url)
-                    emit('collect_page', {'url': url, 'title': '媒体直链', 'text': '', 'markdown': '',
-                        'links': [{'url': url, 'title': '媒体直链', 'kind': '媒体地址', 'source': url}], 'next': None,
+                    emit('collect_page', {'url': url, 'title': msg('value.link_kind.direct'), 'text': '', 'markdown': '',
+                        'links': [{'url': url, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': url}],
+                        'next': None,
                         '_checkpoint': dict(visited=sorted(visited), todo=todo + deferred)})
                     continue
                 captured = set()
@@ -231,9 +238,9 @@ def collect(options, emit):
                                            proxy=options.proxy or None, follow_redirects=True,
                                            verify=ca_bundle())
                 if response.status >= 400:
-                    raise ValueError(f'网站返回 HTTP {response.status}，可尝试动态模式或稍后重试。')
+                    raise ValueError(msg('core.collect.http_status', status=response.status))
                 if len(response.body) > 8 * 1024 * 1024:
-                    raise ValueError('页面超过 8 MB，请缩小采集范围。')
+                    raise ValueError(msg('core.collect.too_large'))
                 result = parse_page(response, url, options.selector, captured)
                 visited.update((url, result['url']))
                 if result['next'] and result['next'] not in visited and page_number + 1 < options.max_pages:
@@ -243,10 +250,11 @@ def collect(options, emit):
                 if todo:
                     time.sleep(1)
             except Exception as error:
-                # Credentials in a proxy URL must not appear in logs or IPC errors.
-                message = str(error).replace(options.proxy, '[代理]') if options.proxy else str(error)
+                # Credentials in a proxy URL must not appear in logs or IPC errors (masked before
+                # anything is emitted or stored, P8; the message keeps its key, C-F15).
+                message = cut(masked(message_of(error), [(options.proxy, PROXY_TOKEN)] if options.proxy else []), 900)
                 deferred.append(task)
-                emit('collect_error', message[:900])
+                emit('collect_error', message)
                 emit('collect_checkpoint', dict(visited=sorted(visited), todo=todo + deferred))
     emit('collect_checkpoint', dict(visited=sorted(visited), todo=deferred))
 
@@ -257,10 +265,13 @@ def worker_main(job):
     with job.with_suffix('.events').open('a', encoding='utf-8', newline='\n') as output:
         store = None
         def emit(kind, value):
+            # The store gets the in-memory values; the IPC line carries them in the wire form
+            # (MESSAGES.md 2.8), so the window receives the same messages.
             if store and kind in ('collect_page', 'collect_checkpoint', 'collect_error'):
                 store.collection_event(options.job_id, kind, value)
-            output.write(json.dumps([kind, value], ensure_ascii=False) + '\n')
+            output.write(json.dumps([kind, messages.wire(value)], ensure_ascii=False) + '\n')
             output.flush()
+        emit = messages.guarded(emit, 'collector')
         options = None
         try:
             options = CollectOptions(**json.loads(job.read_text(encoding='utf-8')))
@@ -276,10 +287,9 @@ def worker_main(job):
                 store.change_job(options.job_id, status='partial' if pending or record['data']['errors'] else 'completed')
             return 0
         except Exception as error:
-            message = str(error)
-            if options and options.proxy:
-                message = message.replace(options.proxy, '[代理]')
-            emit('collect_error', message[:900])
+            message = cut(masked(message_of(error), [(options.proxy, PROXY_TOKEN)] if options and options.proxy else []),
+                          900)
+            emit('collect_error', message)
             if store:
                 store.change_job(options.job_id, status='partial')
             return 1
@@ -297,11 +307,22 @@ def remove_tree(path, attempts=10):
 
 class CollectionRunner:
     def __init__(self, emit):
-        self.emit = emit
+        self.emit = messages.guarded(emit, 'collector')
         self.cancelled = threading.Event()
         self.process = None
         self.lock = threading.Lock()
         self.job = procutil.JobObject()
+
+    def _forward(self, line):
+        """Emit one line of the worker's request.events in the window's process (MESSAGES.md 2.8);
+        a line that is not an event (bad JSON, a malformed wire object: ValueError) is skipped."""
+        try:
+            kind, value = json.loads(line)
+            value = messages.unwire(value)
+            if kind in ('collect_status', 'collect_page', 'collect_error', 'collect_checkpoint'):
+                self.emit(kind, value)
+        except (ValueError, TypeError):
+            return
 
     def cancel(self):
         self.cancelled.set()
@@ -344,22 +365,17 @@ class CollectionRunner:
                         lines = pending.split(b'\n')
                         pending = lines.pop()
                         for line in lines:
-                            try:
-                                kind, value = json.loads(line)
-                                if kind in ('collect_status', 'collect_page', 'collect_error', 'collect_checkpoint'):
-                                    self.emit(kind, value)
-                            except (ValueError, TypeError):
-                                continue
+                            self._forward(line)
                         if finished:
                             break
                         self.cancelled.wait(.06)
                 procutil.terminate_tree(process, self.job)
                 code = process.wait()
             if code and not self.cancelled.is_set():
-                self.emit('collect_error', f'采集进程退出（{code}），请检查页面或动态模式所需的 Chrome。')
+                self.emit('collect_error', msg('core.collect.worker_exit', code=code))
         except Exception as error:
             if not self.cancelled.is_set():
-                self.emit('collect_error', str(error)[:900])
+                self.emit('collect_error', cut(message_of(error), 900))
         finally:
             procutil.terminate_tree(process, self.job)
             if process:

@@ -64,7 +64,8 @@ try:
     app.operation = 'download'
     app.handle('item', {'index': 1, 'total': 2, 'url': 'https://example.org/one'})
     app.handle('title', '第一条测试媒体')
-    app.handle('waiting', {'index': 1, 'total': 2, 'seconds': 300, 'reason': '网站限流，暂停队列'})
+    # (1.8.0) the waiting reason as the engine emits it (a message, MESSAGES.md 8.3)
+    app.handle('waiting', {'index': 1, 'total': 2, 'seconds': 300, 'reason': engine.msg('core.wait.rate_queue')})
     assert '05:00' in app.metrics.cget('text')
     assert app.rows[0]['badge'].cget('text') == '等待中'
     assert not app.animating

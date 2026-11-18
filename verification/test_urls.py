@@ -9,7 +9,7 @@ import library
 import urls
 
 WATCH = 'https://www.youtube.com/watch?v=AAA'
-BACKUP = _sandbox.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src'
+BACKUP = _sandbox.release_src('1.5.1')
 
 
 class ExtractTests(unittest.TestCase):

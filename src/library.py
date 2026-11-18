@@ -21,6 +21,8 @@ import uuid
 
 import formats
 import i18n                 # (1.7.0) the labels of the files written for the owner (I18N.md 8.8)
+import messages
+from messages import message_of, msg, raw, stripped
 import paths
 import procutil
 from urls import identity   # moved to urls.py unchanged; kept here for importers
@@ -181,10 +183,51 @@ def read_options(options):
     return options
 
 
-def _read_record(data):
-    if isinstance(data, dict) and isinstance(data.get('options'), dict):
-        data['options'] = read_options(data['options'])
-    return data
+# (1.8.0, MESSAGES.md 3.4) Two load paths, never mixed.  A display read (_read_record) decodes the
+# texts, gives 1.6.0 callers the real format in 'mode' and lifts the archive-context titles; nothing
+# read that way is ever written back.  A read-modify-write (_load_for_write) decodes the text fields
+# of its record kind only: every other value, 'options' above all (its stored 1.5.1-compatible 'mode'
+# and MODE_KEY), is the very object json.loads gave, so it is written back with its stored bytes.
+
+def _context_titles(options):
+    """Download options whose archive_contexts titles are lifted for display (kind context_title,
+    no sidecar inside options; L-4).  The codec walks the link -> context map itself (I-1 amendment
+    A2); the stored options object is never changed (a copy where a title changed)."""
+    contexts = options.get('archive_contexts')
+    if not isinstance(contexts, dict) or not contexts:
+        return options
+    shown = messages.decode(options, 'job_options')
+    if not isinstance(shown, dict) or shown.get('archive_contexts') is contexts:
+        return options
+    if 'msgs' in options:                                # decode drops it; options are kept as they are
+        shown['msgs'] = options['msgs']
+    return shown
+
+
+def _read_record(data, columns=None):
+    """(display read) The job record decoded (kind job), with read_options and the lifted context
+    titles applied to its options, and the decoded column texts; (data, columns)."""
+    shown = messages.decode(data, 'job')
+    if isinstance(shown, dict) and isinstance(shown.get('options'), dict):
+        shown['options'] = _context_titles(read_options(shown['options']))
+    if columns is not None:
+        columns = messages.decode_columns(data if isinstance(data, dict) else {}, 'job', columns)
+    return shown, columns
+
+
+def _load_for_write(text, kind, columns=None):
+    """(read-modify-write) The stored JSON loaded with the text fields of ``kind`` decoded and the
+    column texts decoded with its sidecar; ``options`` and every other value untouched; (data, columns)."""
+    stored = json.loads(text)
+    data = messages.decode(stored, kind)
+    if columns is not None:
+        columns = messages.decode_columns(stored if isinstance(stored, dict) else {}, kind, columns)
+    return data, columns
+
+
+def _dump(data, kind, columns=None):
+    """The JSON text a record is stored as: the record with its sidecar (messages.encode)."""
+    return json.dumps(messages.encode(data, kind, columns), ensure_ascii=False)
 
 
 def _format_of(options):
@@ -235,15 +278,12 @@ def job_downloads(data):
     return result
 
 
-# (final fix round 3, SWEEP-3) The app-made page and link titles of the collector (the fallback 网页,
-# 媒体直链, 动态页面媒体请求; library_ui.PAGE_TITLE_KEYS has the same value) are written in the
-# running language into the files for the owner (网页正文.txt / .md, 阅读说明.txt; I18N.md 8.8, 9.3);
-# the record keeps the stored title, and any other title (user data) is written as it is.
-PAGE_TITLE_KEYS = ('value.page_title.', 'value.link_kind.direct', 'value.link_kind.dynamic_request')
-
-
-def _shown_title(title):
-    return i18n.localize(title, keys=PAGE_TITLE_KEYS) if isinstance(title, str) else title
+def _decoded_title(title):
+    """A page / archive title decoded as the stored title it is, for the files for the owner
+    (网页正文.*, 阅读说明.txt; I18N.md 8.8), which show it with messages.show (an app-made title in
+    the running language, any other title as it is): a typed value stays as it is, a plain text is
+    lifted like any keyless stored text (MESSAGES.md 4.4)."""
+    return messages.decode({'title': title}, 'archive')['title']
 
 
 def safe_name(value, limit=60):
@@ -261,15 +301,38 @@ def write_json(path, data):
 alive = procutil.alive
 
 
+def _stripped_reason(reason):
+    """The stored form of a task row's reason: 1.7.0 stored ``reason.strip()``.  A Message / Value
+    whose zh text has edge whitespace (a reason cut to 70 characters, D-F28) is rebuilt with the
+    stripped text and keeps its key, params, origin and entry, the way ``cut`` keeps them (en still
+    shows it whole); any other value goes through ``stripped``."""
+    if isinstance(reason, (messages.Message, messages.Value)):
+        text = messages.zh(reason)
+        if text == text.strip():
+            return reason
+        if isinstance(reason, messages.Value):
+            return messages.Value(reason.group, text.strip())
+        return messages.Message(text.strip(), reason.key, reason.params, reason.origin, reason.entry)
+    return stripped(reason)
+
+
 def _storable(value):
     """An event value whose texts can be written as UTF-8: a lone UTF-16 surrogate (a title
-    cut inside an emoji, which yt-dlp prints escaped) becomes '?'.  Other values unchanged."""
+    cut inside an emoji, which yt-dlp prints escaped) becomes '?'.  Other values unchanged.
+    (1.8.0) The types are kept: a Message / Raw / Value that cannot be written is rebuilt with the
+    repaired text (a Message keeps its key, origin and entry, its params repaired the same way)."""
     if isinstance(value, str):
         try:
             value.encode('utf-8')
             return value
         except UnicodeEncodeError:
-            return value.encode('utf-8', 'replace').decode('utf-8')
+            text = messages.zh(value).encode('utf-8', 'replace').decode('utf-8')
+        if isinstance(value, messages.Message):
+            params = {name: _storable(item) for name, item in value.params.items()}
+            return messages.Message(text, value.key, params, value.origin, value.entry)
+        if isinstance(value, messages.Value):
+            return messages.Value(value.group, text)
+        return raw(text) if isinstance(value, messages.Raw) else text
     if isinstance(value, dict):
         return {_storable(key): _storable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -368,43 +431,50 @@ class Library:
         data = dict(options=options, subscription=subscription, checkpoint=None, errors=[],
                     owner=os.getpid(), worker=None, completed=[], files=[])
         with self.db() as db:
-            db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', (job, kind, title, 'running', time.time(), json.dumps(data, ensure_ascii=False)))
+            db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', (job, kind, title, 'running', time.time(),
+                                                                 _dump(data, 'job', {'title': title, 'kind': kind})))
         return job
 
     def job(self, job):
         with self.db() as db:
             row = db.execute('SELECT * FROM jobs WHERE id=?', (job,)).fetchone()
             if not row:
-                raise ValueError('找不到任务记录。')
+                raise ValueError(msg('core.library.no_job'))
             result = dict(row)
-            result['data'] = _read_record(json.loads(row['data']))
-            result['pages'] = [json.loads(r[0]) for r in db.execute('SELECT data FROM pages WHERE job=? ORDER BY rowid', (job,))]
+            result['data'], columns = _read_record(json.loads(row['data']), {'title': row['title'], 'kind': row['kind']})
+            result['title'] = columns['title']
+            result['pages'] = [messages.decode(json.loads(r[0]), 'page')
+                               for r in db.execute('SELECT data FROM pages WHERE job=? ORDER BY rowid', (job,))]
             return result
+
+    @staticmethod
+    def _job_columns(row):
+        return {'title': row['title'], 'kind': row['kind']}
 
     def change_job(self, job, status=None, **updates):
         with self.tx() as db:
-            row = db.execute('SELECT data,status FROM jobs WHERE id=?', (job,)).fetchone()
-            data = json.loads(row[0])
+            row = db.execute('SELECT data,status,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
+            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
             if 'options' in updates:
                 updates['options'] = stored_options(updates['options'])
             data.update(updates)
             db.execute('UPDATE jobs SET data=?,status=?,updated=? WHERE id=?',
-                       (json.dumps(data, ensure_ascii=False), status or row[1], time.time(), job))
+                       (_dump(data, 'job', columns), status or row[1], time.time(), job))
 
     def collection_event(self, job, kind, value):
         # Page and its frontier commit together, inside the worker BEFORE GUI notification.
         with self.tx() as db:
-            row = db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()
-            data = json.loads(row[0])
+            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
+            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
             if kind == 'collect_page':
                 page = dict(value)
                 data['checkpoint'] = page.pop('_checkpoint')
-                db.execute('INSERT OR REPLACE INTO pages VALUES(?,?,?)', (job, page['url'], json.dumps(page, ensure_ascii=False)))
+                db.execute('INSERT OR REPLACE INTO pages VALUES(?,?,?)', (job, page['url'], _dump(page, 'page')))
             elif kind == 'collect_checkpoint':
                 data['checkpoint'] = value
             elif kind == 'collect_error':
                 data['errors'].append(value)
-            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (json.dumps(data, ensure_ascii=False), time.time(), job))
+            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job', columns), time.time(), job))
 
     def history(self, limit=HISTORY_PAGE, search=''):
         """The newest ``limit`` jobs, newest first; with ``search``, only the jobs whose title or
@@ -430,10 +500,13 @@ class Library:
                 # program) is listed by its title with empty data, as the search's json_valid guard
                 # intends; its status is shown as stored and nothing is written to it.
                 row['data'] = {}
+                row['title'] = messages.decode_columns({}, 'job', self._job_columns(row))['title']
                 continue
-            row['data'] = _read_record(data)
+            row['data'], columns = _read_record(data, self._job_columns(row))
+            row['title'] = columns['title']
             if row['status'] == 'running' and not alive(row['data'].get('worker') or row['data'].get('owner')):
                 try:
+                    # A read-modify-write of its own: the row decoded for display is never written.
                     self.change_job(row['id'], status='interrupted')
                 except sqlite3.OperationalError as error:
                     if not is_busy(error):
@@ -513,14 +586,33 @@ class Library:
     def extend_job(self, job, urls, overrides=None):
         """Links that joined a running job: a later resume sees them, each with its own format and folder."""
         with self.tx() as db:
-            row = db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()
-            data = json.loads(row[0])
+            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
+            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
             self._extend(data, urls, overrides)
-            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (json.dumps(data, ensure_ascii=False), time.time(), job))
+            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job', columns), time.time(), job))
 
     def rename_job(self, job, title):
+        """(1.8.0) One transaction: the title column and the job's sidecar entry for it (C-H-3).
+        The record is rewritten only when its sidecar changes."""
+        title = str(title)
         with self.tx() as db:
-            db.execute('UPDATE jobs SET title=? WHERE id=?', (str(title), job))
+            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
+            text = None
+            if row is not None:
+                try:
+                    stored = json.loads(row['data'])
+                except (TypeError, ValueError):
+                    stored = None
+                if isinstance(stored, dict):
+                    data, columns = _load_for_write(row['data'], 'job', self._job_columns(row))
+                    columns['title'] = title
+                    encoded = messages.encode(data, 'job', columns)
+                    if encoded.get('msgs') != stored.get('msgs'):
+                        text = json.dumps(encoded, ensure_ascii=False)
+            if text is None:
+                db.execute('UPDATE jobs SET title=? WHERE id=?', (title, job))
+            else:
+                db.execute('UPDATE jobs SET title=?,data=? WHERE id=?', (title, text, job))
 
     @staticmethod
     def _record_download(db, keys, format, url, title, path, job):
@@ -563,8 +655,8 @@ class Library:
             return
         value = _storable(value)
         with self.tx() as db:
-            row = db.execute('SELECT data,status FROM jobs WHERE id=?', (job,)).fetchone()
-            data, status = json.loads(row[0]), row[1]
+            row = db.execute('SELECT data,status,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
+            (data, columns), status = _load_for_write(row[0], 'job', self._job_columns(row)), row[1]
             if kind == 'item':
                 data['current'] = value['url']
                 data['current_key'] = value.get('key')
@@ -573,10 +665,14 @@ class Library:
                 data['current_multi'] = bool(value.get('multi'))
             elif kind == 'title':
                 # The first title names the job, so the history shows a song instead of a count.
-                if isinstance(value, str) and value.strip() and not data.get('titled'):
+                # (1.8.0, C-F22) The media title is raw text; the job's sidecar is rewritten below,
+                # in the same transaction.
+                if isinstance(value, str) and messages.zh(value).strip() and not data.get('titled'):
                     count = len((data.get('options') or {}).get('urls') or [])
-                    db.execute('UPDATE jobs SET title=? WHERE id=?',
-                               (f'{value} 等 {count} 条' if count > 1 else value, job))
+                    media = value if isinstance(value, messages.Message) else raw(value)
+                    title = msg('value.job_title.multi', title=media, count=count) if count > 1 else media
+                    db.execute('UPDATE jobs SET title=? WHERE id=?', (title, job))
+                    columns['title'] = title
                     data['titled'] = True
             elif kind == 'media':
                 if isinstance(value, dict) and isinstance(value.get('filepath'), str) and value['filepath']:
@@ -624,13 +720,15 @@ class Library:
                     for key in dict.fromkeys(identity(link) for link in (url, data.get('current_origin')) if link):
                         db.execute('UPDATE entries SET pending=0 WHERE key=?', (key,))
                 if value.get('error'):
-                    data.setdefault('errors', []).append(str(value['error']))
+                    # (1.8.0, C-F34) The error keeps its type (Message / Raw / plain text).
+                    error = value['error']
+                    data.setdefault('errors', []).append(error if isinstance(error, str) else str(error))
                     data['errors'] = data['errors'][-20:]
                     # The short Chinese reason the task row showed for that line (additive key;
                     # 1.5.1 ignores it): the history note shows it (polish ui-wording-consistency-5).
                     reason = value.get('reason')
-                    if isinstance(reason, str) and reason.strip():
-                        data['last_reason'] = {'error': data['errors'][-1], 'reason': reason.strip()}
+                    if isinstance(reason, str) and messages.zh(reason).strip():
+                        data['last_reason'] = {'error': data['errors'][-1], 'reason': _stripped_reason(reason)}
             elif kind == 'done':
                 data['result'] = value
                 # Not completed while anything is left: a failure, an archive error, a bot-check
@@ -640,39 +738,44 @@ class Library:
                     'partial' if (value['failed'] or value.get('archive_errors') or value.get('blocked')
                                   or value.get('engine_error') or value.get('pending_urls')) else 'completed')
             db.execute('UPDATE jobs SET data=?,status=?,updated=? WHERE id=?',
-                       (json.dumps(data, ensure_ascii=False), status, time.time(), job))
+                       (_dump(data, 'job', columns), status, time.time(), job))
 
     def subscription(self, name, options, interval=3600, media_only=True, first_new=True):
         if interval not in (0, 900, 3600, 86400):
-            raise ValueError('不支持的订阅检查间隔。')
+            raise ValueError(msg('core.library.bad_interval'))
         options = dict(options)
         options['proxy'] = ''
         key = uuid.uuid4().hex
         data = dict(options=options, media_only=media_only, first_new=first_new,
                     initialized=False, last_check=None, last_error='', last_new=0)
+        # (1.8.0, C-F24) The name the owner typed is raw text; without one, a message.
+        name = raw(name.strip()[:100]) or msg('value.subscription.untitled')
         with self.db() as db:
             db.execute('INSERT INTO subscriptions VALUES(?,?,?,?,?,?)',
-                       (key, name.strip()[:100] or '未命名订阅', 1, interval, time.time(), json.dumps(data, ensure_ascii=False)))
+                       (key, name, 1, interval, time.time(), _dump(data, 'subscription', {'name': name})))
         return key
 
     def subscriptions(self):
         with self.db() as db:
             rows = [dict(r) for r in db.execute('SELECT * FROM subscriptions ORDER BY rowid')]
             for row in rows:
-                row['data'] = json.loads(row['data'])
+                stored = json.loads(row['data'])
+                row['data'] = messages.decode(stored, 'subscription')
+                row['name'] = messages.decode_columns(stored if isinstance(stored, dict) else {}, 'subscription',
+                                                      {'name': row['name']})['name']
                 row['pending'] = db.execute('SELECT count(*) FROM entries WHERE subscription=? AND pending=1', (row['id'],)).fetchone()[0]
             return rows
 
     def configure_subscription(self, key, enabled, interval):
         if interval not in (0, 900, 3600, 86400):
-            raise ValueError('不支持的订阅检查间隔。')
+            raise ValueError(msg('core.library.bad_interval'))
         with self.db() as db:
             db.execute('UPDATE subscriptions SET enabled=?,interval=?,next_check=? WHERE id=?', (int(enabled), interval, time.time() + interval, key))
 
     def finish_subscription(self, key, pages, successful, error=''):
         with self.tx() as db:
             row = db.execute('SELECT * FROM subscriptions WHERE id=?', (key,)).fetchone()
-            data = json.loads(row['data'])
+            data, columns = _load_for_write(row['data'], 'subscription', {'name': row['name']})
             new = 0
             if successful:
                 for page in pages:
@@ -684,18 +787,20 @@ class Library:
                         pending = old[0] if old else int(data['initialized'] or data['first_new'])
                         new += int(old is None and pending)
                         payload = dict(item, page_url=page['url'], page_title=page['title'])
-                        db.execute('INSERT OR REPLACE INTO entries VALUES(?,?,?,?)', (key, item_key, pending, json.dumps(payload, ensure_ascii=False)))
+                        db.execute('INSERT OR REPLACE INTO entries VALUES(?,?,?,?)', (key, item_key, pending,
+                                                                                      _dump(payload, 'entry')))
                 data.update(initialized=True, last_check=time.time(), last_error='', last_new=new)
             else:
                 # A stopped/failed scan never establishes a baseline or consumes new items.
-                data['last_error'] = error or '检查中断；下次重试，不更新已见记录'
+                data['last_error'] = error or msg('value.subscription.interrupted')
             db.execute('UPDATE subscriptions SET data=?,next_check=? WHERE id=?',
-                       (json.dumps(data, ensure_ascii=False), time.time() + max(900, row['interval']), key))
+                       (_dump(data, 'subscription', columns), time.time() + max(900, row['interval']), key))
             return new
 
     def pending(self, key):
         with self.db() as db:
-            return [json.loads(r[0]) for r in db.execute('SELECT data FROM entries WHERE subscription=? AND pending=1 ORDER BY rowid', (key,))]
+            return [messages.decode(json.loads(r[0]), 'entry')
+                    for r in db.execute('SELECT data FROM entries WHERE subscription=? AND pending=1 ORDER BY rowid', (key,))]
 
     def downloaded(self, url):
         with self.db() as db:
@@ -703,11 +808,12 @@ class Library:
 
     def archive_index(self, folder, data):
         with self.db() as db:
-            db.execute('INSERT OR REPLACE INTO archives VALUES(?,?,?)', (str(folder), time.time(), json.dumps(data, ensure_ascii=False)))
+            db.execute('INSERT OR REPLACE INTO archives VALUES(?,?,?)', (str(folder), time.time(), _dump(data, 'archive')))
 
     def archives(self):
         with self.db() as db:
-            return [dict(folder=r['folder'], **json.loads(r['data'])) for r in db.execute('SELECT * FROM archives ORDER BY updated DESC')]
+            return [dict(folder=r['folder'], **messages.decode(json.loads(r['data']), 'archive'))
+                    for r in db.execute('SELECT * FROM archives ORDER BY updated DESC')]
 
     def contexts(self, urls):
         remaining, result = set(urls), {}
@@ -715,7 +821,7 @@ class Library:
             for row in db.execute('SELECT job,url,data FROM pages ORDER BY rowid DESC'):
                 if not remaining:
                     break
-                page = json.loads(row['data'])
+                page = messages.decode(json.loads(row['data']), 'page')
                 for item in page['links']:
                     if item['url'] in remaining:
                         result[item['url']] = dict(title=item['title'], source=item['source'], job_id=row['job'], page_url=page['url'])
@@ -777,7 +883,7 @@ def open_library(path=None):
     except (OSError, sqlite3.Error) as error:
         folder = Path(tempfile.mkdtemp(prefix='ytdlp-history-'))
         atexit.register(shutil.rmtree, folder, ignore_errors=True)
-        return Library(folder / 'library.sqlite3'), f'历史记录本次不保存：{error}'
+        return Library(folder / 'library.sqlite3'), msg('core.library.temporary', error=message_of(error))
 
 
 class Archive:
@@ -795,7 +901,7 @@ class Archive:
         # Stable ID paths survive title changes and retries, and avoid duplicate media.
         folder = self.root / (safe_name(host, 45) + '_' + source_key) / item_key
         if not folder.resolve().is_relative_to(self.root):
-            raise ValueError('归档目录超出资料库范围。')
+            raise ValueError(msg('core.archive.outside_root'))
         folder.mkdir(parents=True, exist_ok=True)
         record = folder / '资料信息.json'
         try:
@@ -803,6 +909,7 @@ class Archive:
             if not (isinstance(data, dict) and isinstance(data.get('files'), list)
                     and isinstance(data.get('transcripts'), list)):
                 raise ValueError('not an archive record')
+            data = messages.decode(data, 'archive')        # (1.8.0) read-modify-write (3.4)
         except FileNotFoundError:
             data = None
         except ValueError:
@@ -822,7 +929,7 @@ class Archive:
             # (1.7.0) The labels are in the running language (zh: the 1.6.0 bytes); the file names stay (D10).
             note = i18n.t('filetext.truncated_source') if page.get('text_truncated') else ''
             for filename, body in [('网页正文.txt', page.get('text', '')), ('网页正文.md', page.get('markdown', ''))]:
-                (folder / filename).write_text(i18n.t('filetext.page_text', title=_shown_title(page['title']),
+                (folder / filename).write_text(i18n.t('filetext.page_text', title=messages.show(_decoded_title(page['title'])),
                                                       url=page['url'],
                                                       note=note, body=body), encoding='utf-8-sig')
             data['page_title'] = page['title']
@@ -844,17 +951,17 @@ class Archive:
                 return target
             except FileExistsError:
                 continue
-        raise OSError(f'无法保留损坏的资料信息文件：{record}')
+        raise OSError(msg('core.archive.cannot_set_aside', record=os.fspath(record)))
 
     def save(self, folder, data):
         folder = Path(folder).resolve()
         if not folder.is_relative_to(self.root):
-            raise ValueError('归档目录超出资料库范围。')
-        write_json(folder / '资料信息.json', data)
+            raise ValueError(msg('core.archive.outside_root'))
+        write_json(folder / '资料信息.json', messages.encode(data, 'archive'))
         # (1.7.0) The readme's labels are in the running language (zh: the 1.6.0 bytes); it is rewritten
         # on every save, so a readme of the other language is replaced the next time (I18N.md 8.8).
         (folder / '阅读说明.txt').write_text(
-            i18n.t('filetext.readme_head', title=_shown_title(data['title']), url=data['url'], source=data['source'],
+            i18n.t('filetext.readme_head', title=messages.show(_decoded_title(data['title'])), url=data['url'], source=data['source'],
                    author=data.get('uploader') or i18n.t('filetext.author_unknown'))
             + data.get('description', '') + i18n.t('filetext.readme_media') + '\n'.join(data['files'])
             + i18n.t('filetext.readme_transcripts') + '\n'.join(data['transcripts']) + '\n', encoding='utf-8-sig')
@@ -865,9 +972,12 @@ class Archive:
         folder = Path(folder).resolve()
         path = Path(metadata['filepath']).resolve()
         if not path.is_relative_to(folder) or not folder.is_relative_to(self.root) or not path.is_file():
-            raise ValueError('归档文件与本条资料目录不匹配。')
-        data = json.loads(paths.read_text(folder / '资料信息.json'))
-        data.update({key: metadata[key] for key in ('id', 'title', 'uploader', 'description', 'webpage_url', 'upload_date') if metadata.get(key) is not None})
+            raise ValueError(msg('core.archive.media_mismatch'))
+        data = messages.decode(json.loads(paths.read_text(folder / '资料信息.json')), 'archive')
+        found = {key: metadata[key] for key in ('id', 'title', 'uploader', 'description', 'webpage_url', 'upload_date') if metadata.get(key) is not None}
+        if isinstance(found.get('title'), str):
+            found['title'] = raw(found['title'])      # (1.8.0) the media's own title is raw text (P5)
+        data.update(found)
         relative = str(path.relative_to(folder))
         if relative not in data['files']:
             data['files'].append(relative)
@@ -877,13 +987,13 @@ class Archive:
     def attach(self, folder, source):
         folder, source = Path(folder).resolve(), Path(source).resolve()
         if not folder.is_relative_to(self.root) or source.suffix.lower() not in ('.txt', '.srt', '.md', '.vtt'):
-            raise ValueError('请选择 TXT、SRT、MD 或 VTT 转写稿。')
-        data = json.loads(paths.read_text(folder / '资料信息.json'))
+            raise ValueError(msg('core.archive.transcript_type'))
+        data = messages.decode(json.loads(paths.read_text(folder / '资料信息.json')), 'archive')
         target = folder / '转写稿' / safe_name(source.stem, 75)
         target = target.with_name(target.name + '_' + hashlib.sha256(source.read_bytes()).hexdigest()[:10] + source.suffix.lower())
         target.parent.mkdir(exist_ok=True)
         if not target.resolve().is_relative_to(folder):
-            raise ValueError('转写稿目录超出本条资料范围。')
+            raise ValueError(msg('core.archive.transcript_outside'))
         if not target.exists():
             shutil.copy2(source, target)
         relative = str(target.relative_to(folder))

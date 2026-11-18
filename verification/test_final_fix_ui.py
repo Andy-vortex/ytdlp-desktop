@@ -218,7 +218,8 @@ class B_ClearTests(Base):
             with unfinished.LOCK:
                 unfinished.save(unfinished.merge(unfinished.load_for_merge(lambda text: None), [result]))
             runner.emit('item_done', {'index': 1, 'cancelled': False, 'success': False, 'files': 0,
-                                      'bot_check': False, 'url': broken, 'reason': '链接不存在（404）'})
+                                      'bot_check': False, 'url': broken,
+                                      'reason': engine.msg('core.reason.http_404')})     # (1.8.0) as the engine emits it
             runner.emit('item', {'index': 2, 'total': 2, 'url': fine})
             runner.emit('item_done', {'index': 2, 'cancelled': False, 'success': True, 'files': 1,
                                       'bot_check': False, 'url': fine})

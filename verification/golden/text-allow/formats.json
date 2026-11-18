@@ -1,0 +1,66 @@
+{
+ "module": "formats",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "FLAC · 24 位": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.audio_flac); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "M4A · AAC 原生（免转码）": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.audio_m4a); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "MKV · 保留源画质": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.video_mkv); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "MP4 · 兼容优先（H.264）": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.video_mp4); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "WAV · 32 位浮点": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.audio_wav); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "原始音频 · 保留源编码": {
+   "category": "stored",
+   "reason": "stored / compared enum value (format.audio_best); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "最佳": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.resolution.best); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "视频 · MP4 兼容": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.video_mp4); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "视频 · 最佳画质 MKV": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.video_mkv); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "音频 · FLAC": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_flac); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "音频 · M4A 原生": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_m4a); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "音频 · MP3 320K": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_mp3); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "音频 · WAV 32 位": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_wav); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "音频 · 原始最佳": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_best); shown through i18n.label or a value.* message, never as text (P7)"
+  }
+ },
+ "raises": {},
+ "composed": {},
+ "sinks": {},
+ "pending_keys": {}
+}

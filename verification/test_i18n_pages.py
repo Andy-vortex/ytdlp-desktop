@@ -12,6 +12,10 @@ its zh value, the library tab ids stay (7); stored texts in the history and subs
 in the running language (9.3); the archive tools row and the Type column widths (10.1); the
 engine badge (9.3) and an English check of the three pages.  Windows are never on screen
 (alpha 0, no frame); no network (the GitHub check is patched); no real engine.
+
+(1.8.0, MESSAGES.md 8.3) Live events carry the messages the 1.8.0 core emits; stored rows are seeded
+as keyless legacy text and read as the library reads them (stored_job / stored_subscription), so
+the legacy reader lifts them; user data that reads like an app text runs inside fixture_texts.
 """
 import _sandbox
 import json
@@ -26,7 +30,9 @@ from unittest import mock
 import customtkinter as ctk
 import collection_ui
 import i18n
+import library
 import library_ui
+import messages
 import naming
 import paths
 import procutil
@@ -34,6 +40,7 @@ import settings
 import ui_settings
 import ui_theme
 import updater
+from messages import msg, raw
 
 CJK = re.compile(r'[㐀-䶿一-鿿　-〿！-～]')
 ALLOWED = set('【】『』')
@@ -46,6 +53,24 @@ def cjk(text):
         for allowed in i18n.all_values(key):
             text = text.replace(allowed, '')
     return [char for char in text if CJK.match(char) and char not in ALLOWED]
+
+
+def stored_job(row):
+    """(1.8.0) A history row as Library.history returns it: the stored record and its title column
+    decoded (a keyless 1.5.1 / 1.6.0 / 1.7.0 text lifted by the legacy reader, MESSAGES.md 3.4)."""
+    columns = {'kind': row.get('kind')}
+    if 'title' in row:
+        columns['title'] = row['title']
+    data, columns = library._read_record(row.get('data') or {}, columns)
+    return dict(row, data=data, **{name: value for name, value in columns.items() if name in row})
+
+
+def stored_subscription(row):
+    """(1.8.0) A subscription row as Library.subscriptions returns it: the name column decoded."""
+    return dict(row, **messages.decode_columns(row['data'], 'subscription', {'name': row['name']}))
+
+
+USER_DATA = 'a stored title or name that reads like an app text is user data (CR2-2); show() keeps it'
 
 
 def pump(app, condition=None, timeout=5.0):
@@ -477,39 +502,42 @@ class StoredValueTests(AppCase):
 class StoredTextTests(AppCase):
     def test_history_notes_and_titles(self):
         self.enter(_sandbox.language('en'))
-        collect = {'kind': 'collect', 'pages': [{}, {}], 'data': {'completed': [], 'errors': [
-            '网站返回 HTTP 403，可尝试动态模式或稍后重试。']}}
+        collect = stored_job({'kind': 'collect', 'pages': [{}, {}], 'data': {'completed': [], 'errors': [
+            '网站返回 HTTP 403，可尝试动态模式或稍后重试。']}})
         note = library_ui.LibraryUI.history_note_text(collect)
         self.assertEqual(note, 'Saved pages: 2 · Downloaded: 0 · Last error: '
-                               + i18n.localize('网站返回 HTTP 403，可尝试动态模式或稍后重试。')[:130])
+                               + i18n.t('core.collect.http_status', status=403)[:130])
         self.assertEqual(cjk(note), [], note)
-        download = {'kind': 'download', 'pages': [], 'data': {'completed': ['a'], 'errors': ['ERROR: raw engine line'],
-                    'last_reason': {'error': 'ERROR: raw engine line', 'reason': '无法连接代理或网站，请检查代理地址'}}}
+        download = stored_job({'kind': 'download', 'pages': [], 'data': {'completed': ['a'], 'errors': ['ERROR: raw engine line'],
+                    'last_reason': {'error': 'ERROR: raw engine line', 'reason': '无法连接代理或网站，请检查代理地址'}}})
         note = library_ui.LibraryUI.history_note_text(download)
         self.assertEqual(note, 'Downloaded: 1 · Last error: ' + i18n.t('download.reason.proxy'))
         # job titles: the app-made forms localized, user data as it is
         # (final fix round 2, CR2-2) the placeholder of an untitled job; a 1.5.1 record has no 'titled'
-        row = {'kind': 'download', 'title': '3条 · 音频 · MP3 320K', 'data': {}}
+        row = stored_job({'kind': 'download', 'title': '3条 · 音频 · MP3 320K', 'data': {}})
         self.assertEqual(library_ui.history_title(row), 'Links: 3 · Audio · MP3 320K')
-        row = {'kind': 'collect', 'title': '订阅：未命名订阅', 'data': {}}
+        row = stored_job({'kind': 'collect', 'title': '订阅：未命名订阅', 'data': {}})
         self.assertEqual(library_ui.history_title(row), 'Subscription: Untitled subscription')
-        row = {'kind': 'collect', 'title': '检查未完成', 'data': {}}
-        self.assertEqual(library_ui.history_title(row), '检查未完成', 'a title equal to a core text stays')
-        row = {'kind': 'download', 'title': '2 条 · 音频 · FLAC',
-               'data': {'options': {'urls': ['https://example.org/a', 'https://example.org/b']}}}
+        row = stored_job({'kind': 'collect', 'title': '检查未完成', 'data': {}})
+        with _sandbox.fixture_texts(USER_DATA):
+            self.assertEqual(library_ui.history_title(row), '检查未完成', 'a title equal to a core text stays')
+        row = stored_job({'kind': 'download', 'title': '2 条 · 音频 · FLAC',
+                          'data': {'options': {'urls': ['https://example.org/a', 'https://example.org/b']}}})
         self.assertEqual(library_ui.history_title(row), 'example.org/a and others (2 links)')
         self.assertEqual(library_ui.history_status({'kind': 'download', 'status': 'partial', 'data': {}}), 'Unfinished')
         self.assertEqual(library_ui.history_status({'kind': 'collect', 'status': 'interrupted', 'data': {}}), 'Interrupted')
         self.assertEqual(library_ui.history_status({'kind': 'collect', 'status': 'odd', 'data': {}}), 'odd')
-        cells = library_ui.subscription_row({'name': '未命名订阅', 'enabled': True, 'interval': 900,
-                                             'data': {'last_check': 0}, 'pending': 2})
+        cells = library_ui.subscription_row(stored_subscription({'name': '未命名订阅', 'enabled': True, 'interval': 900,
+                                                                 'data': {'last_check': 0}, 'pending': 2}))
         self.assertEqual(cells, ('Untitled subscription', 'Every 15 minutes', 'Not checked yet', 2))
-        cells = library_ui.subscription_row({'name': '检查未完成', 'enabled': False, 'interval': 900,
-                                             'data': {'last_check': 0}, 'pending': 0})
+        # (1.8.0) a name the owner typed is stored raw (Library.subscription); one equal to a core text stays
+        with _sandbox.fixture_texts(USER_DATA):
+            cells = library_ui.subscription_row({'name': raw('检查未完成'), 'enabled': False, 'interval': 900,
+                                                 'data': {'last_check': 0}, 'pending': 0})
         self.assertEqual(cells[:2], ('检查未完成', 'Paused'), 'a name is user data')
         with _sandbox.language('zh'):
-            self.assertEqual(library_ui.history_title({'kind': 'collect', 'title': '订阅：未命名订阅', 'data': {}}),
-                             '订阅：未命名订阅')
+            self.assertEqual(library_ui.history_title(stored_job({'kind': 'collect', 'title': '订阅：未命名订阅',
+                                                                  'data': {}})), '订阅：未命名订阅')
             self.assertEqual(library_ui.LibraryUI.history_note_text(collect),
                              '2 个已保存页面 · 0 条下载成功 · 最近错误：网站返回 HTTP 403，可尝试动态模式或稍后重试。')
 
@@ -518,12 +546,16 @@ class StoredTextTests(AppCase):
         app = self.make_app()
         options = {'urls': ['https://www.example.org/news'], 'dynamic': False, 'scrolls': 0, 'selector': '',
                    'max_pages': 1, 'proxy': ''}
-        key = app.library.subscription('未命名订阅', options)
+        # (1.8.0) an empty name is the app's own untitled name (Library.subscription, C-F24)
+        key = app.library.subscription('', options)
+        self.assertEqual(app.library.subscriptions()[0]['name'], '未命名订阅', 'stored in its canonical form')
+        # the collect job's record as Library.job returns it: the collector's messages
         record = {'status': 'partial', 'pages': [], 'data': {'errors': [
-            '网站返回 HTTP 403，可尝试动态模式或稍后重试。', '页面超过 8 MB，请缩小采集范围。']}}
+            msg('core.collect.http_status', status=403), msg('core.collect.too_large')]}}
         pages, successful, error = collection_ui.subscription_result(record, False)
         self.assertEqual(error, '网站返回 HTTP 403，可尝试动态模式或稍后重试。；页面超过 8 MB，请缩小采集范围。',
                          'stored in its canonical form')
+        self.assertEqual(error.key, 'common.clauses', 'C-F39: one clauses message')
         self.assertEqual(collection_ui.subscription_result({'status': 'completed', 'pages': [], 'data': {'errors': []}},
                                                            True)[2], '采集已停止')
         self.assertEqual(collection_ui.subscription_result({'status': 'partial', 'pages': [], 'data': {'errors': []}},
@@ -541,6 +573,7 @@ class StoredTextTests(AppCase):
         with mock.patch.object(app, 'launch_collection') as launch:
             app.check_subscription(app.library.subscriptions()[0], automatic=True)
         self.assertEqual(launch.call_args.kwargs['title'], '订阅：未命名订阅')
+        self.assertEqual(launch.call_args.kwargs['title'].key, 'value.job_title.subscription', 'C-F40')
         self.assertEqual(ui_theme.full_text(app.link_hint),
                          i18n.t('download.hint.subscription_check', name='Untitled subscription'))
         self.assertIn('Untitled subscription', ui_theme.full_text(app.collect_note))
@@ -549,9 +582,12 @@ class StoredTextTests(AppCase):
         self.enter(_sandbox.language('en'))
         app = self.make_app()
         source = 'https://www.example.org/list'
-        links = [{'url': 'https://www.example.org/a.mp4', 'title': '网页', 'kind': '媒体直链', 'source': source},
-                 {'url': 'https://www.example.org/b', 'title': '网页正文', 'kind': '网页链接', 'source': source}]
-        app.handle('collect_page', {'url': source, 'title': '网页', 'text': 'x', 'markdown': 'x', 'links': links})
+        # what the 1.8.0 collector emits: the fallback title as a message (also as the label of a link
+        # without one, C-H-10), a link label as raw user data
+        fallback = msg('value.page_title.fallback')
+        links = [{'url': 'https://www.example.org/a.mp4', 'title': fallback, 'kind': '媒体直链', 'source': source},
+                 {'url': 'https://www.example.org/b', 'title': raw('网页正文'), 'kind': '网页链接', 'source': source}]
+        app.handle('collect_page', {'url': source, 'title': fallback, 'text': 'x', 'markdown': 'x', 'links': links})
         pump(app, timeout=0.2)
         rows = [app.collect_tree.item(iid, 'values') for iid in app.collect_tree.get_children()]
         self.assertEqual([tuple(row[:2]) for row in rows], [('Direct link', 'Web page')], 'the media filter drops the web link')
@@ -559,9 +595,9 @@ class StoredTextTests(AppCase):
         rows = [app.collect_tree.item(iid, 'values') for iid in app.collect_tree.get_children()]
         self.assertEqual([tuple(row[:2]) for row in rows], [('Direct link', 'Web page'), ('Web link', '网页正文')])
         self.assertIn('Page collected: Web page · Links: 2', self.logged(app))
-        app.handle('collect_error', '页面超过 8 MB，请缩小采集范围。')
+        app.handle('collect_error', msg('core.collect.too_large'))
         self.assertEqual(ui_theme.full_text(app.collect_status),
-                         'Some pages did not finish: ' + i18n.localize('页面超过 8 MB，请缩小采集范围。'))
+                         'Some pages did not finish: ' + i18n.t('core.collect.too_large'))
         self.assertEqual(cjk(ui_theme.full_text(app.collect_status)), [])
 
     def test_archive_and_new_item_titles_and_1_5_1_errors(self):
@@ -609,13 +645,13 @@ class StoredTextTests(AppCase):
     def test_the_engine_badge_and_the_app_badge(self):
         self.enter(_sandbox.language('en'))
         app = self.make_app()
-        with mock.patch.object(ui_settings, 'engine_version', return_value='已内置'):
+        with mock.patch.object(ui_settings, 'engine_version', return_value=updater.BUILTIN):
             app.prefs = {'latest_engine': '2099.01.01'}
             app.refresh_engine_labels()
         self.assertEqual(app.engine_badge.cget('text'), 'yt-dlp built-in')
         self.assertEqual(app.version_label.cget('text'), 'yt-dlp  built-in')
         self.assertTrue(ui_theme.full_text(app.app_badge).endswith('· new engine'), ui_theme.full_text(app.app_badge))
-        app.on_update_error('网站返回 HTTP 403，可尝试动态模式或稍后重试。')
+        app.on_update_error(msg('core.update.no_github', reason=raw('HTTP 403')))
         self.assertEqual(cjk(app.update_status.cget('text')), [])
 
 
@@ -632,9 +668,10 @@ class FinalFixRound2Tests(AppCase):
                 self.enter(_sandbox.language(lang))
                 app = self.make_app(output=f'i18n-pages-direct-{lang}')     # a smoke history of its own
                 url = self.MEDIA.replace('episode', f'{lang}-episode')
-                # what collector.py emits for such a page (without its checkpoint)
-                app.handle('collect_page', {'url': url, 'title': '媒体直链', 'text': '', 'markdown': '',
-                                            'links': [{'url': url, 'title': '媒体直链', 'kind': '媒体地址',
+                # what collector.py emits for such a page (without its checkpoint): one message (C-F12)
+                direct = msg('value.link_kind.direct')
+                app.handle('collect_page', {'url': url, 'title': direct, 'text': '', 'markdown': '',
+                                            'links': [{'url': url, 'title': direct, 'kind': '媒体地址',
                                                        'source': url}], 'next': None})
                 pump(app, timeout=0.2)
                 rows = [tuple(app.collect_tree.full_values(iid)) for iid in app.collect_tree.get_children()]
@@ -670,24 +707,30 @@ class FinalFixRound2Tests(AppCase):
         one = {'options': {'urls': ['https://example.org/a']}, 'titled': True}
         three = {'options': {'urls': ['https://example.org/a', 'https://example.org/b', 'https://example.org/c']},
                  'titled': True}
+        # (1.8.0) the rows as Library.history returns them (stored_job): the legacy reader applies the rule
         for title in ('订阅：周杰伦官方频道', '未命名订阅', '3 条 · 现场版', '3条 · 音频 · MP3 320K', '网页', 'City Night Talk'):
-            with self.subTest(title=title):
-                self.assertEqual(library_ui.history_title({'kind': 'download', 'title': title, 'data': one}), title)
-        self.assertEqual(library_ui.history_title({'kind': 'download', 'title': '现场版 等 3 条', 'data': three}),
+            with self.subTest(title=title), _sandbox.fixture_texts(USER_DATA):
+                self.assertEqual(library_ui.history_title(stored_job({'kind': 'download', 'title': title, 'data': one})),
+                                 title)
+        self.assertEqual(library_ui.history_title(stored_job({'kind': 'download', 'title': '现场版 等 3 条', 'data': three})),
                          '现场版 and others (3 links)')
-        self.assertEqual(library_ui.history_title({'kind': 'download', 'title': '订阅：周杰伦官方频道 等 3 条',
-                                                   'data': three}), '订阅：周杰伦官方频道 and others (3 links)')
+        with _sandbox.fixture_texts(USER_DATA):         # the media title inside the lifted form
+            self.assertEqual(library_ui.history_title(stored_job({'kind': 'download', 'title': '订阅：周杰伦官方频道 等 3 条',
+                                                                  'data': three})), '订阅：周杰伦官方频道 and others (3 links)')
         # an untitled download job: only its placeholder; a collect job: only '订阅：…'
-        self.assertEqual(library_ui.history_title({'kind': 'download', 'title': '订阅：X', 'data': {}}), '订阅：X')
-        self.assertEqual(library_ui.history_title({'kind': 'collect', 'title': '订阅：X', 'data': {}}),
+        with _sandbox.fixture_texts(USER_DATA):
+            self.assertEqual(library_ui.history_title(stored_job({'kind': 'download', 'title': '订阅：X', 'data': {}})),
+                             '订阅：X')
+        self.assertEqual(library_ui.history_title(stored_job({'kind': 'collect', 'title': '订阅：X', 'data': {}})),
                          'Subscription: X')
-        self.assertEqual(library_ui.history_title({'kind': 'collect', 'title': '3 条 · 音频 · FLAC', 'data': {}}),
-                         '3 条 · 音频 · FLAC')
-        with _sandbox.language('zh'):
+        with _sandbox.fixture_texts(USER_DATA):
+            self.assertEqual(library_ui.history_title(stored_job({'kind': 'collect', 'title': '3 条 · 音频 · FLAC',
+                                                                  'data': {}})), '3 条 · 音频 · FLAC')
+        with _sandbox.language('zh'), _sandbox.fixture_texts(USER_DATA):
             for row in ({'kind': 'download', 'title': '订阅：周杰伦官方频道', 'data': one},
                         {'kind': 'download', 'title': '现场版 等 3 条', 'data': three},
                         {'kind': 'collect', 'title': '订阅：未命名订阅', 'data': {}}):
-                self.assertEqual(library_ui.history_title(row), row['title'])
+                self.assertEqual(library_ui.history_title(stored_job(row)), row['title'])
 
     def test_cr2_3_a_core_error_of_the_collect_page_reads_english(self):
         from collector import CollectOptions
@@ -695,8 +738,8 @@ class FinalFixRound2Tests(AppCase):
             with self.subTest(lang=lang):
                 self.enter(_sandbox.language(lang))
                 app = self.make_app()
-                shown = i18n.localize('找不到任务记录。')
-                missing = ValueError('找不到任务记录。')
+                shown = i18n.t('core.library.no_job')
+                missing = ValueError(msg('core.library.no_job'))      # what Library.job raises (C-F21)
                 with mock.patch.object(app.library, 'create_job', side_effect=missing), \
                         mock.patch('collection_ui.messagebox') as dialogs:
                     self.assertFalse(app.launch_collection(CollectOptions(['https://www.example.org/list'])))
@@ -740,19 +783,20 @@ class FinalFixRound3Tests(AppCase):
 
     def test_cr3_1_a_captured_media_request_reads_english(self):
         """The collector's title of a media request a dynamic collection captured (动态页面媒体请求,
-        collector.py parse_page) in the collect table, its filter, the new-items table and the archive."""
-        import library
-        self.assertEqual(collection_ui.PAGE_TITLE_KEYS, library_ui.PAGE_TITLE_KEYS)
-        self.assertEqual(library.PAGE_TITLE_KEYS, library_ui.PAGE_TITLE_KEYS)
+        collector.py parse_page) in the collect table, its filter, the new-items table and the archive.
+        (1.8.0, MESSAGES.md 6.4) No key-prefix list is left to compare."""
+        for module in (collection_ui, library_ui, library):
+            self.assertFalse(hasattr(module, 'PAGE_TITLE_KEYS'), module.__name__)
         for lang, shown in (('en', 'Page request'), ('zh', '动态页面媒体请求')):
             with self.subTest(lang=lang):
                 self.enter(_sandbox.language(lang))
                 app = self.make_app(output=f'i18n-pages-request-{lang}')     # a smoke history of its own
                 request = self.REQUEST.replace('master', f'master-{lang}')
-                links = [{'url': request, 'title': '动态页面媒体请求', 'kind': '媒体地址', 'source': self.PAGE},
-                         {'url': self.PAGE + '/next', 'title': 'Next', 'kind': '网页链接', 'source': self.PAGE}]
-                # what collector.py emits for such a page in dynamic mode (without its checkpoint)
-                app.handle('collect_page', {'url': self.PAGE, 'title': 'Live stream', 'text': '', 'markdown': '',
+                links = [{'url': request, 'title': msg('value.link_kind.dynamic_request'), 'kind': '媒体地址',
+                          'source': self.PAGE},
+                         {'url': self.PAGE + '/next', 'title': raw('Next'), 'kind': '网页链接', 'source': self.PAGE}]
+                # what collector.py emits for such a page in dynamic mode (without its checkpoint, C-F10)
+                app.handle('collect_page', {'url': self.PAGE, 'title': raw('Live stream'), 'text': '', 'markdown': '',
                                             'links': links, 'next': None})
                 pump(app, timeout=0.2)
                 rows = [tuple(app.collect_tree.full_values(iid)) for iid in app.collect_tree.get_children()]
@@ -786,7 +830,6 @@ class FinalFixRound3Tests(AppCase):
     def test_sweep_3_the_archive_files_name_app_made_titles_in_the_running_language(self):
         """网页正文.txt / 阅读说明.txt write the collector's app-made titles in the running language (the
         record keeps the stored title); Chinese writes the stored text, a user title stays as it is."""
-        import library
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
                 self.enter(_sandbox.language(lang))

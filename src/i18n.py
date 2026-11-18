@@ -9,21 +9,23 @@ called (tests that build a StudioApp directly, the collector worker).  Order of 
 environment YTDLP_DESKTOP_LANG > the stored choice ('zh' / 'en') > detect() ('system').
 
     t(key, **values)        the text of a key in the running language (zh, then the key, as fallbacks)
-    localize(text, keys)    a canonical Chinese core text (or stored value) in the running language
     label(group, value)     the label of a stored value; choices(group) the menu (value, label) pairs
     all_values(key)         the text of a key in every language; prefixes(tag) log-line starts
     sep(name), join_sentences(parts)
 
 Nothing here raises for a missing key, a missing placeholder, an unknown stored value or a
 Windows API failure: the result degrades and a WARNING is logged once.
+
+(1.8.0, MESSAGES.md 6.4) The reverse lookup of 1.7.0 (localize: a Chinese core text back to its
+key) is gone.  The core passes messages (messages.py) and the UI shows them with messages.show();
+keyless text stored by older versions is read by the frozen reader i18n_legacy behind
+messages.decode, never here.
 """
 from __future__ import annotations
 
 import ctypes
-import functools
 import logging
 import os
-import re
 import string
 import threading
 
@@ -46,7 +48,6 @@ CATALOG_MODULES = (i18n_core, i18n_common, i18n_shell, i18n_download, i18n_log, 
                    i18n_library)
 LANG_CHINESE = 0x04
 LOCALE_NAME_MAX_LENGTH = 85
-MAX_DEPTH = 3
 JOIN = '；'                                 # the stored joiner of clauses (collection_ui last_error)
 
 _log = logging.getLogger('YtDlpDesktop.i18n')
@@ -164,7 +165,6 @@ def set_language(lang) -> None:
         raise ValueError(f'unknown language {lang!r}')
     with _lock:
         _current = lang
-        _localized.cache_clear()
 
 
 def language() -> str:
@@ -332,137 +332,3 @@ def choices(group) -> list:
     """[(stored value, label)] of ``group`` in menu order."""
     return [(value, label(group, value)) for value in i18n_maps.GROUPS.get(group, {})]
 
-
-# ------------------------------------------------------------------------------- core texts
-
-class _Template:
-    __slots__ = ('key', 'regex', 'names', 'literal', 'first')
-
-    def __init__(self, key, template):
-        self.key = key
-        pattern, names, literal = [], [], 0
-        parts = list(_FORMATTER.parse(template))
-        for index, (text, field, _spec, _conv) in enumerate(parts):
-            pattern.append(re.escape(text))
-            literal += len(text)
-            if field is None:
-                continue
-            if field in names:
-                pattern.append(f'(?P={field})')
-            elif field in i18n_maps.NUMERIC:
-                pattern.append(f'(?P<{field}>' + {'code': r'-?\d+', 'size': r'\d+(?:\.\d+)?'}.get(field, r'\d+') + ')')
-            else:
-                last = index == len(parts) - 1
-                pattern.append(f'(?P<{field}>.+)' if last else f'(?P<{field}>.+?)')
-            if field not in names:
-                names.append(field)
-        self.regex = re.compile(''.join(pattern) + r'\Z', re.S)
-        self.names = tuple(names)
-        self.literal = literal
-        self.first = parts[0][0][:1] if parts and parts[0][0] else ''
-
-
-class _Index:
-    """The LOCALIZE templates, compiled once: exact texts and anchored patterns by first character."""
-
-    def __init__(self):
-        self.exact = {}
-        self.buckets = {}
-        shared = []
-        zh = CATALOG['zh']
-        templates = [(key, zh[key]) for key in i18n_maps.LOCALIZE if key in zh]
-        templates += [(key, template) for key, template in i18n_maps.VARIANTS]
-        compiled = []
-        for key, template in templates:
-            fields = [field for _t, field, _s, _c in _FORMATTER.parse(template) if field is not None]
-            if not fields:
-                text = template.replace('{{', '{').replace('}}', '}')
-                self.exact.setdefault(text, []).append(key)
-                continue
-            item = _Template(key, template)
-            compiled.append(item)
-            if not item.first:
-                shared.append(item)
-        order = lambda item: (-item.literal, item.key)     # noqa: E731
-        shared.sort(key=order)
-        for item in compiled:
-            if item.first:
-                self.buckets.setdefault(item.first, []).append(item)
-        for first, items in self.buckets.items():
-            self.buckets[first] = sorted(items + shared, key=order)
-        self.shared = shared
-
-    def candidates(self, text):
-        return self.buckets.get(text[:1], self.shared)
-
-
-_index = None
-
-
-def _get_index():
-    global _index
-    if _index is None:
-        with _lock:
-            if _index is None:
-                _index = _Index()
-    return _index
-
-
-def _allowed(key, keys) -> bool:
-    return keys is None or key.startswith(keys)
-
-
-@functools.lru_cache(maxsize=4096)
-def _localized(language_, keys, text) -> str:
-    return _localize_in(language_, keys, text, 0)
-
-
-def _localize_in(language_, keys, text, depth) -> str:
-    index = _get_index()
-    for key in index.exact.get(text, ()):
-        if _allowed(key, keys):
-            return _t_in(language_, key, {})
-    if text:
-        for item in index.candidates(text):
-            if not _allowed(item.key, keys):
-                continue
-            match = item.regex.match(text)
-            if match is None:
-                continue
-            values = match.groupdict()
-            if depth < MAX_DEPTH:
-                for name, value in values.items():
-                    if name in i18n_maps.RECURSE and value:
-                        values[name] = _localize_in(language_, i18n_maps.RECURSE[name], value, depth + 1)
-            return _t_in(language_, item.key, values)
-    if keys is None and JOIN in text and depth < MAX_DEPTH:
-        parts = text.split(JOIN)
-        shown = [_localize_in(language_, None, part, depth + 1) for part in parts]
-        if shown != parts:
-            return _join_sentences(language_, shown)
-    if '[代理]' in text:
-        return text.replace('[代理]', _t_in(language_, 'core.proxy_mask', {}))
-    return text
-
-
-def localize(text, keys=None) -> str:
-    """A canonical (Chinese) core text, or a value stored by 1.5.1 / 1.6.0, in the running
-    language (I18N.md 9.2).  zh: ``text`` unchanged.  ``keys`` (key prefixes) limits the templates
-    that may match: a caller showing what may be user data passes the prefixes of the app-made
-    forms only.  Unknown text comes back unchanged.  Never raises."""
-    if text is None:
-        return ''
-    if not isinstance(text, str):
-        return str(text)
-    language_ = language()
-    if language_ == 'zh':
-        return text
-    if isinstance(keys, str):
-        keys = (keys,)
-    elif keys is not None:
-        keys = tuple(keys)
-    try:
-        return _localized(language_, keys, text)
-    except Exception as error:          # a broken template must never break the caller
-        _warn_once(('localize', language_), 'i18n: localize failed: %s', error)
-        return text

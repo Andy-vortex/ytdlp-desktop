@@ -36,7 +36,7 @@ class Site(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'video/mp4')
         else:
             pages = {
-                '/list': '<title>采集测试</title><nav>导航垃圾</nav><article><h1>第一篇</h1><p>正文甲乙丙。</p><a href="/guarded.mp4">媒体文件</a><a href="/guarded.mp4#same">重复</a><a href="https://www.youtube.com/watch?v=localtest">视频页面</a><a href="javascript:alert(1)">不安全链接</a><script>正文不应出现脚本</script></article><a rel="next" href="/page2">下一页</a>',
+                '/list': '<title>采集测试</title><nav>导航垃圾</nav><article><h1>第一篇</h1><p>正文甲乙丙。</p><a href="/guarded.mp4">媒体文件</a><a href="/guarded.mp4#same">重复</a><a href="https://www.youtube.com/watch?v=localtest">YouTube 视频</a><a href="javascript:alert(1)">不安全链接</a><script>正文不应出现脚本</script></article><a rel="next" href="/page2">下一页</a>',
                 '/page2': '<title>第二页</title><main><p>正文第二页</p><a href="/fixture.mp4">另一个视频</a></main><a rel="next" href="/list">回环</a>',
                 '/dynamic': '<title>动态采集</title><main id="main"><h1>动态测试</h1></main><script>setTimeout(()=>{document.querySelector("main").innerHTML+=\'<p>动态正文已加载</p><a href="/fixture.mp4">延迟视频</a>\';fetch("/guarded.mp4");},150)</script>',
                 '/empty': '<title>空页</title><body>没有链接</body>',

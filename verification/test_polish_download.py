@@ -259,7 +259,8 @@ class A_UnfinishedRowsTests(Base):
             store_unfinished([url], self.options())
             runner.emit('item', {'index': 1, 'total': 1, 'url': url})
             runner.emit('item_done', {'index': 1, 'cancelled': False, 'success': False, 'files': 0,
-                                      'bot_check': False, 'url': url, 'reason': '链接不存在（404）'})
+                                      'bot_check': False, 'url': url,
+                                      'reason': engine.msg('core.reason.http_404')})     # (1.8.0) as the engine emits it
             runner.emit('done', {'success': 0, 'failed': 1, 'files': [], 'cancelled': False, 'failed_urls': [url],
                                  'pending_urls': [url], 'failed_path': None, 'archive_errors': [],
                                  'bot_check': False})
@@ -421,7 +422,8 @@ class C_EngineReasonTests(Base):
                            self.options(proxy='http://127.0.0.1:9'),
                            {'https://example.org/p2': self.options()})
         app.operation = 'download'
-        for index, reason in ((1, engine.NETWORK_REASON), (2, engine.NETWORK_REASON), (3, '链接不存在（404）')):
+        # (1.8.0) the reasons as the engine emits them: messages whose values are the 1.7.0 texts
+        for index, reason in ((1, engine.NETWORK_REASON), (2, engine.NETWORK_REASON), (3, engine.msg('core.reason.http_404'))):
             app.handle('item_done', {'index': index, 'cancelled': False, 'success': False, 'files': 0,
                                      'bot_check': False, 'reason': reason, 'stale_engine': True})
         self.assertEqual(ui_theme.full_text(app.rows[0]['detail']), '01  ·  无法连接代理或网站，请检查代理地址')

@@ -1,0 +1,47 @@
+{
+ "module": "settings",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "最佳": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.resolution.best); shown through i18n.label or a value.* message, never as text (P7)"
+  },
+  "资料归档": {
+   "category": "file",
+   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
+  },
+  "音频 · 原始最佳": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.mode.audio_best); shown through i18n.label or a value.* message, never as text (P7)"
+  }
+ },
+ "raises": {
+  "module {__name__!r} has no attribute {name!r}": {
+   "exception": "AttributeError",
+   "line_hint": 61,
+   "reason": "module __getattr__ AttributeError (Python protocol), never shown"
+  },
+  "no free name to set aside {path}": {
+   "exception": "OSError",
+   "line_hint": 146,
+   "reason": "OSError of the set-aside of an unreadable settings.json: logged to download.log only"
+  },
+  "the content is not a JSON object": {
+   "exception": "ValueError",
+   "line_hint": 167,
+   "reason": "internal marker of settings._read, caught there (settings held)"
+  }
+ },
+ "composed": {
+  "f'module {__name__!r} has no attribute {name!r}'": {
+   "line_hint": 61,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  },
+  "f'no free name to set aside {path}'": {
+   "line_hint": 146,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless (logged to download.log only)"
+  }
+ },
+ "sinks": {},
+ "pending_keys": {}
+}

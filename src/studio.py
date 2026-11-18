@@ -23,6 +23,7 @@ import collection_ui
 import engine
 import formats
 import i18n
+import messages
 import naming
 import paths
 import settings
@@ -241,7 +242,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             self.format.set(FORMATS[1])
             self.on_format()
         self.links_changed()
-        self.append_log(i18n.t('log.ready', version=i18n.localize(engine_version())))
+        self.append_log(i18n.t('log.ready', version=messages.show(engine_version())))
         if settings.HELD in self.prefs:
             # (final-merge, core request 1) settings.load() could not read the file: say why the
             # defaults are shown; save() never writes them over the stored file.
@@ -311,7 +312,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         """Tk callback errors: the traceback goes to the log file, one line to the log page."""
         try:
             applog.get('ui').error('界面错误', exc_info=(kind, value, trace))
-            self.append_log(i18n.t('log.ui_error', kind=kind.__name__, value=value))
+            self.append_log(i18n.t('log.ui_error', kind=kind.__name__, value=messages.error_text(value)))
         except Exception:
             pass
 
@@ -353,8 +354,8 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.side_status.grid(row=0, column=1, sticky='ew', padx=(0, 12), pady=(10, 0))
         # (1.7.0, I18N.md 10.4) A safety net: a status longer than its 120 px is cut with '…'.
         ui_theme.fit(self.side_status, i18n.t('shell.status.ready'))
-        # The engine version, or the localized 已内置 when the built-in version is not known (9.3).
-        self.engine_badge = ui_theme.label(status, f'yt-dlp {i18n.localize(engine_version())}', role='caption',
+        # The engine version, or the shown 已内置 (updater.BUILTIN) when the built-in version is not known.
+        self.engine_badge = ui_theme.label(status, f'yt-dlp {messages.show(engine_version())}', role='caption',
                                            text_color=ui_theme.SIDE_MUTED, anchor='w')
         self.engine_badge.grid(row=1, column=0, columnspan=2, sticky='ew', padx=12)
         self.app_badge = ui_theme.label(status, '', role='caption', text_color=ui_theme.SIDE_MUTED, anchor='w')
@@ -506,7 +507,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             path.mkdir(parents=True, exist_ok=True)
             os.startfile(path)
         except OSError as error:
-            messagebox.showerror(i18n.t('dialog.open_folder_failed'), str(error), parent=self)
+            messagebox.showerror(i18n.t('dialog.open_folder_failed'), messages.error_text(error), parent=self)
 
     def save_settings(self):
         """Write settings.json from the variables and the kept values; never in smoke mode."""

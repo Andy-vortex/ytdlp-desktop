@@ -1,0 +1,15 @@
+{
+ "module": "updater",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {},
+ "raises": {
+  "the receipt is not an object": {
+   "exception": "ValueError",
+   "line_hint": 96,
+   "reason": "internal: a broken install receipt is treated as absent (caught in the updater)"
+  }
+ },
+ "composed": {},
+ "sinks": {},
+ "pending_keys": {}
+}

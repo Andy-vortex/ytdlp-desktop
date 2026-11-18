@@ -1,4 +1,4 @@
-"""File naming (1.6.0). Standard library only; imports no app module.
+"""File naming (1.6.0). Standard library and messages only (1.8.0: the notices are messages).
 
 The engine always writes its work name ``Title [id].ext`` (OUTPUT_TEMPLATE): that name is
 unique per video, so resuming a partial file and yt-dlp's own "already downloaded" check
@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import re
 import time
+
+import messages
 
 NAMING = ('title', 'clean', 'title_id')
 LABELS = {'title': '标题（推荐）', 'clean': '精简标题', 'title_id': '标题 [视频 ID]'}
@@ -85,15 +87,16 @@ def finalize(path, media_id, style, audio=True, log=None, folder=None) -> str:
                     break
                 except PermissionError:
                     if attempt + 1 >= LOCK_TRIES:
-                        report(f'文件正被其他程序占用，未能改名，已保留原文件名：{source.name}')
+                        report(messages.msg('core.rename.locked', name=source.name))
                         return str(path)
                     time.sleep(LOCK_PAUSE)
                 except OSError as error:
-                    report(f'文件未能改名（{error.strerror or type(error).__name__}），已保留原文件名：{source.name}')
+                    report(messages.msg('core.rename.failed_named', reason=error.strerror or type(error).__name__,
+                                            name=source.name))
                     return str(path)
             if not taken:
                 break
-        report(f'同名文件过多，未能改名，已保留原文件名：{source.name}')
+        report(messages.msg('core.rename.too_many', name=source.name))
     except Exception as error:   # a path the file system cannot express, a broken log callback
-        report(f'文件未能改名（{type(error).__name__}），已保留原文件名。')
+        report(messages.msg('core.rename.failed', reason=type(error).__name__))
     return str(path)

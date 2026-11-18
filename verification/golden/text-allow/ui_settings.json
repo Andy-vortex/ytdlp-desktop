@@ -1,0 +1,42 @@
+{
+ "module": "ui_settings",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "从官方稳定版更新；下载后校验 SHA256，并确认与本程序兼容。": {
+   "category": "h4",
+   "reason": "UI constant pinned by ParityTests to the UI key settings.update.idle (H4); the page shows the key through t()"
+  },
+  "浅色": {
+   "category": "h4",
+   "reason": "UI constant pinned by ParityTests to the UI key settings.appearance.light (H4); the page shows the key through t()"
+  },
+  "深色": {
+   "category": "h4",
+   "reason": "UI constant pinned by ParityTests to the UI key settings.appearance.dark (H4); the page shows the key through t()"
+  },
+  "跟随系统": {
+   "category": "h4",
+   "reason": "UI constant pinned by ParityTests to the UI key settings.appearance.system (H4); the page shows the key through t()"
+  }
+ },
+ "raises": {},
+ "composed": {},
+ "sinks": {
+  "value": {
+   "line_hint": 225,
+   "function": "SettingsUI.build_settings_page",
+   "reason": "the component versions of the app card: f'v{APP_VERSION}' and the version strings component_versions() reads from the bundled ffmpeg / deno (language-neutral data, like the NEUTRAL field version)"
+  },
+  "value.get('latest')": {
+   "line_hint": 646,
+   "function": "SettingsUI.on_engine_check",
+   "reason": "the GitHub release tag of the newest yt-dlp (updater.check_latest, a version string such as 2026.11.01) from the engine_check event; language-neutral data like the NEUTRAL field version"
+  },
+  "pages": {
+   "line_hint": 475,
+   "function": "SettingsUI.restore_restart_state",
+   "reason": "restore_restart_state: the collect link box text that restart_inputs saved in restart-state.json before an engine-update restart (the box text as the owner typed it), put back into the empty box: the owner's own links (user data)"
+  }
+ },
+ "pending_keys": {}
+}

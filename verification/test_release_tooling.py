@@ -512,6 +512,66 @@ class GateLayout(Base):
         self.assertIn('_internal/vendor/bin/ffmpeg.exe', [item['path'] for item in files])
 
 
+class GateMessageEvidence(unittest.TestCase):
+    """(1.8.0 WP-6, MESSAGES.md 10.3) Step 5's message-key evidence: msg_guard.violations == 0 on checked test
+    files, no pending_keys, the release sources as pinned."""
+
+    REPORT = {'msg_guard': {'files_checked': 51, 'violations': 0, 'exemptions': 49, 'not_guarded': ['x.py']}}
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix='gate-messages-', dir=os.environ['TEMP']))
+        self.addCleanup(shutil.rmtree, self.work, True)
+
+    def copy_sources(self):
+        folder = self.work / 'release-sources'
+        shutil.copytree(gate.RELEASE_SOURCES, folder)
+        return folder
+
+    def test_the_live_tree_passes_and_the_receipt_fields_are_complete(self):
+        evidence = gate.check_message_evidence(self.REPORT)
+        self.assertEqual(evidence['msg_guard']['violations'], 0)
+        self.assertEqual(evidence['pending_keys'], [])
+        self.assertEqual(sorted(evidence['release_sources']), ['1.5.1', '1.6.0', '1.7.0'])
+        pins = json.loads(gate.RELEASE_PINS.read_text(encoding='utf-8'))['releases']
+        for version, item in evidence['release_sources'].items():
+            self.assertEqual(item['files'], len(pins[version]['files']), version)
+            self.assertRegex(item['sha256'], '^[0-9a-f]{64}$')
+        self.assertEqual(gate.pending_keys(), [])
+
+    def test_a_guard_violation_or_a_missing_guard_refuses(self):
+        for report, pattern in (({'msg_guard': dict(self.REPORT['msg_guard'], violations=1)}, 'violations is 1'),
+                                ({}, 'no msg_guard'),
+                                ({'msg_guard': dict(self.REPORT['msg_guard'], files_checked=0)}, 'checked no test file')):
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(gate.GateError, pattern):
+                gate.check_message_evidence(report)
+
+    def test_a_pending_key_refuses(self):
+        allow = self.work / 'text-allow'
+        shutil.copytree(gate.ALLOW_DIR, allow)
+        path = allow / 'engine.json'
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data['pending_keys'] = {'core.engine.new_text': {'zh': '新文字', 'en': 'New text'}}
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        with self.assertRaisesRegex(gate.GateError, 'pending_keys are left.*engine: core.engine.new_text'):
+            gate.check_message_evidence(self.REPORT, allow_dir=allow)
+        data['pending_keys'] = {}
+        data['literals']['新文字'] = {'category': 'pending', 'reason': 'test'}
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        self.assertEqual(gate.pending_keys(allow), ['engine: 新文字 (category pending)'])
+
+    def test_a_changed_missing_or_added_release_source_refuses(self):
+        folder = self.copy_sources()
+        changed = folder / '1.7.0' / 'src' / 'engine.py'
+        changed.write_bytes(changed.read_bytes() + b'\n# changed\n')
+        (folder / '1.6.0' / 'src' / 'urls.py').unlink()
+        (folder / '1.5.1' / 'src' / 'extra.py').write_text('X = 1\n', encoding='utf-8')
+        found = gate.release_sources(folder)
+        self.assertEqual((found['1.7.0']['changed'], found['1.6.0']['missing'], found['1.5.1']['added']),
+                         (['engine.py'], ['urls.py'], ['extra.py']))
+        with self.assertRaisesRegex(gate.GateError, 'release-sources differs from its pins'):
+            gate.check_message_evidence(self.REPORT, folder=folder)
+
+
 # ---------------------------------------------------------------------------------------------- the installer
 
 class InstallerFileList(Base):

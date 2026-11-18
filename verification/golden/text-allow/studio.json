@@ -1,0 +1,44 @@
+{
+ "module": "studio",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "YT-DLP 下载器": {
+   "category": "h4",
+   "reason": "window title constant TITLE pinned by ParityTests to app.title (a UI key, H4); compared by procutil.focus_window (P7 window titles)"
+  },
+  "设置文件暂时无法读取，本次先用默认设置；原文件不会被覆盖。": {
+   "category": "h4",
+   "reason": "UI constant pinned by ParityTests to the UI key shell.notice.settings_held (H4); the page shows the key through t()"
+  }
+ },
+ "raises": {},
+ "composed": {},
+ "sinks": {
+  "kind.__name__": {
+   "line_hint": 315,
+   "function": "StudioApp.report_error",
+   "reason": "report_error's log.ui_error kind: the class name of the Tk callback exception (a Python identifier, language-neutral, as in 1.7.0); its value param is error_text(value) (D-F49)"
+  },
+  "caption": {
+   "line_hint": 332,
+   "function": "StudioApp.build_sidebar",
+   "reason": "build_sidebar: the brand caption, the first element of the (text, wrapped) pair _brand_caption(brand) returns: i18n.t('shell.brand_caption') itself, or f'{first}\n{rest}' where first / rest are ' '.join(...) of that caption's own words (the split with the narrowest line, min(..., key=...)); G5 follows the returned pair element by element (I-2 SD-2) but does not prove text cut out of a display text by split / join"
+  },
+  "APP_VERSION": {
+   "line_hint": 387,
+   "function": "StudioApp.show_app_badge",
+   "reason": "engine.APP_VERSION, the program's version number ('1.8.0'): a language-neutral constant"
+  },
+  "f'v{APP_VERSION}'": {
+   "line_hint": 390,
+   "function": "StudioApp.show_app_badge",
+   "reason": "the app badge 'v' + engine.APP_VERSION, the program's version number: language-neutral, as in 1.7.0"
+  },
+  "arguments.smoke_url": {
+   "line_hint": 241,
+   "function": "StudioApp.__init__",
+   "reason": "the --smoke-url link of the GUI smoke test (app.py's command line, verify_release), put into the link box as it was given: a link (user data, language-neutral); the link box is a text box by its binding (self.urls = ui_theme.textbox(...), MESSAGES.md 15 A16.1)"
+  }
+ },
+ "pending_keys": {}
+}

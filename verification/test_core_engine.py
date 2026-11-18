@@ -49,7 +49,7 @@ NAMES_OF_1_5_1 = ('APP_NAME', 'APP_VERSION', 'RESOURCE_ROOT', 'VENDOR', 'BIN', '
                   'BOT_CHECK_STALE_HINT', 'engine_path', 'engine_version', 'parse_urls', 'read_url_file', 'Options',
                   'check_cookie_file', 'store_failed_job', 'load_failed_job', 'build_command', 'number', 'parse_line',
                   'process_environment', 'Runner', 'diagnostics')
-BACKUP = _sandbox.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src'
+BACKUP = _sandbox.release_src('1.5.1')
 
 
 class EngineCase(unittest.TestCase):
@@ -276,7 +276,8 @@ class RunnerInitTests(EngineCase):
         self.assertIsNone(plain.library)
         plain.library = store    # the 1.5.1 window and app.py still attach it afterwards
         self.assertIs(plain.library, store)
-        self.assertEqual(plain.emit, self.emit)
+        # (1.8.0) In a guarded test process emit is wrapped by the G2 emit hook (messages.guarded).
+        self.assertEqual(getattr(plain.emit, '__wrapped__', plain.emit), self.emit)
         self.assertEqual((plain.archive, plain.archive_folder, plain.archive_errors, plain.last_error),
                          (None, None, [], ''))
         self.assertIsNot(plain.archive_errors, runner.archive_errors)

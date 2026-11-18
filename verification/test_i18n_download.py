@@ -3,7 +3,8 @@
     python -X utf8 -B test_i18n_download.py
 
 Unit tests of the L1-A rewrites: the 清除未完成 header rendered from the job's numbers (8.7),
-classify with English lines (8.6), append_log localization and the proxy mask (8.6), the start
+classify with English lines (8.6), append_log localization and the proxy mask (8.6; since 1.8.0
+core lines arrive as messages and are shown with messages.show, MESSAGES.md 6.2 / 8.3), the start
 button compared with the running language's texts (8.7), the unfinished-row detail and the
 other 9.3 sites, the stats line that gives way to the task title (10.5), the sidebar status and
 the window title (8.5, 10.4); a quick English check that the download page, the log page and
@@ -25,10 +26,12 @@ import customtkinter as ctk
 import engine
 import formats
 import i18n
+import messages
 import studio
 import ui_download
 import ui_log
 import ui_theme
+import updater
 from studio import StudioApp
 
 CJK = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
@@ -253,11 +256,13 @@ class ShellAndLogTests(AppCase):
                 app.logger = mock.Mock(info=written.append)
                 app.log_buffer.clear()
                 app.proxy.set('http://127.0.0.1:8899')
-                core = '此链接未完成（退出码 1），继续处理队列中的下一项。'
+                # (1.8.0) the core line is the message the engine emits (its value is the 1.7.0 text)
+                core = engine.msg('core.engine.item_unfinished', code=1)
+                self.assertEqual(core, '此链接未完成（退出码 1），继续处理队列中的下一项。')
                 raw = '[download]  12.5% of 3.00MiB at 1.2MiB/s ETA 00:02'
                 for line in (core, raw, '代理 http://127.0.0.1:8899 无响应', engine.NETWORK_REASON):
                     app.append_log(line)
-                expected = [i18n.localize(core), raw, '代理 ' + mask + ' 无响应', i18n.localize(engine.NETWORK_REASON)]
+                expected = [messages.show(core), raw, '代理 ' + mask + ' 无响应', messages.show(engine.NETWORK_REASON)]
                 self.assertEqual(app.log_buffer, expected)
                 self.assertEqual(written, expected, 'download.log holds what the owner saw')
                 if lang == 'en':
@@ -293,7 +298,7 @@ class ShellAndLogTests(AppCase):
 
     def test_sidebar_status_window_title_and_badges(self):
         # (the settings page writes the badge again with its own engine check: L1-B's code, not run here)
-        with mock.patch.object(studio, 'engine_version', return_value='已内置'),                 mock.patch.object(StudioApp, 'settings_startup', lambda self: None),                 mock.patch.object(StudioApp, 'refresh_engine_labels', lambda self: None):
+        with mock.patch.object(studio, 'engine_version', return_value=updater.BUILTIN),                 mock.patch.object(StudioApp, 'settings_startup', lambda self: None),                 mock.patch.object(StudioApp, 'refresh_engine_labels', lambda self: None):
             app = self.make_app('en')
         self.assertEqual(app.title(), 'YT-DLP Downloader')
         self.assertEqual(app.engine_badge.cget('text'), 'yt-dlp built-in')
@@ -357,7 +362,12 @@ class ShellAndLogTests(AppCase):
         self.assertEqual(len(started), 1, self.logged(app))
         self.assertTrue(started[0].startswith('Task started · Links: 2 · MP3 · 320 kbps · Save to '), started[0])
         self.assertEqual(created, [f'2 条 · {mode}'], 'the history keeps the canonical title (H2)')
-        self.assertEqual(ui_download.stored_text('value.job_title.placeholder', count=2, mode=mode), f'2 条 · {mode}')
+        # (1.8.0, D-F45) the title is a message: its key travels with the stored zh text; en shows it in English
+        self.assertEqual((created[0].key, created[0].params['count'], created[0].params['mode']),
+                         ('value.job_title.placeholder', 2, mode))
+        self.assertIsInstance(created[0].params['mode'], messages.Value)
+        self.assertEqual(messages.show(created[0]), i18n.t('value.job_title.placeholder', count=2,
+                                                           mode=i18n.label('mode', mode)))
 
     def test_row_reasons_are_localized_and_the_engine_error_stays_raw(self):
         app = self.make_app('en', visible=False)
@@ -373,7 +383,7 @@ class ShellAndLogTests(AppCase):
         app.handle('item_done', {'index': 2, 'success': False, 'cancelled': False, 'files': 0, 'bot_check': False,
                                  'reason': engine.STALE_REASON, 'stale_engine': True})
         app.handle('item', {'index': 3, 'total': 3, 'url': links[2]})
-        app.handle('waiting', {'reason': i18n.CATALOG['zh']['core.wait.pace'], 'seconds': 90})
+        app.handle('waiting', {'reason': engine.msg('core.wait.pace'), 'seconds': 90})
         app.render_wait()
         self.assertEqual(app.row_model[0]['detail'], "Can't reach the site; check your network or VPN")
         self.assertEqual(app.row_model[0]['error'], raw)
@@ -573,8 +583,8 @@ class EnglishPagesTests(AppCase):
         app.handle('item_done', {'index': 3, 'success': False, 'cancelled': False, 'files': 0, 'bot_check': False,
                                  'skipped': 'downloaded'})
         app.handle('item', {'index': 4, 'total': 6, 'url': links[3]})
-        app.handle('log', '此链接未完成（退出码 1），继续处理队列中的下一项。')
-        app.handle('waiting', {'reason': i18n.CATALOG['zh']['core.wait.pace'], 'seconds': 30})
+        app.handle('log', engine.msg('core.engine.item_unfinished', code=1))
+        app.handle('waiting', {'reason': engine.msg('core.wait.pace'), 'seconds': 30})
         app.render_wait()
         app.refresh_shell()
         app.flush_log()
@@ -706,7 +716,9 @@ class FinalFixRound3Tests(AppCase):
 
     def test_sweep_1_the_error_of_a_link_that_could_not_start_reads_english(self):
         missing = 'C:\\Missing\\cookies.txt'
-        core = f'找不到 cookies 文件：{missing}\n请在“偏好设置 → 网络”中重新选择。'
+        # (1.8.0) the item's error is the message build_command raised (its value is the 1.7.0 text)
+        core = engine.msg('core.cookies.missing', file=missing)
+        self.assertEqual(core, f'找不到 cookies 文件：{missing}\n请在“偏好设置 → 网络”中重新选择。')
         raw = 'ERROR: [generic] a: Unable to download webpage: HTTP Error 404'
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
@@ -719,7 +731,7 @@ class FinalFixRound3Tests(AppCase):
                     app.handle('item', {'index': index, 'total': 2, 'url': links[index - 1]})
                     app.handle('item_done', {'index': index, 'success': False, 'cancelled': False, 'files': 0,
                                              'bot_check': False, 'error': error})
-                shown = i18n.localize(core)
+                shown = messages.show(core)
                 if lang == 'en':
                     self.assertEqual(shown, f'Cookies file not found: {missing}\n'
                                             'Choose it again in Settings → Network.')
@@ -729,8 +741,10 @@ class FinalFixRound3Tests(AppCase):
                 self.assertTrue(app.row_reason(1).endswith(i18n.t('dialog.reason.engine_error', error=raw)),
                                 'a raw yt-dlp line stays raw')
                 self.assertEqual(app.row_model[0]['error'], core, 'the row keeps the stored form')
-                # the same error stored with an unfinished entry (failed-downloads.json)
-                stored = dict(entry(7), error=core)
+                # the same error stored with an unfinished entry (failed-downloads.json): a 1.7.0 entry
+                # without a sidecar, read back the way unfinished.load decodes it (lifted, origin legacy)
+                stored = messages.decode(dict(entry(7), error=messages.zh(core)), 'failed_entry')
+                self.assertEqual((stored['error'].key, stored['error'].origin), ('core.cookies.missing', 'legacy'))
                 model = app._unfinished_model(stored)
                 app.row_model.append(model)
                 self.assertTrue(app.row_reason(len(app.row_model) - 1).endswith(
@@ -741,7 +755,9 @@ class FinalFixRound3Tests(AppCase):
 
     def test_sweep_2_the_unfinished_list_dialogs_read_english(self):
         problem = 'C:\\State\\failed-downloads.json'
-        core = OSError(f'无法保留读不出的未完成清单：{problem}')
+        # (1.8.0) unfinished.save raises its OSError with a message (its value is the 1.7.0 text)
+        core = OSError(messages.msg('core.unfinished.cannot_set_aside', path=problem))
+        self.assertEqual(str(core), f'无法保留读不出的未完成清单：{problem}')
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
                 app = self.make_app(lang, visible=False)
@@ -755,7 +771,7 @@ class FinalFixRound3Tests(AppCase):
                         mock.patch.object(engine, 'load_unfinished', return_value=[entry(1), entry(2)]):
                     app.clear_unfinished()
                     app.remove_row(0)
-                expected = i18n.localize(str(core))
+                expected = messages.error_text(core)
                 self.assertEqual(shown, [expected, expected])
                 if lang == 'en':
                     self.assertEqual(expected, f'Could not set aside the unreadable Unfinished list: {problem}')

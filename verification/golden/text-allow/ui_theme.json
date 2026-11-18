@@ -1,0 +1,80 @@
+{
+ "module": "ui_theme",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "（［｛〈《「『【〔([{“‘": {
+   "category": "internal",
+   "reason": "not user-visible (frozenset in ui_theme.py module level); never translated"
+  },
+  "，。、；：？！）］｝〉》」』】〕％…,.;:?!)]}%”’": {
+   "category": "internal",
+   "reason": "not user-visible (frozenset in ui_theme.py module level); never translated"
+  }
+ },
+ "raises": {
+  "not a #RRGGBB colour: {color!r}": {
+   "exception": "ValueError",
+   "line_hint": 155,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "no icon font installed": {
+   "exception": "FileNotFoundError",
+   "line_hint": 632,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "{path.name} has no glyph U+{code:04X}": {
+   "exception": "LookupError",
+   "line_hint": 638,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "unknown tone {tone!r}; expected one of {sorted(_CHIP_TONES)}": {
+   "exception": "ValueError",
+   "line_hint": 185,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "unknown button kind {kind!r}; expected one of {sorted(_BUTTON_KINDS)}": {
+   "exception": "ValueError",
+   "line_hint": 505,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "pass placeholder='...' instead of placeholder_text: customtkinter ignores placeholder_text when a textvariable is set": {
+   "exception": "ValueError",
+   "line_hint": 708,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "labels must be as many as values": {
+   "exception": "ValueError",
+   "line_hint": 898,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  },
+  "no tab named {name!r}": {
+   "exception": "ValueError",
+   "line_hint": 1391,
+   "reason": "programming error of a widget factory (developer misuse); never reached by the owner"
+  }
+ },
+ "composed": {
+  "f'not a #RRGGBB colour: {color!r}'": {
+   "line_hint": 155,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  },
+  "f'{path.name} has no glyph U+{code:04X}'": {
+   "line_hint": 638,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  },
+  "f'unknown tone {tone!r}; expected one of {sorted(_CHIP_TONES)}'": {
+   "line_hint": 185,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  },
+  "f'unknown button kind {kind!r}; expected one of {sorted(_BUTTON_KINDS)}'": {
+   "line_hint": 505,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  },
+  "f'no tab named {name!r}'": {
+   "line_hint": 1391,
+   "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
+  }
+ },
+ "sinks": {},
+ "pending_keys": {}
+}

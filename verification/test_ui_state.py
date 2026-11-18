@@ -394,7 +394,9 @@ class BRowTests(Base):
         app.operation = 'download'
         app.busy = True
         app.handle('item', {'index': 15, 'total': 20, 'url': links[14]})
-        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 300, 'reason': '网站限流，暂停整个下载队列'})
+        # (1.8.0) the waiting reason as the engine emits it (a message, MESSAGES.md 8.3)
+        reason = engine.msg('core.wait.rate_queue')
+        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 300, 'reason': reason})
         pump(app, timeout=0.4)
         canvas = app.task_list.canvas
         self.assertGreater(canvas.yview()[0], 0.0)                # followed to row 15 when the wait began
@@ -406,12 +408,12 @@ class BRowTests(Base):
         pump(app, timeout=0.2)
         before = canvas.yview()
         self.assertEqual(before[0], 0.0)
-        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 299, 'reason': '网站限流，暂停整个下载队列'})
+        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 299, 'reason': reason})
         pump(app, timeout=0.4)
         self.assertEqual(canvas.yview(), before)
         # Even after the hands-off time, the repeated events of the same wait leave the list alone.
         app.list_scrolled_at = 0.0
-        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 298, 'reason': '网站限流，暂停整个下载队列'})
+        app.handle('waiting', {'index': 15, 'total': 20, 'seconds': 298, 'reason': reason})
         pump(app, timeout=0.4)
         self.assertEqual(canvas.yview(), before)
         app.busy = False

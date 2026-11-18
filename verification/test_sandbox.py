@@ -183,6 +183,23 @@ class SandboxTests(unittest.TestCase):
         for name in ('argv-1.5.1.json', 'events-1.5.1.json', 'runonce-1.5.1.json', 'ui-1.5.1.json'):
             self.assertTrue(json.loads((_sandbox.GOLDEN / name).read_text(encoding='utf-8')), name)
 
+    def test_release_sources_and_fixture_texts(self):
+        """(1.8.0) The frozen released sources and the G2 exemption helper (MESSAGES.md D11, 7.3)."""
+        self.assertEqual(_sandbox.release_src('1.5.1'),
+                         _sandbox.ROOT / 'verification' / 'release-sources' / '1.5.1' / 'src')
+        for version in ('1.5.1', '1.6.0', '1.7.0'):
+            self.assertTrue((_sandbox.release_src(version) / 'engine.py').is_file(), version)
+        self.assertIn("APP_VERSION = '1.5.1'", (_sandbox.release_src('1.5.1') / 'engine.py').read_text(encoding='utf-8'))
+        with self.assertRaises(ValueError):
+            _sandbox.release_src('1.4.0')
+        with _sandbox.fixture_texts('test_sandbox: the helper itself'):
+            pass
+        guarded = bool(os.environ.get(_sandbox.MSG_GUARD))
+        self.assertEqual('messages' in sys.modules, guarded or 'messages' in sys.modules)
+        if guarded:
+            import messages
+            self.assertTrue(messages.GUARD)
+
     def test_a_child_that_never_imports_the_sandbox_is_isolated_too(self):
         code = 'import os, tempfile; print(os.environ["LOCALAPPDATA"]); print(tempfile.gettempdir()); ' \
                'print(os.environ.get("YTDLP_DESKTOP_APP_DIR"))'
@@ -243,6 +260,36 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual({name: plain[name] for name in expected}, expected)
         self.assertEqual((full['VERIFY_EXE'], full['VERIFY_NET']), ('X:\\app.exe', '1'))
 
+    def test_child_environment_turns_the_message_guard_on_except_for_guard_off(self):
+        sandbox = self.root / 'two'
+        with mock.patch.dict(os.environ, {self.runner.MSG_GUARD: 'stale'}):
+            on = self.runner.child_environment(sandbox, Path('X:\\state'), None, False)
+            off = self.runner.child_environment(sandbox, Path('X:\\state'), None, False, guard=False)
+        self.assertEqual(on[self.runner.MSG_GUARD], '1')
+        self.assertNotIn(self.runner.MSG_GUARD, off)
+        self.assertEqual(set(self.runner.GUARD_OFF), {'test_golden_ui.py', 'test_golden_runonce.py'})
+        self.assertTrue(all(self.runner.GUARD_OFF.values()))
+        seen = self.run_file('test_golden_ui.py', 'import os\nprint(os.environ.get("YTDLP_DESKTOP_MSG_GUARD"))\n')
+        self.assertEqual((seen['status'], seen['msg_guard']['guarded']), ('passed', False))
+        self.assertEqual((self.root / 'base' / '_logs' / 'test_golden_ui.stdout.txt').read_text(encoding='utf-8').strip(),
+                         'None')
+        seen = self.run_file('test_other.py', 'import os\nprint(os.environ.get("YTDLP_DESKTOP_MSG_GUARD"))\n')
+        self.assertEqual((seen['status'], seen['msg_guard']['guarded']), ('passed', True))
+
+    def test_message_guard_lines_fail_the_file(self):
+        code = ('import json, os\n'
+                'path = os.path.join(os.environ["VERIFY_OUT"], "msg-guard-%d.jsonl" % os.getpid())\n'
+                'lines = [{"exempt": "fixture"}] + [{"rule": "R-text", "where": "show", "producer": "engine.py:%d" % n,\n'
+                '          "key": "core.x", "text": "t", "test": "T"} for n in range(7)]\n'
+                'open(path, "w", encoding="utf-8").write("\\n".join(json.dumps(item) for item in lines) + "\\n")\n')
+        result = self.run_file('test_violating.py', code)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['msg_guard'], {'guarded': True, 'violations': 7, 'exemptions': 1})
+        self.assertIn('7 message-guard violation(s):', result['tail'])
+        self.assertEqual(len([line for line in result['tail'] if line.startswith('msg-guard R-text')]), 5)
+        clean = self.run_file('test_exempt_only.py', code.replace('range(7)', 'range(0)'))
+        self.assertEqual((clean['status'], clean['msg_guard']['exemptions']), ('passed', 1))
+
     def test_source_hash_definition(self):
         digest = hashlib.sha256()
         for path in sorted((_sandbox.ROOT / 'src').glob('*.py'), key=lambda item: item.name):
@@ -260,6 +307,7 @@ class RunnerTests(unittest.TestCase):
         status = (_sandbox.ROOT / 'verification' / 'run_tests.py').stat()
         self.assertEqual(tree['run_tests.py'], (status.st_size, status.st_mtime_ns))
         self.assertIsNone(tree['golden'])
+        self.assertIn('release-sources/1.7.0/src/engine.py', tree)
 
     def test_isolation_check_reports_new_paths_and_state_changes(self):
         real = self.root / 'real-state'
@@ -397,6 +445,8 @@ class RunnerMainTests(unittest.TestCase):
         self.assertEqual(report['reports'], {'test_one/one.json': {'status': 'passed'}})
         self.assertEqual((report['exe'], report['filter']), (None, None))
         self.assertEqual(report['source_sha256'], self.runner.source_sha256())
+        self.assertEqual(report['msg_guard'], {'files_checked': 1, 'violations': 0, 'exemptions': 0, 'not_guarded': []})
+        self.assertIn('MSG_GUARD: 1 files checked, 0 violations, 0 exemptions; not guarded: none', text)
         self.assertEqual(report['app_version'], self.runner.app_version())
         sandbox = Path(next(line for line in text.splitlines() if line.startswith('sandbox ')).split(None, 1)[1])
         self.assertFalse(sandbox.exists(), 'the sandbox of a green run must be removed')
@@ -498,6 +548,15 @@ class RunnerMainTests(unittest.TestCase):
         code, text, _report = self.main()
         self.assertEqual(code, 0, text)
         self.assertIn('isolation ... ok', text)
+
+    def test_pycache_under_release_sources_is_an_isolation_failure(self):
+        (self.tests / 'release-sources' / '1.7.0' / 'src').mkdir(parents=True)
+        self.add('test_compile.py', 'import pathlib\n'
+                                    'folder = pathlib.Path(__file__).parent / "release-sources" / "1.7.0" / "src" / "__pycache__"\n'
+                                    'folder.mkdir()\n')
+        code, text, _report = self.main()
+        self.assertEqual(code, 1, text)
+        self.assertIn('new path in verification/: release-sources/1.7.0/src/__pycache__', text)
 
     def test_change_of_the_real_state_folder_is_an_isolation_failure(self):
         self.add('test_touch.py', 'import os, pathlib\n'

@@ -21,7 +21,7 @@ from library import Library
 
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
 Y1 = 'https://www.youtube.com/watch?v=AAA'
-BACKUP = _sandbox.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src'
+BACKUP = _sandbox.release_src('1.5.1')
 # The schema as library.py of 1.5.1 creates it (lines 39-49 of the backup).
 SCHEMA_OF_1_5_1 = '''
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT, title TEXT,

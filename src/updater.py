@@ -19,6 +19,8 @@ import threading
 import time
 
 import applog
+import messages
+from messages import message_of, msg, raw
 import paths
 import procutil
 
@@ -32,34 +34,40 @@ NETWORK_TIMEOUT = 25
 PROBE_TIMEOUT = 60
 PROBE_GRACE = 10               # after a probe was killed: how long its output pipes may take to close
 
-MSG_NETWORK = '无法连接 GitHub，请检查网络后重试。（{reason}）'
-MSG_RELEASE = '官方发布信息无法识别，已保留现有引擎。'
-MSG_NO_ASSET = '官方发布中没有找到 yt-dlp.exe。'
-MSG_ORIGIN = '更新文件不在官方发布地址，已保留现有引擎。'
-MSG_NO_DIGEST = '官方发布未提供 SHA256，已保留现有引擎。'
-MSG_SIZE = '官方发布的文件大小异常，已保留现有引擎。'
-MSG_MISMATCH = '更新文件校验失败，已保留原来的引擎。'
-MSG_PROBE = '新版引擎与本程序使用的参数不兼容，已保留现有引擎。'
-MSG_INSTALL = '新版引擎无法写入（{reason}），已保留现有引擎。'
-MSG_SAVE = '新版引擎无法保存到磁盘（{reason}），已保留现有引擎。'
+# (1.8.0, MESSAGES.md 3.3 C-F45) The update errors are raised as msg(key, ...); these template
+# constants keep their names and zh values for the tests that .format() them (H4, P3).
+MSG_NETWORK = messages.template('core.update.no_github')
+MSG_RELEASE = messages.template('core.update.bad_release')
+MSG_NO_ASSET = messages.template('core.update.no_exe')
+MSG_ORIGIN = messages.template('core.update.bad_host')
+MSG_NO_DIGEST = messages.template('core.update.no_sha')
+MSG_SIZE = messages.template('core.update.bad_size')
+MSG_MISMATCH = messages.template('core.update.bad_hash')
+MSG_PROBE = messages.template('core.update.incompatible')
+MSG_INSTALL = messages.template('core.update.write_failed')
+MSG_SAVE = messages.template('core.update.save_failed')
 INSTALL_RETRY = 3.0            # seconds os.replace is repeated while another program holds a file
 INSTALL_PAUSE = 0.1
-MSG_RECEIPT = '新版引擎的校验记录无法写入（{reason}），已改用内置引擎，请稍后重试更新。'
+MSG_RECEIPT = messages.template('core.update.record_failed')
 # (1.7.0, c5-updater a) The new engine must first run normally: "--version" ends with exit code 0 and
 # prints its version (yt-dlp's 2026.10.21 or a nightly's 2026.10.21.123456) as the first line.
-MSG_START = '新版引擎无法正常运行（{reason}），已保留现有引擎。'
+MSG_START = messages.template('core.update.start_failed')
 VERSION_LINE = re.compile(r'^\d{4}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$')
 # (1.7.0, c5-updater c) 恢复内置引擎 when the updated engine is still the one in use afterwards.
-MSG_RESTORE = '无法删除已更新的引擎（文件可能正被其他程序使用或为只读），目前仍在使用已更新的引擎。请稍后再试。'
+MSG_RESTORE = messages.template('core.update.restore_failed')
 RESTORE_RETRY = 1.0            # seconds a delete is repeated while another program holds the file
 
 _cache = None                  # (key, path): the last engine_path() answer for an updated engine
 _cache_lock = threading.Lock()
 _serial = itertools.count(1)   # makes every run's temp file name unique in this process
+# (1.8.0, C-F43 / C-H-18) engine_version() when the version is unknown: equal to '已内置', so
+# `version == engine_version()` and version_newer compare as before; the UI shows it with show().
+BUILTIN = msg('core.update.builtin')
 
 
 class UpdateError(Exception):
-    """An update that was refused or failed; str() is a Chinese message for the user."""
+    """An update that was refused or failed; str() is a Chinese message for the user (1.8.0: a
+    messages.Message that keeps its key, so the UI shows it in the running language)."""
 
 
 def _stamp(path):
@@ -105,7 +113,7 @@ def engine_version() -> str:
             return json.loads(paths.read_text(paths.engines_dir() / 'yt-dlp.json'))['version']
         return json.loads((paths.VENDOR / 'manifest.json').read_text(encoding='utf-8'))[0]['version']
     except (OSError, ValueError, KeyError, IndexError, TypeError):
-        return '已内置'
+        return BUILTIN
 
 
 def invalidate() -> None:
@@ -120,21 +128,22 @@ def _network_errors() -> tuple:
     return OSError, http.client.HTTPException
 
 
-def _reason(error) -> str:
-    """A short reason for the network message (no URL, one line)."""
+def _reason(error):
+    """A short reason for the network message (no URL, one line): the HTTP code or the system's
+    text (raw), or the timeout message."""
     import urllib.error
     if isinstance(error, urllib.error.HTTPError):
-        return f'HTTP {error.code}'
+        return raw(f'HTTP {error.code}')
     cause = error.reason if isinstance(error, urllib.error.URLError) else error
     if isinstance(cause, TimeoutError):
-        return '连接超时'
+        return msg('core.update.timeout')
     text = ' '.join(str(cause).split()) or type(cause).__name__
-    return text[:80]
+    return raw(text[:80])
 
 
-def _file_reason(error) -> str:
-    """Why a file operation failed: the system's own words, without the paths str(error) adds."""
-    return ' '.join(str(getattr(error, 'strerror', None) or type(error).__name__).split())[:80]
+def _file_reason(error):
+    """Why a file operation failed: the system's own words (raw), without the paths str(error) adds."""
+    return raw(' '.join(str(getattr(error, 'strerror', None) or type(error).__name__).split())[:80])
 
 
 def check_latest(timeout=NETWORK_TIMEOUT) -> dict:
@@ -151,12 +160,12 @@ def check_latest(timeout=NETWORK_TIMEOUT) -> dict:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             release = json.load(response)
     except ValueError as error:
-        raise UpdateError(MSG_RELEASE) from error
+        raise UpdateError(msg('core.update.bad_release')) from error
     except _network_errors() as error:
-        raise UpdateError(MSG_NETWORK.format(reason=_reason(error))) from error
+        raise UpdateError(msg('core.update.no_github', reason=_reason(error))) from error
     tag = release.get('tag_name') if isinstance(release, dict) else None
     if not isinstance(tag, str) or not tag.strip():
-        raise UpdateError(MSG_RELEASE)
+        raise UpdateError(msg('core.update.bad_release'))
     assets = release.get('assets')
     asset = next((item for item in assets if isinstance(item, dict) and item.get('name') == ASSET_NAME),
                  None) if isinstance(assets, list) else None
@@ -244,7 +253,7 @@ def restore_bundled() -> bool:
     read-only and not changeable), the updated engine is still used: UpdateError(MSG_RESTORE), so
     that the caller never reports a restore that did not happen (c5-updater c)."""
     if not _remove_updated():
-        raise UpdateError(MSG_RESTORE)
+        raise UpdateError(msg('core.update.restore_failed'))
     return True
 
 
@@ -311,7 +320,7 @@ class EngineUpdater:
     """
 
     def __init__(self, emit, cancelled, probe_args=None, legacy_events=False):
-        self.emit = emit
+        self.emit = messages.guarded(emit, 'updater')
         self.cancelled = cancelled
         self.probe_args = [str(word) for word in probe_args] if probe_args else None
         self.legacy_events = legacy_events
@@ -337,14 +346,14 @@ class EngineUpdater:
             output = _probe_output([str(exe), *self.probe_args], PROBE_TIMEOUT).decode('utf-8', errors='replace')
         except subprocess.TimeoutExpired as error:
             applog.get('updater').warning('the new engine did not finish the option check within %s s', error.timeout)
-            raise UpdateError(MSG_PROBE) from error
+            raise UpdateError(msg('core.update.incompatible')) from error
         except OSError as error:
             applog.get('updater').warning('the new engine could not be started for the option check: %s', error)
-            raise UpdateError(MSG_PROBE) from error
+            raise UpdateError(msg('core.update.incompatible')) from error
         # A good and a bad option set both end with exit code 2 (no URL given); only the text differs.
         if 'no such option' in output.lower():
             applog.get('updater').warning('the new engine rejects an option: %s', ' '.join(output.split())[:300])
-            raise UpdateError(MSG_PROBE)
+            raise UpdateError(msg('core.update.incompatible'))
 
     def _check_start(self, exe):
         """(1.7.0, c5-updater a) "--version" must end with exit code 0 and print a version as its
@@ -356,16 +365,18 @@ class EngineUpdater:
             code, output, errors = _version_output(exe, PROBE_TIMEOUT)
         except subprocess.TimeoutExpired as error:
             log.warning('the new engine did not answer --version within %s s', error.timeout)
-            raise UpdateError(MSG_START.format(reason=f'{error.timeout:g} 秒内没有结束')) from error
+            raise UpdateError(msg('core.update.start_failed',
+                                  reason=msg('core.update.start_timeout', timeout=f'{error.timeout:g}'))) from error
         except OSError as error:
             log.warning('the new engine could not be started: %s', error)
-            raise UpdateError(MSG_START.format(reason='无法启动')) from error
+            raise UpdateError(msg('core.update.start_failed', reason=msg('core.update.start_cannot'))) from error
         text = output.decode('utf-8', errors='replace').strip()
         first = text.splitlines()[0].strip() if text else ''
         if code != 0 or not VERSION_LINE.match(first):
             log.warning('the new engine failed --version (exit code %s): %s', code,
                         ' '.join((text + ' ' + errors.decode('utf-8', errors='replace')).split())[:300])
-            raise UpdateError(MSG_START.format(reason=f'退出码 {code}' if code != 0 else '没有给出版本号'))
+            raise UpdateError(msg('core.update.start_failed', reason=msg('core.update.start_exit', code=code)
+                                  if code != 0 else msg('core.update.start_no_version')))
 
     def _install(self, temporary, target) -> bool:
         """os.replace(temporary, target), repeated for about INSTALL_RETRY seconds while Windows
@@ -392,7 +403,7 @@ class EngineUpdater:
         import urllib.request
         temporary = None
         try:
-            self._status('正在检查官方更新…', legacy=True)
+            self._status(msg('core.update.checking'), legacy=True)
             release = check_latest()
             version = release['tag']
             if version == engine_version():
@@ -402,32 +413,32 @@ class EngineUpdater:
                 return
             url, size, expected = release['url'], release['size'], release['sha256']
             if not url:
-                raise UpdateError(MSG_NO_ASSET)
+                raise UpdateError(msg('core.update.no_exe'))
             if not url.startswith(ASSET_PREFIX):
-                raise UpdateError(MSG_ORIGIN)
+                raise UpdateError(msg('core.update.bad_host'))
             if len(expected) != 64:
-                raise UpdateError(MSG_NO_DIGEST)
+                raise UpdateError(msg('core.update.no_sha'))
             if not 0 < size <= MAX_SIZE:
-                raise UpdateError(MSG_SIZE)
+                raise UpdateError(msg('core.update.bad_size'))
             target = paths.own_dir(paths.engines_dir()) / 'yt-dlp.exe'
             # Unique per run: after Stop the window is free at once while an abandoned run may
             # still wait for the network; a second update must not share its file.
             temporary = target.with_name(f'yt-dlp.download.{os.getpid()}.{next(_serial)}.exe')
             checksum, received = hashlib.sha256(), 0
-            self._status('正在下载新版引擎…')
+            self._status(msg('core.update.downloading'))
             network = _network_errors()
             try:
                 response = urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': USER_AGENT}),
                                                   timeout=NETWORK_TIMEOUT)
             except network as error:
-                raise UpdateError(MSG_NETWORK.format(reason=_reason(error))) from error
+                raise UpdateError(msg('core.update.no_github', reason=_reason(error))) from error
             try:
                 with response, temporary.open('wb') as handle:
                     while True:
                         try:
                             block = response.read(BLOCK)
                         except network as error:
-                            raise UpdateError(MSG_NETWORK.format(reason=_reason(error))) from error
+                            raise UpdateError(msg('core.update.no_github', reason=_reason(error))) from error
                         if not block:
                             break
                         if self.cancelled.is_set():
@@ -436,16 +447,16 @@ class EngineUpdater:
                         checksum.update(block)
                         received += len(block)
                         if received > size:
-                            raise UpdateError(MSG_MISMATCH)
+                            raise UpdateError(msg('core.update.bad_hash'))
                         self._progress(received, size)
             except OSError as error:
                 # The download file could not be created or written (disk full, no permission, ...);
                 # network errors were turned into UpdateError above (core fix review-state-3).
-                raise UpdateError(MSG_SAVE.format(reason=_file_reason(error))) from error
+                raise UpdateError(msg('core.update.save_failed', reason=_file_reason(error))) from error
             if checksum.hexdigest() != expected or received != size:
-                raise UpdateError(MSG_MISMATCH)
+                raise UpdateError(msg('core.update.bad_hash'))
             if self.probe_args:
-                self._status('正在检查新版引擎与本程序的兼容性…')
+                self._status(msg('core.update.testing'))
                 self._probe(temporary)
             # Stop may have come during the download's last block or during the option check.
             if self.cancelled.is_set():
@@ -455,7 +466,7 @@ class EngineUpdater:
                     return      # stopped while a scanner still held a file
             except OSError as error:
                 # Nothing was changed: the engine that was in use still is.
-                raise UpdateError(MSG_INSTALL.format(reason=_file_reason(error))) from error
+                raise UpdateError(msg('core.update.write_failed', reason=_file_reason(error))) from error
             finally:
                 invalidate()
             try:
@@ -466,16 +477,16 @@ class EngineUpdater:
                 # updated engine that was installed before is gone.  Leave a clean state (the
                 # bundled engine) and say so, instead of claiming that nothing changed.
                 _remove_updated()
-                raise UpdateError(MSG_RECEIPT.format(reason=_file_reason(error))) from error
+                raise UpdateError(msg('core.update.record_failed', reason=_file_reason(error))) from error
             finally:
                 invalidate()
             self.emit('updated', {'version': version, 'unchanged': False})
         except UpdateError as error:
             applog.get('updater').warning('engine update refused: %s', error, exc_info=error.__cause__ is not None)
-            self.emit('update_error', str(error))
+            self.emit('update_error', message_of(error))
         except Exception as error:
             applog.get('updater').exception('engine update failed')
-            self.emit('update_error', str(error))
+            self.emit('update_error', message_of(error))
         finally:
             if temporary is not None:
                 try:

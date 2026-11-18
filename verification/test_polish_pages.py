@@ -10,6 +10,7 @@ that never starts a process; the one download run uses the real Runner with a sc
 (no yt-dlp process, no network).
 """
 import _sandbox
+import gc
 import threading
 import time
 import tkinter as tk
@@ -121,6 +122,10 @@ class Base(unittest.TestCase):
                 app.destroy()
         except tk.TclError:
             pass
+        # (1.8.0 WP-6, MESSAGES.md 15 A12) the destroyed window's Tk objects (fonts) that sit in
+        # reference cycles are collected here, on the window's thread: a collection that a Runner
+        # thread of the next test triggers would call into the old Tcl interpreter and wait forever.
+        gc.collect()
 
     @staticmethod
     def logged(app):
@@ -218,8 +223,10 @@ class HistoryTests(Base):
         # Other names stay as they are.
         named = store.create_job('download', '我的歌单', {'urls': [A], 'output': 'x', 'mode': MP3})
         collect = store.create_job('collect', '3条 · 列表', {'urls': [A]})
-        self.assertEqual(self.history_row(app, named)[1], '我的歌单')
-        self.assertEqual(self.history_row(app, collect)[1], '3条 · 列表')
+        # (1.8.0) a collect job's title that reads like the placeholder is user data, shown as it is
+        with _sandbox.fixture_texts('a collect job titled like the 1.5.1 placeholder: user data'):
+            self.assertEqual(self.history_row(app, named)[1], '我的歌单')
+            self.assertEqual(self.history_row(app, collect)[1], '3条 · 列表')
 
     def test_the_note_shows_the_reason_of_the_task_row(self):
         app = self.make_app()

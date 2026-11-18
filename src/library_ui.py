@@ -4,8 +4,11 @@ The library page is one ui_theme.tabs card with three tabs (WP5.md section C).  
 font and widget comes from ui_theme.  Never import studio here at module level.
 
 (1.7.0) Every shown text through i18n (I18N.md 8); stored texts (job titles, subscription errors,
-reasons) keep their canonical Chinese form and are shown through i18n.localize (I18N.md 9.3); the
-tab ids, the interval labels of the Tk variable and the job statuses keep their 1.6.0 values.
+reasons) keep their canonical Chinese form (1.7.0 showed them via i18n.localize, I18N.md 9.3);
+the tab ids, the interval labels of the Tk variable and the job statuses keep their 1.6.0 values.
+
+(1.8.0, MESSAGES.md 6) The library returns decoded records: app texts are messages, user data is
+raw; the page shows them with messages.show / messages.error_text, so no key-prefix list is left.
 """
 from collections import deque
 from dataclasses import asdict
@@ -21,11 +24,12 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import applog
 import i18n
+import messages
 import ui_theme
 from collector import MAX_LINKS, CollectOptions
 from engine import APP_DIR, BOT_CHECK_PATTERN, STALE_PATTERN, Options, explain_error
 from library import HISTORY_PAGE, JOB_OPTION_KEYS, Archive, is_busy, job_downloads, open_library, set_ui_thread, ui_wait
-from urls import display
+import urls as urltools
 
 # The labels are looked up from the stored seconds only; the label itself is never stored.
 INTERVALS = {'仅手动': 0, '每 15 分钟': 900, '每小时': 3600, '每天': 86400}
@@ -61,35 +65,13 @@ LIBRARY_RETRY_MS = 2000
 HISTORY_SEARCH_MS = 250         # typing pause before the search runs
 HISTORY_EMPTY = '下载和采集任务会记录在这里'
 HISTORY_NONE_FOUND = '没有标题或链接包含“{term}”的任务'
-# (1.7.0) Stored and shown texts of the user's own data: only these app-made forms are localized,
-# so a media title or a subscription name that happens to equal a core text stays as it is (I18N.md 9.2).
-JOB_TITLE_KEYS = ('value.job_title.', 'value.subscription.untitled')
-NAME_KEYS = ('value.subscription.untitled',)
-# (final fix round 2, CR2-2) The app-made forms per kind of stored job title: a download job titled by
-# its media (data['titled']) has only '{title} 等 {count} 条' (several links), an untitled one only the
-# placeholder '{count} 条 · {mode}', a collect job only '订阅：{name}' (else its first start link).
-TITLED_JOB_KEYS = ('value.job_title.multi',)
-UNTITLED_JOB_KEYS = ('value.job_title.placeholder',)
-COLLECT_JOB_KEYS = ('value.job_title.subscription',)
-# (final fix round 1, CR1-1; I18N.md 9.3) A stored page or link title equal to the collector's fallback
-# page title (网页) is shown in the running language: archive titles and the new-items table, as the
-# collect table does (collection_ui.PAGE_TITLE_KEYS).  (final fix round 2, CR2-1) So is the collector's
-# title of a start page that is itself a media file (媒体直链).  (final fix round 3, CR3-1) So is the title
-# of a media request a dynamic collection captured (动态页面媒体请求).
-PAGE_TITLE_KEYS = ('value.page_title.', 'value.link_kind.direct', 'value.link_kind.dynamic_request')
 
 
-def stored_text(key, **values):
-    """(1.7.0) The canonical (Chinese) text of ``key``: what is stored or compared in every
-    language (H2), e.g. a subscription job's title '订阅：…' or a library tab id."""
-    text = i18n.all_values(key)[0]
-    return text.format(**values) if values else text.replace('{{', '{').replace('}}', '}')
-
-
-# (1.7.0) The library tab ids (stored by snapshot_ui and compared by studio.focus_page): the 1.6.0 names.
-TAB_HISTORY = stored_text('library.tab.history')
-TAB_SUBSCRIPTIONS = stored_text('library.tab.subscriptions')
-TAB_ARCHIVE = stored_text('library.tab.archive')
+# (1.7.0) The library tab ids (stored by snapshot_ui and compared by studio.focus_page): the 1.6.0 names;
+# ids, not messages (MESSAGES.md 6.3).
+TAB_HISTORY = i18n.all_values('library.tab.history')[0]
+TAB_SUBSCRIPTIONS = i18n.all_values('library.tab.subscriptions')[0]
+TAB_ARCHIVE = i18n.all_values('library.tab.archive')[0]
 
 
 def text_button_width(parent, text, size='md'):
@@ -321,21 +303,24 @@ def history_title(row):
     '未命名订阅') is shown in the running language (I18N.md 9.3).
 
     (final fix round 2, CR2-2) Only the forms the app makes for that kind of job: a title the engine
-    took from the media itself stays as it is, even when it reads like '订阅：…' or '3 条 · …'."""
+    took from the media itself stays as it is, even when it reads like '订阅：…' or '3 条 · …'.
+
+    (1.8.0, MESSAGES.md 6.3) The library decoded the title with that rule already (a message or raw
+    user data); the structure stays, so zh shows exactly what 1.7.0 showed."""
     title = str(row.get('title') or '')
     data = row.get('data') if isinstance(row.get('data'), dict) else {}
     options = data.get('options') if isinstance(data.get('options'), dict) else {}
     urls = [url for url in options.get('urls') or [] if isinstance(url, str) and url]
     if row.get('kind') != 'download':
-        return i18n.localize(title, keys=COLLECT_JOB_KEYS)
+        return messages.show(title)
     if data.get('titled'):
         # library.py: the first media title, or '{title} 等 {count} 条' when the job has several links.
-        return title if len(urls) == 1 else i18n.localize(title, keys=TITLED_JOB_KEYS)
-    if not PLACEHOLDER_TITLE.fullmatch(title) or not urls:
-        return i18n.localize(title, keys=UNTITLED_JOB_KEYS)
+        return messages.show(title)
+    if not PLACEHOLDER_TITLE.fullmatch(messages.zh(title)) or not urls:
+        return messages.show(title)
     if len(urls) > 1:
-        return i18n.t('value.job_title.multi', title=display(urls[0]), count=len(urls))
-    return display(urls[0])
+        return i18n.t('value.job_title.multi', title=urltools.display(urls[0]), count=len(urls))
+    return urltools.display(urls[0])
 
 
 def history_status(row):
@@ -354,10 +339,10 @@ def history_row(row):
 
 
 def subscription_row(row):
-    """(1.7.0) The four cells of a subscription: its name (the app's default name localized), the
+    """(1.7.0) The four cells of a subscription: its name (the app's default name in the running language), the
     schedule (the label of the stored seconds) or 已暂停, the last check and the pending count."""
     schedule = i18n.label('interval', row['interval']) if row['enabled'] else i18n.t('library.state.paused')
-    return (i18n.localize(row['name'], keys=NAME_KEYS), schedule, clock(row['data']['last_check']), row['pending'])
+    return (messages.show(row['name']), schedule, clock(row['data']['last_check']), row['pending'])
 
 
 def resume_plan(entries):
@@ -420,7 +405,7 @@ class LibraryUI:
                                                     text_color=ui_theme.WARN, anchor='w')
         self.library_warning_label.grid(row=0, column=0, sticky='ew', padx=12, pady=5)
         self.library_warning_bar.grid(row=1, column=0, sticky='ew', pady=(0, ui_theme.GAP))
-        ui_theme.fit(self.library_warning_label, i18n.localize(self.library_warning))
+        ui_theme.fit(self.library_warning_label, messages.show(self.library_warning))
         if not self.library_warning:
             self.library_warning_bar.grid_remove()
         # A keyboard focus left in a tab that is switched away from moves to the new tab's table
@@ -636,7 +621,7 @@ class LibraryUI:
                 self.library_busy(error)
                 return
             applog.get('ui').exception('refresh_library failed')
-            self.show_library_problem(i18n.t('library.unreadable', error=error))
+            self.show_library_problem(i18n.t('library.unreadable', error=messages.error_text(error)))
         else:
             if self.library_waiting and self.library_busy_count == busy_before and not self.history_writer.waiting():
                 self.library_settled()
@@ -649,7 +634,7 @@ class LibraryUI:
             self.append_log(text)       # once per new error, not at every refresh
         self.library_problem = text
         calm = not text and getattr(self, 'library_waiting', False)
-        shown = text or (i18n.t('library.busy') if calm else '') or i18n.localize(self.library_warning)
+        shown = text or (i18n.t('library.busy') if calm else '') or messages.show(self.library_warning)
         try:
             self.library_warning_bar.configure(fg_color=ui_theme.ACCENT_SOFT if calm else ui_theme.WARN_SOFT)
             self.library_warning_label.configure(text_color=ui_theme.ACCENT_TEXT if calm else ui_theme.WARN)
@@ -670,7 +655,7 @@ class LibraryUI:
         self.library_busy_count += 1
         if not self.library_busy_logged:
             self.library_busy_logged = True
-            self.append_log(i18n.t('log.library.busy', error=error or 'database is locked'))
+            self.append_log(i18n.t('log.library.busy', error=messages.error_text(error) if error else 'database is locked'))
         self.show_library_problem(self.library_problem)
         self.show_library_notice()
         if self.library_watch_after is None and not self.closing:
@@ -784,7 +769,7 @@ class LibraryUI:
                 self.library_busy(error)
                 return
             applog.get('ui').exception('refresh_history failed')
-            self.show_library_problem(i18n.t('library.unreadable', error=error))
+            self.show_library_problem(i18n.t('library.unreadable', error=messages.error_text(error)))
 
     def show_history_count(self, shown, total, search=''):
         if search:
@@ -841,7 +826,8 @@ class LibraryUI:
         A download counts once per (link, format) (review-e2e-4).
 
         (1.7.0) The stored error and reason stay canonical Chinese in the record; the note shows
-        them in the running language (I18N.md 9.3), the raw engine line never.
+        them in the running language (I18N.md 9.3), the raw engine line never.  (1.8.0) They are
+        decoded values (messages or raw text), shown with messages.show (MESSAGES.md 6.2).
         """
         data = record['data']
         completed = len(data.get('completed') or [])
@@ -866,8 +852,8 @@ class LibraryUI:
                 else:
                     error = explain_error(error, bot_check=bool(BOT_CHECK_PATTERN.search(error)),
                                           stale=bool(STALE_PATTERN.search(error)))
-            error = i18n.localize(error)        # a collector text, a stored reason or explain_error's result
-            text += i18n.t('library.history.last_error', error=error[:130])
+            # a collector message, a stored reason or explain_error's result; the 1.7.0 cut of the shown text
+            text += i18n.t('library.history.last_error', error=messages.show(error)[:130])
         return text
 
     def load_collection_record(self, record):
@@ -932,7 +918,7 @@ class LibraryUI:
             try:
                 options = CollectOptions(**raw).validate()
             except ValueError as error:
-                messagebox.showwarning(i18n.t('dialog.resume_collect_failed'), i18n.localize(str(error)), parent=self)
+                messagebox.showwarning(i18n.t('dialog.resume_collect_failed'), messages.error_text(error), parent=self)
                 return
             self.load_collection_record(record)
             self.active_subscription = record['data'].get('subscription')
@@ -1063,7 +1049,7 @@ class LibraryUI:
             self.show_page('library')
             self.append_log(i18n.t('log.subscription.saved', name=name))
         except (OSError, ValueError) as error:
-            messagebox.showwarning(i18n.t('dialog.subscription.save_failed'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.subscription.save_failed'), messages.error_text(error), parent=self)
 
     def selected_subscription(self):
         selected = self.subscription_tree.selection()
@@ -1100,16 +1086,16 @@ class LibraryUI:
                   if n.isdigit() and int(n) < len(previous)}
         self.visible_pending = self.library.pending(row['id']) if row else []
         self.pending_tree.selection_remove(self.pending_tree.selection())
-        self.pending_tree.fill((str(n), (i18n.localize(item['title'], keys=PAGE_TITLE_KEYS), item['url']))
+        self.pending_tree.fill((str(n), (messages.show(item['title']), item['url']))
                                for n, item in enumerate(self.visible_pending))
         again = [str(n) for n, item in enumerate(self.visible_pending) if item['url'] in picked]
         if again:
             self.pending_tree.selection_set(again)
         if row:
             data = row['data']
-            # The stored last_error (also '；'-joined collector errors) in the running language (I18N.md 9.3).
+            # The stored last_error (a message, also the clauses of collector errors) in the running language.
             text = i18n.t('library.subscription.status', new=data['last_new'], pending=row['pending']) + \
-                (i18n.localize(data['last_error']) if data['last_error'] else i18n.t('library.subscription.status_note'))
+                (messages.show(data['last_error']) if data['last_error'] else i18n.t('library.subscription.status_note'))
         else:
             text = i18n.t('library.subscription.note')
         self.subscription_note.configure(text=text, text_color=ui_theme.MUTED)
@@ -1139,13 +1125,13 @@ class LibraryUI:
             options.proxy = self.proxy.get().strip()
             options.validate()
             self.active_subscription = row['id']
-            # The job title is stored in its canonical form (H2); history_title shows it localized.
-            self.launch_collection(options, title=stored_text('value.job_title.subscription', name=row['name']),
+            # (1.8.0, C-F40) The job title is a message with the decoded name; history_title shows it.
+            self.launch_collection(options, title=messages.msg('value.job_title.subscription', name=row['name']),
                                    background=automatic)
             if automatic:
                 # robust-13: the download page says why it cannot start right now, the collect page
                 # why its controls are disabled.
-                name = i18n.localize(row['name'], keys=NAME_KEYS)
+                name = messages.show(row['name'])
                 self.hint_subscription_check(name)
                 self.refresh_collect_note(background=name)
             else:
@@ -1162,13 +1148,13 @@ class LibraryUI:
                 # Recorded on the subscription as in 1.5.1.  Not after a history error: writing the
                 # record would wait for the same lock once more.
                 try:
-                    self.library.finish_subscription(row['id'], [], False, str(error))
+                    self.library.finish_subscription(row['id'], [], False, messages.message_of(error))
                 except Exception:
                     applog.get('ui').exception('finish_subscription failed')
-            self.append_log(i18n.t('log.subscription.failed', name=i18n.localize(row['name'], keys=NAME_KEYS),
-                                   error=i18n.localize(str(error))))
+            self.append_log(i18n.t('log.subscription.failed', name=messages.show(row['name']),
+                                   error=messages.error_text(error)))
             if not automatic:
-                messagebox.showwarning(i18n.t('dialog.subscription.not_started'), i18n.localize(str(error)), parent=self)
+                messagebox.showwarning(i18n.t('dialog.subscription.not_started'), messages.error_text(error), parent=self)
 
     def subscription_tick(self):
         try:
@@ -1265,7 +1251,7 @@ class LibraryUI:
                 self.library_busy()
             self.refresh_archives()
         except (ValueError, OSError) as error:
-            messagebox.showerror(i18n.t('dialog.archive_failed'), i18n.localize(str(error)), parent=self)
+            messagebox.showerror(i18n.t('dialog.archive_failed'), messages.error_text(error), parent=self)
 
     def refresh_archives(self):
         selected = self.archive_tree.selection()
@@ -1279,13 +1265,14 @@ class LibraryUI:
             self.library_busy(error)        # (1.7.0 U1) the list stays; library_watch reads it again
             return
         def searched(r):
-            # (final fix round 1, CR1-1) the shown title is searched too when it differs (English fallback title)
-            shown = i18n.localize(r['title'], keys=PAGE_TITLE_KEYS)
-            title = r['title'] if shown == r['title'] else r['title'] + ' ' + shown
+            # (final fix round 1, CR1-1) the shown title is searched too when it differs (English fallback title);
+            # (1.8.0, MESSAGES.md 6.2) the stored text through messages.zh, the shown one through show.
+            stored, shown = messages.zh(r['title']), messages.show(r['title'])
+            title = stored if shown == stored else stored + ' ' + shown
             return (title + ' ' + str(r.get('uploader', '')) + ' ' + r['source']).casefold()
         self.visible_archives = [r for r in stored if not term or term in searched(r)]
         self.archive_tree.selection_remove(selected)        # positional iids; re-selected by folder below
-        self.archive_tree.fill((str(n), (i18n.localize(row['title'], keys=PAGE_TITLE_KEYS),
+        self.archive_tree.fill((str(n), (messages.show(row['title']),
                                          row.get('uploader') or i18n.t('library.archive.not_provided'),
                                          f"{len(row['files'])} / {len(row['transcripts'])}", row['source']))
                                for n, row in enumerate(self.visible_archives))
@@ -1303,7 +1290,7 @@ class LibraryUI:
             try:
                 os.startfile(row['folder'])
             except OSError as error:
-                messagebox.showerror(i18n.t('dialog.open_failed'), str(error), parent=self)
+                messagebox.showerror(i18n.t('dialog.open_failed'), messages.error_text(error), parent=self)
         else:
             self.archive_hint()
 
@@ -1329,4 +1316,4 @@ class LibraryUI:
                     self.library_busy()
                 self.refresh_archives()
             except (ValueError, OSError) as error:
-                messagebox.showerror(i18n.t('dialog.attach_failed'), i18n.localize(str(error)), parent=self)
+                messagebox.showerror(i18n.t('dialog.attach_failed'), messages.error_text(error), parent=self)

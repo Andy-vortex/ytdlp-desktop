@@ -46,7 +46,7 @@ import urls
 from library import Library
 
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
-BACKUP = _sandbox.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src'
+BACKUP = _sandbox.release_src('1.5.1')
 LOG = 'YtDlpDesktop.unfinished'
 # Only a text inside the stored entries (as the owner's output folder looks); nothing is written there.
 OWNER_OUTPUT = 'D:\\YT-DLP下载器\\下载文件'

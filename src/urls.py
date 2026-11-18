@@ -1,7 +1,7 @@
 """Links (1.6.0): lenient extraction from pasted text, YouTube clean-up, identity keys.
 
-Standard library only; imports no app module.  Three different things live here and
-must not be mixed up:
+Standard library and messages only (1.8.0: the errors are messages).  Three different things
+live here and must not be mixed up:
 
 * ``identity(url)`` is the function of 1.5.1's library.py, moved here unchanged.  Its
   results are stored (subscription entries, archive folder names), so it never changes.
@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
+
+import messages
 
 YOUTUBE_HOSTS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be',
                  'www.youtube-nocookie.com'}
@@ -140,12 +142,12 @@ def parse_download_text(text) -> list[str]:
             continue
         links = extract_urls(line)
         if not links:
-            raise ValueError(f'第 {number} 行没有找到链接。请每行粘贴一个链接。')
+            raise ValueError(messages.msg('core.links.no_link_on_line', line=number))
         for link in links:
             if link not in found:
                 found.append(link)
     if not found:
-        raise ValueError('请先粘贴至少一个视频或音频链接。')
+        raise ValueError(messages.msg('core.links.none'))
     return found
 
 

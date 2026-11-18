@@ -23,7 +23,7 @@ import unfinished
 import urls
 
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
-BACKUP = _sandbox.ROOT / 'verification' / 'backup-before-1.6.0-20261115' / 'src'
+BACKUP = _sandbox.release_src('1.5.1')
 ENTRY_KEYS = {'key', 'format', 'url', 'title', 'reason', 'error', 'time', 'referer', 'options'}
 OPTION_KEYS_OF_1_5_1 = {'output', 'mode', 'resolution', 'playlist', 'proxy', 'batch_safe', 'referers', 'archive_root',
                         'archive_contexts', 'cookies'}

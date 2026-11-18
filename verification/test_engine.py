@@ -326,7 +326,7 @@ class EngineTests(unittest.TestCase):
         runner = engine.Runner(lambda kind, value: events.append((kind, value)))
         self.assertTrue(runner._wait(0.02, 1, 2, '限流'))
         runner.wait_kind = 'interval'
-        self.assertTrue(runner._wait(0.02, 2, 2, '下载间隔'))
+        self.assertTrue(runner._wait(0.02, 2, 2, engine.msg('core.wait.pace')))    # (1.8.0) the reason download() passes
         waits = [value for kind, value in events if kind == 'waiting']
         self.assertEqual([value['kind'] for value in waits[:1] + waits[-1:]], ['rate_limit', 'interval'])
         self.assertEqual(set(waits[0]), {'index', 'total', 'seconds', 'reason', 'kind'})

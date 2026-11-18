@@ -19,6 +19,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import engine
 import i18n
+import messages
 import naming
 import paths
 import procutil
@@ -93,8 +94,9 @@ def restart_state_file() -> Path:
 
 
 def shown_engine_version(version=None):
-    """The engine version as shown: engine_version()'s '已内置' in the running language (I18N.md 9.3)."""
-    return i18n.localize(engine_version() if version is None else version)
+    """The engine version as shown: engine_version()'s '已内置' (updater.BUILTIN, a message) in the
+    running language (MESSAGES.md 6.2)."""
+    return messages.show(engine_version() if version is None else version)
 
 
 class SettingsUI:
@@ -411,7 +413,7 @@ class SettingsUI:
                 except OSError:
                     pass
             messagebox.showerror(i18n.t('dialog.restart_failed.title'),
-                                 i18n.t('dialog.restart_failed.text', error=error), parent=self)
+                                 i18n.t('dialog.restart_failed.text', error=messages.error_text(error)), parent=self)
             return
         self.finish_close()
 
@@ -494,7 +496,7 @@ class SettingsUI:
         try:
             check_cookie_file(path)
         except (ValueError, OSError) as error:
-            messagebox.showwarning(i18n.t('dialog.cookies.unusable'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.cookies.unusable'), messages.error_text(error), parent=self)
             return
         self.cookies.set(str(Path(path)))
         self.save_settings()
@@ -563,7 +565,7 @@ class SettingsUI:
         except Exception as error:
             # (1.7.0, request of fix-core) restore_bundled raises (updater.MSG_RESTORE) when the
             # updated engine is still in use: the labels and the still enabled button tell the truth.
-            messagebox.showwarning(i18n.t('dialog.restore.failed'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.restore.failed'), messages.error_text(error), parent=self)
             self.refresh_engine_labels()
             return
         self.refresh_engine_labels()
@@ -573,7 +575,7 @@ class SettingsUI:
     def on_update_status(self, value):
         if not (self.busy and self.operation == 'update'):
             return
-        self.update_status.configure(text=i18n.localize(str(value)), text_color=ui_theme.ACCENT_TEXT)
+        self.update_status.configure(text=messages.show(value), text_color=ui_theme.ACCENT_TEXT)
 
     def on_update_progress(self, value):
         if not (self.busy and self.operation == 'update'):
@@ -597,7 +599,7 @@ class SettingsUI:
         self.append_log(i18n.t('log.engine_checked', version=shown))
 
     def on_update_error(self, value):
-        error = i18n.localize(str(value))
+        error = messages.show(value)
         self.update_status.configure(text=i18n.t('settings.update.failed', error=error), text_color=ui_theme.WARN)
         self.append_log(i18n.t('log.update_failed', error=error))
 

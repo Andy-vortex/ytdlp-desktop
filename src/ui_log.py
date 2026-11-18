@@ -14,6 +14,7 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 import i18n
+import messages
 import paths
 import ui_theme
 
@@ -145,10 +146,10 @@ class LogUI:
             self.logs.tag_config(name, foreground=ui_theme.resolve(token))
 
     def append_log(self, line):
-        # (1.7.0, I18N.md 8.6) Core lines arrive in canonical Chinese and are shown (and written to
-        # download.log) in the running language; UI lines are already localized and raw engine
-        # output is unknown to localize: both pass unchanged.  zh: the line itself.
-        line = i18n.localize(str(line))
+        # (1.8.0, MESSAGES.md 6.2 D-F47) Core lines arrive as messages and are shown (and written to
+        # download.log) in the running language; UI lines are already shown text and raw engine
+        # output is plain: both pass unchanged.  zh: the line itself.
+        line = messages.show(line)
         proxy = self.proxy.get().strip() if hasattr(self, 'proxy') else ''
         if proxy:
             line = line.replace(proxy, i18n.t('core.proxy_mask'))
@@ -192,7 +193,7 @@ class LogUI:
         try:
             os.startfile(paths.log_file())
         except OSError as error:
-            messagebox.showwarning(i18n.t('dialog.open_log_failed'), str(error), parent=self)
+            messagebox.showwarning(i18n.t('dialog.open_log_failed'), messages.error_text(error), parent=self)
 
     def clear_log_view(self):
         self.logs.configure(state='normal')

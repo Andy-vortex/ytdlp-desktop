@@ -46,13 +46,24 @@ only (1) to (8) run, exactly as before.
        after it: the title keeps 160 px and (9) / (9b) hold for the task header.
   (12) the subscription strip and the settings cards fit (the WP5 / 1.6.0 checks above, run in the
        chosen language).
+
+(1.8.0 WP-6, MESSAGES.md 7.6) In English only:
+  (13) no Chinese outside user data: every text of every mapped widget of every captured page, tab and
+       state (labels, buttons, check boxes, switches, option menus and their values, segments, entries and
+       their placeholders, table headings and cells, text boxes, the log page; the sidebar) holds no CJK
+       character once the user-data strings of the snapshot fixtures (USER_DATA: the titles, names and
+       file names the scenes below feed, each checked to occur in this file) and the deliberate CJK of the
+       English catalog (the language names 简体中文 / Language / 语言, the brackets 【】『』 the naming hint
+       quotes) are taken out.  Cut texts are read whole (ui_theme.full_text, AppTable.full_values).
 """
 import _sandbox
 import argparse
+import ast
 import ctypes
 from ctypes import wintypes
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import tkinter as tk
@@ -79,6 +90,14 @@ TOLERANCE = 1           # physical px a measured width may exceed the widget (ro
 HEADING_PAD = 16        # logical px a table heading needs beside its text (I18N.md 11.5 (9))
 TITLE_MIN = 160         # logical px the task title keeps in the active scene (I18N.md 10.5, (11))
 SIDEBAR_JOB = (123, 456)    # (10): the item of a long job shown in the sidebar status
+# (13) The user data the scenes feed (media, page and link titles, subscription and uploader names, file
+# names): taken out of a text before it is checked for CJK.  Every entry is a part of a string literal of
+# this file (checked by user_data()), never an app text.
+USER_DATA = ('徐秉龍、沈以誠 - 白羊『青春一記荒唐 亦然學著瘋狂。』【動態歌詞Lyrics】', '徐秉龙 - 双子 【Lyrics MV】「每日歌曲推荐 #63」',
+             '徐秉龙 - 双子 【Lyrics MV】', '李翊君 雨蝶 歌詞版', '周杰伦 - 晴天 (Official MV)', '白羊.m4a',
+             '第 ', ' 期 · 城市夜谈：在凌晨两点仍然醒着的人', '城市夜谈 · 节目列表', '城市夜谈 · 每周更新', '城市夜谈', '关于本节目',
+             '节目简介', '官方频道公告', '未完成的歌曲', '媒体.m4a', '转写稿/文字稿.txt', TITLE_60)
+CJK = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
 
 
 def grab(window, path) -> bool:
@@ -195,7 +214,7 @@ def active_scene(app):
     app.progress.set(.42, immediate=True)
     for line in ('[youtube] Extracting URL: ' + links[1], '[youtube] video0001: Downloading webpage',
                  'WARNING: [youtube] video0003: Some formats may be missing', 'ERROR: [youtube] video0003: Video unavailable',
-                 '此链接未完成（退出码 1），继续处理队列中的下一项。', '[ExtractAudio] Destination: 白羊.m4a',
+                 engine.msg('core.engine.item_unfinished', code=1), '[ExtractAudio] Destination: 白羊.m4a',
                  i18n.t('log.file_saved', path=str(_sandbox.out('白羊.m4a')))):
         app.append_log(line)
     app.flush_log()
@@ -481,6 +500,87 @@ def _is_card(widget):
         return False
 
 
+def user_data(app=None):
+    """(13) USER_DATA, after checking that every entry is part of a string literal of this file (the
+    scenes' fixture data) and is not an app text the legacy reader or G2 would recognise; with ``app``
+    also the fixture's own folders (its save folder and archive folder, the default 资料归档 of D10
+    included)."""
+    folders = []
+    for name in ('output', 'archive_root'):
+        try:
+            folders.append(str(getattr(app, name).get()))
+        except (AttributeError, tk.TclError):
+            pass
+    import i18n_legacy
+    tree = ast.parse(Path(__file__).read_text(encoding='utf-8'))
+    literals = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    literals += [part.value for node in ast.walk(tree) if isinstance(node, ast.JoinedStr)
+                 for part in node.values if isinstance(part, ast.Constant)]
+    for entry in USER_DATA:
+        if not any(entry in literal for literal in literals if literal is not USER_DATA):
+            raise AssertionError(f'(13) USER_DATA entry {entry!r} is no fixture text of snapshot_ui')
+        if i18n_legacy.recognise(entry):
+            raise AssertionError(f'(13) USER_DATA entry {entry!r} is an app text')
+    return sorted([entry for entry in USER_DATA + tuple(folders) if entry], key=len, reverse=True)
+
+
+def chinese_left(text, users=None):
+    """(13) The CJK characters of ``text`` once the user data and the deliberate CJK of the English
+    catalog (the language names, the 【】『』 the naming hint quotes) are taken out."""
+    import i18n
+    text = str(text)
+    for entry in users if users is not None else user_data():
+        text = text.replace(entry, '')
+    for key in ('settings.language.zh', 'settings.language.title'):
+        for allowed in i18n.all_values(key):
+            text = text.replace(allowed, '')
+    return ''.join(char for char in CJK.findall(text) if char not in '【】『』')
+
+
+def shown_texts(widgets):
+    """(13) [(widget class, text)] of every text the widgets show or offer, uncut."""
+    import ui_theme
+    found = []
+    for widget in widgets:
+        try:
+            if isinstance(widget, ttk.Treeview):
+                found += [('heading', widget.heading(column, 'text')) for column in widget['columns']]
+                values = getattr(widget, 'full_values', None)
+                for iid in widget.get_children():
+                    cells = values(iid) if values else widget.item(iid, 'values')
+                    found += [('cell', cell) for cell in cells]
+                found.append(('empty', getattr(widget, '_empty', '') or ''))
+            elif isinstance(widget, ctk.CTkLabel):
+                found.append(('label', ui_theme.full_text(widget)))
+            elif isinstance(widget, (ctk.CTkButton, ctk.CTkCheckBox, ctk.CTkSwitch, ctk.CTkRadioButton)):
+                found.append((type(widget).__name__, widget.cget('text')))
+            elif isinstance(widget, ctk.CTkOptionMenu):
+                found.append(('option menu', widget._text_label.cget('text')))
+                found += [('option', value) for value in widget.cget('values') or ()]
+            elif isinstance(widget, ctk.CTkSegmentedButton):
+                found += [('segment', value) for value in widget.cget('values') or ()]
+            elif isinstance(widget, ctk.CTkEntry):
+                found += [('entry', widget.get()), ('placeholder', widget.cget('placeholder_text') or '')]
+            elif isinstance(widget, tk.Text):
+                found.append(('text box', widget.get('1.0', 'end-1c')))
+        except (tk.TclError, ValueError, AttributeError, KeyError):
+            continue
+    return [(kind, str(text)) for kind, text in found if text]
+
+
+def cjk_failures(widgets, app=None, where=''):
+    """(13) A message for every shown line that keeps CJK outside user data (English runs only)."""
+    users = user_data(app)
+    failures, seen = [], set()
+    for kind, text in shown_texts(widgets):
+        for line in text.splitlines() or [text]:
+            left = chinese_left(line, users)
+            if left and (kind, line) not in seen:
+                seen.add((kind, line))
+                failures.append(f'(13) {where}{kind} shows Chinese outside user data: {line[:120]!r} ({left[:20]})')
+    return failures
+
+
 def card_failures(app, widgets, page):
     """(9b) every mapped button, entry, option menu, checkbox and segmented bar ends left of the inner
     right edge of the nearest card around it (the page frame when there is none)."""
@@ -541,6 +641,7 @@ def _job_scene(app, done, waiting, unfinished):
 
 def scene_failures(app, appearance, language, shots, folder):
     """(10) and (11): the sidebar texts and the task title of the active scene, at 1000x740."""
+    import engine
     import ui_theme
     failures = []
     app.geometry('1000x740+0+0')
@@ -550,7 +651,11 @@ def scene_failures(app, appearance, language, shots, folder):
 
     def sidebar(label):
         settle(app)
-        return [f'1000x740 sidebar ({label}): {failure}' for failure in text_failures(sidebar_widgets(app), True)]
+        found = [f'1000x740 sidebar ({label}): {failure}' for failure in text_failures(sidebar_widgets(app), True)]
+        if language == 'en':                # (1.8.0) (13)
+            widgets = list(sidebar_widgets(app)) + list(checked_widgets(app, 'download'))
+            found += [f'1000x740 sidebar ({label}): {failure}' for failure in cjk_failures(widgets, app)]
+        return found
 
     def title_room(label):
         settle(app)
@@ -572,7 +677,7 @@ def scene_failures(app, appearance, language, shots, folder):
     if shots:
         grab(app, folder / shot_name('download-crowded-1000x740.png', appearance, language))
     # (10) the waiting status
-    app.handle('waiting', {'kind': 'interval', 'reason': '下载间隔', 'seconds': 299})
+    app.handle('waiting', {'kind': 'interval', 'reason': engine.msg('core.wait.pace'), 'seconds': 299})
     failures += sidebar('waiting')
     app.clear_wait()
     # (10) awaiting YouTube and the app badge of a newer engine
@@ -642,6 +747,8 @@ def finished_scene_failures(app, appearance, language, shots, folder):
         widgets = list(checked_widgets(app, 'download'))
         found += [f'1000x740 (11) {label}: {failure}' for failure in card_failures(app, widgets, 'download')]
         found += [f'1000x740 (11) {label}: {failure}' for failure in text_failures(widgets)]
+        if language == 'en':                # (1.8.0) (13)
+            found += [f'1000x740 (13) {label}: {failure}' for failure in cjk_failures(widgets, app)]
         if shots and name:
             grab(app, folder / shot_name(f'{name}-1000x740.png', appearance, language))
         return found
@@ -811,6 +918,9 @@ def _run(pages, sizes, shots, out, state, appearance, language):
                         widgets = list(checked_widgets(app, page))
                         failures += [f'{where}: {failure}' for failure in text_failures(widgets)]
                         failures += [f'{where}: {failure}' for failure in card_failures(app, widgets, page)]
+                        if language == 'en':        # (1.8.0) (13) no Chinese outside user data
+                            failures += [f'{where}: {failure}'
+                                         for failure in cjk_failures(widgets + list(sidebar_widgets(app)), app)]
                     # (WP5) nothing in the subscription tab's creation strip is cut off at its right edge
                     if tab == LIBRARY_TABS[1] and hasattr(app, 'subscription_strip'):
                         strip = app.subscription_strip

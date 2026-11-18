@@ -1,0 +1,28 @@
+{
+ "module": "app",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "下载自检需要 --smoke-output 指定测试目录。": {
+   "category": "internal",
+   "reason": "self-test argument error of app.main (developer smoke run; P7 self-test texts)",
+   "slot_ok": "raised by the developer smoke run (--smoke-url without --smoke-output) to the console; a self-test text (P7), never stored"
+  },
+  "打包下载自检失败：{events}": {
+   "category": "internal",
+   "reason": "packaged self-test failure raised to the self-test harness (P7 self-test texts)"
+  },
+  "资料归档": {
+   "category": "file",
+   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
+  }
+ },
+ "raises": {},
+ "composed": {
+  "f'打包下载自检失败：{events}'": {
+   "line_hint": 50,
+   "reason": "packaged self-test failure raised to the self-test harness with the event list (P7 self-test texts); never stored or shown in the window"
+  }
+ },
+ "sinks": {},
+ "pending_keys": {}
+}

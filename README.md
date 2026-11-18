@@ -8,6 +8,15 @@
 
 ![下载中心](docs/screenshots/download.png)
 
+## 亮点
+
+- **无人值守时也不怕 YouTube 验证**：YouTube 要求验证时，只暂缓 YouTube 链接，按 30、15、15 分钟倒计时自动重试；其他网站的下载照常进行。批量下载有稳健模式（条目间隔、遇到 429 自动冷却）。
+- **不只是下载器**：网页采集能从普通网页、需要滚动的动态网页和翻页里找出音视频链接；资料管理有任务历史、增量订阅和统一归档。
+- **任务不丢、文件不覆盖**：未完成的链接重启后还在，可一键重试；已有文件从不覆盖，重名自动加序号。
+- **开箱即用、更新稳妥**：打包好的程序自带 yt-dlp、FFmpeg、Deno，不需要装 Python；更新 yt-dlp 前先核对校验值并试运行，随时能恢复内置版本；`install_release.py` 安装新版前逐个核对文件，装好后自检，失败自动恢复。
+- **重视隐私**：不收集、不上传任何使用数据；cookies 内容从不复制、保存或写进日志；代理地址先屏蔽再保存。
+- **中英文界面，维护简单**：默认跟随 Windows 语言，也可手动切换。1.8.0 起程序内部只传“消息编号 + 参数”，显示时按语言查表，新增一句话只需在中英文目录各加一条；测试中的检查会拦住常见的漏翻（详见下文“1.8.0：内部改用消息编号”）。
+
 ## 功能
 
 **下载**
@@ -32,6 +41,20 @@
 | 网页采集 | 资料管理 | 深色模式 |
 |---|---|---|
 | ![网页采集](docs/screenshots/collect.png) | ![资料管理](docs/screenshots/library.png) | ![深色模式](docs/screenshots/download-dark.png) |
+
+## 1.8.0：内部改用消息编号
+
+1.8.0 没有新增功能，改的是程序内部传递文字的方式。
+
+1. **不再逐条打补丁**：程序内部只传“第几号消息 + 参数”，界面显示时按当前语言查表；新增一句话只需在中英文目录各加一条。1.7.0 在界面上把中文原文反查回英文的那套做法（`localize` 和它的反查表）已经从界面里删掉；旧版本存下的、没有编号的文字，由一份冻结的 1.7.0 匹配器在读取时识别。
+2. **同类问题由检查拦住**：全部测试中的运行时哨兵在测试走到的路径上检查核心发出的和写入存储的文字，以及交给 show / error_text 和 t() 显示的文字（英文界面下，界面文字的中文原文也会被记下；有七个沿用 1.7.0 的测试文件把核心的事件发送换成了普通函数，这些事件不经过哨兵）；英文快照的断言 (13)（--all 中运行）检查截取的页面上除用户数据外没有中文；另有旧版本存储文字的完整性检查、英文回放，以及按规范第 15 节规则检查代码的静态扫描。用这些检查回放 1.7.0 的旧代码，能自动抓到当时三轮审查才发现的“媒体直链”“动态页面媒体请求”和 1.5.1 旧格式采集错误。这些检查能抓住常见的漏编号，但不保证抓住每一种写法：静态扫描只是辅助，审查发现它还认不出的写法列在规范第 12 节 L-15、L-16。
+3. **修复 1.7.0 英文界面的已知问题**：cookies 行格式错误的提示、被截成 70 字的原因、被误改写的 yt-dlp 原始输出、含“；”的订阅错误被拆坏，在英文界面都已改正（原因显示完整的英文，yt-dlp 的原始输出原样显示）；只有英文的内部提示（例如 “Unsupported output option”）也有了编号，中文目录里暂时仍是这句英文，与 1.7.0 相同。
+4. **中文界面与 1.7.0 完全一致**：所有中文黄金记录逐字节不变。
+5. **数据安全、可回退**：资料库、设置、未完成清单、失败清单和历史记录升级时不改写；新增的只是旧版本会忽略的附加字段；1.7.0 / 1.6.0 / 1.5.1 仍能照常读写同一份数据（已用这三个版本自己的代码验证）。
+6. **不增加依赖，隐私规则不变**：cookies 内容从不记录，代理地址先屏蔽再保存。
+7. **为什么是 1.8.0 而不是 2.0**：原先以为改用消息编号会改变数据格式、旧版本读不懂，所以打算留到 2.0；现在的做法没有改变任何旧字段，编号只放在旧版本会忽略的附加字段里，1.7.0 / 1.6.0 / 1.5.1 仍能读写同一份数据、可以照常回退，所以按项目规则是 1.8.0。2.0 留给将来决定不再支持回退到这些旧版本的那一天。
+
+设计和检查的全部细节见 [docs/1.8.0/spec/MESSAGES.md](docs/1.8.0/spec/MESSAGES.md)。
 
 ## 隐私
 
@@ -70,7 +93,7 @@ py -3.11 -m venv .venv
 .venv\Scripts\python.exe -B build.py                                   # 测试 + 打包 + 发布检查
 ```
 
-测试在隔离的临时环境里运行，不会碰本机的设置和数据。`build.py` 从不下载，先按 `vendor\manifest.json` 核对 `vendor\`；结果在 `build\package-1.7.0\YT-DLP下载器`（程序文件夹，`YT-DLP下载器.exe` 和 `_internal` 必须放在一起）。发布检查通过后写 `build\verify\release-1.7.0.json`，其中列出程序文件夹里每个文件的路径、大小和 SHA-256。
+测试在隔离的临时环境里运行，不会碰本机的设置和数据。`build.py` 从不下载，先按 `vendor\manifest.json` 核对 `vendor\`；结果在 `build\package-1.8.0\YT-DLP下载器`（程序文件夹，`YT-DLP下载器.exe` 和 `_internal` 必须放在一起）。发布检查通过后写 `build\verify\release-1.8.0.json`，其中列出程序文件夹里每个文件的路径、大小和 SHA-256，以及测试运行时哨兵的结果（必须没有违规）、遗留编号检查和旧版本源码的校验值。
 
 `install_release.py` 用来把打包好的程序安全地装到已有的程序目录：先按发布记录逐个核对暂存的文件（发布检查之后改过、多出或缺少任何文件都拒绝安装），复制后再核对一次，然后备份旧版本，安装后自检，失败自动回退，并支持 `--rollback` 手动回退。
 
@@ -80,6 +103,7 @@ py -3.11 -m venv .venv
 - [架构说明.txt](架构说明.txt)：模块、事件流、数据文件和打包流程。
 - [docs/1.6.0/spec](docs/1.6.0/spec)：1.6.0 版的设计规范。
 - [docs/1.7.0/spec](docs/1.7.0/spec)：中英文界面的设计（I18N.md）和英文用词表（GLOSSARY.md）。
+- [docs/1.8.0/spec](docs/1.8.0/spec)：内部消息编号的设计和检查（MESSAGES.md），以及设计时的两份文字流向图（map-download.md、map-collect-library.md）。
 
 ## 许可证
 
@@ -94,6 +118,29 @@ YT-DLP Downloader is a Windows desktop front end for [yt-dlp](https://github.com
 > This project is not affiliated with the yt-dlp project. Download only what you have the right to download, and follow each site's terms of use and copyright law.
 
 ![Downloads](docs/screenshots/download-en.png)
+
+### Highlights
+
+- **Unattended runs survive the YouTube check**: when YouTube asks for verification, only the YouTube links wait and retry by themselves after 30, 15 and 15 minutes; downloads from other sites go on. Batches have a robust mode (pauses between items, automatic cool-down on HTTP 429).
+- **More than a downloader**: the Web Collector finds media links on ordinary pages, pages that need scrolling and paged lists; the Library keeps task history, incremental subscriptions and one archive.
+- **Nothing lost, nothing overwritten**: unfinished links survive a restart and can be retried in one click; existing files are never overwritten.
+- **Ready to run, safe to update**: the packaged program brings yt-dlp, FFmpeg and Deno and needs no Python; a yt-dlp update is checked and test-run before it is used, and the built-in engine can always be restored; `install_release.py` checks every file before installing, self-tests the new version and restores the old one if that fails.
+- **Private**: no usage data is collected or sent; cookie contents are never copied, stored or logged; proxy addresses are masked before anything is saved.
+- **Chinese and English, easy to maintain**: follows the Windows language or a manual choice. Since 1.8.0 the program passes "message key + parameters" inside and looks the text up only when showing it, so a new sentence needs one entry per language, and checks in the tests catch the common ways a key gets missed (see "1.8.0: internal message keys" below).
+
+### 1.8.0: internal message keys
+
+1.8.0 adds no feature; it changes how the program passes texts around inside.
+
+- Message keys instead of per-text translation patches: the core passes "message number + parameters" and the interface looks the text up in the running language; a new sentence needs one entry in the Chinese and one in the English catalog. The reverse lookup of 1.7.0 (`localize`, which turned the Chinese text back into a key on screen) is gone from the interface; texts that older versions stored without keys are recognised on reading by a frozen copy of that matcher.
+- Guards that catch a missed key: a runtime sentinel in every test checks, on the paths the tests run, the texts the core emits or stores and the texts handed to show(), error_text() and t() (in English the Chinese text of a UI key counts too; seven 1.7.0 test files replace the core's emit with a plain function, so those events skip the sentinel); the English snapshot assertion (13), run with --all, checks that the captured pages show no Chinese outside user data; plus a closure check of everything older versions stored, an English replay of the old producers, and a static scan of the code against the rules in section 15 of MESSAGES.md. Run on the 1.7.0 code, they catch by themselves the three misses that took the 1.7.0 reviews three rounds to find: the titles 媒体直链 and 动态页面媒体请求 and the 1.5.1 collect errors without spaces. They catch the common ways a key gets missed, not every way of writing code: the static scan is a help, and the forms the reviews found it does not recognise are listed in section 12 (L-15, L-16).
+- The known 1.7.0 English defects are fixed: the cookies-line error, reasons cut at 70 characters, raw yt-dlp output that was rewritten, and subscription errors containing “；” that were split apart. The English-only internal hints (such as "Unsupported output option") now have keys too; their Chinese text is still that English, as in 1.7.0.
+- The Chinese interface is byte-identical to 1.7.0: every Chinese golden record is unchanged.
+- Data untouched by the upgrade and readable by 1.7.0 / 1.6.0 / 1.5.1 after a rollback: the only addition is an extra JSON key that older versions ignore (checked with the code of those three versions).
+- No new dependency, same privacy rules: cookie contents are never stored, proxy addresses are masked before anything is saved.
+- Why 1.8.0 and not 2.0: the change was planned for 2.0 on the assumption that old versions could not read the new data. No old field changes, the keys sit in a field older versions ignore, and rollback works as before, so by the project's rule this is 1.8.0; 2.0 is kept for the day rollback to these versions is given up.
+
+The design and the checks are described in [docs/1.8.0/spec/MESSAGES.md](docs/1.8.0/spec/MESSAGES.md).
 
 ### Install, update and roll back
 
@@ -157,4 +204,4 @@ No usage data is collected or sent. The only background network request is at mo
 
 ### From source, tests and builds
 
-See the Chinese sections above for the commands (`prepare_vendor.py`, `src\app.py`, `verification\run_tests.py`, `build.py`); the manual `使用说明.txt` is in Chinese. The design of the two languages is in [docs/1.7.0/spec](docs/1.7.0/spec).
+See the Chinese sections above for the commands (`prepare_vendor.py`, `src\app.py`, `verification\run_tests.py`, `build.py`); the manual `使用说明.txt` is in Chinese. The design of the two languages is in [docs/1.7.0/spec](docs/1.7.0/spec), the message keys of 1.8.0 in [docs/1.8.0/spec](docs/1.8.0/spec).

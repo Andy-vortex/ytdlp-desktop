@@ -1,0 +1,53 @@
+{
+ "module": "engine",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  "YT-DLP下载器": {
+   "category": "file",
+   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
+  },
+  "。.．": {
+   "category": "internal",
+   "reason": "characters _sentence strips from an OS error text (not shown by itself)"
+  },
+  "媒体": {
+   "category": "file",
+   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
+  },
+  "最佳": {
+   "category": "stored",
+   "reason": "stored / compared enum value (value.resolution.best); shown through i18n.label or a value.* message, never as text (P7)"
+  }
+ },
+ "raises": {
+  "{name}: {process.stderr}": {
+   "exception": "RuntimeError",
+   "line_hint": 2155,
+   "reason": "RuntimeError of engine.diagnostics() when a bundled component's version probe returns non-zero: only the --self-test entry of app.py runs diagnostics(); it catches the error and writes the traceback into the self-test report file, never into the window, download.log or the store"
+  }
+ },
+ "composed": {
+  "f'{name}: {process.stderr}'": {
+   "line_hint": 2155,
+   "reason": "English internal raise text of diagnostics() (G1e, listed under raises): only the --self-test entry of app.py runs diagnostics(); it catches the error and writes the traceback into the self-test report file, never into the window, download.log or the store"
+  },
+  "_EXTRACTOR_PREFIX.sub('', plain, count=1)[:70]": {
+   "line_hint": 120,
+   "reason": "explain_error's fallback for an error text that carries no Message: the 1.7.0 expression (stripped, the extractor prefix removed, cut to 70 characters) on engine or OS text, which keeps its provenance (a Raw input comes back as raw(fallback), a plain one as plain text, lifted on read like any plain text, E3); a Message input keeps its key (cut() or the rebuilt Message above, A13.3).  Reached through item.reason, an object text field (MESSAGES.md 15 A16.4)"
+  },
+  "str(row.get('title') or '')": {
+   "line_hint": 1864,
+   "reason": "Runner.download: the title of an earlier download read back from the downloads table (a media title, user data; that table has no sidecar, MESSAGES.md 4.3), kept as the skipped item's title exactly as 1.7.0 (str() of the stored value) and emitted in item_done; an object text field since A16.4"
+  },
+  "raw.rstrip('\\r\\n')": {
+   "line_hint": 1389,
+   "reason": "Runner._run_once (protected block, H3: verbatim except S1-S7): one line of yt-dlp's output without its line end; parse_line turns it into the engine's own events, whose log lines are raw engine output (plain by design, MESSAGES.md 2.7, D-H-4), as in 1.7.0; a str method is a G1f composition since A16.4"
+  },
+  "str(error).rstrip().rstrip('。.．').rstrip()": {
+   "line_hint": 1031,
+   "reason": "_sentence for an error that carries no Message (the OS error subprocess.Popen raises): the 1.7.0 text without its closing stop (A11.5), plain OS text in the Windows language (D-H-5), the error param of core.engine.cannot_start_engine (S4); an error with a Message keeps its key through cut() above; a str method is a G1f composition since A16.4"
+  }
+ },
+ "sinks": {},
+ "pending_keys": {}
+}

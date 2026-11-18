@@ -7,6 +7,9 @@ Every colour, font and widget comes from ui_theme.  Never import studio here at 
 
 (1.7.0) Every shown text through i18n (I18N.md 8); the Tk variables keep their 1.6.0 values
 (collect mode and filter), the link kinds and the stored subscription errors stay canonical Chinese.
+
+(1.8.0, MESSAGES.md 6) The collector's texts and the stored titles arrive as messages (or raw
+user data) and are shown with messages.show / messages.error_text; no key-prefix list is left.
 """
 from pathlib import Path
 from dataclasses import asdict
@@ -21,12 +24,13 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import customtkinter as ctk
 import applog
 import i18n
+import messages
 import ui_theme
 import urls as links
 from collector import CollectOptions, CollectionRunner, MAX_LINKS, browser_available
 from engine import parse_urls
 from library import is_busy, ui_wait
-from library_ui import LIBRARY_RETRY_MS, cell_width, columns, pin_rows, stored_text, text_button_width
+from library_ui import LIBRARY_RETRY_MS, cell_width, columns, pin_rows, text_button_width
 
 # (1.7.0 U1) A collection start that met a library locked by another program waits for it.
 COLLECT_WAIT = 120          # s: then the start is given up (status line and log)
@@ -39,10 +43,10 @@ def subscription_result(record, cancelled):
     """(pages, successful, error) of a subscription check for Library.finish_subscription, from
     the collection job's record."""
     successful = not cancelled and record['status'] == 'completed'
-    # Stored on the subscription in its canonical form (H2): the zh clause joiner '；' and the zh
-    # texts; the library page localizes it (i18n.localize splits the joined errors again).
-    error = i18n.all_values('common.clause_sep')[0].join(record['data']['errors'][-2:]) or \
-        stored_text('value.subscription.stopped' if cancelled else 'value.subscription.unfinished')
+    # (1.8.0, C-F39) The last two errors as one clauses message (stored: the 1.7.0 '；' join of the
+    # zh texts), else why the check ended; the library page shows it with messages.show.
+    error = messages.clauses(record['data']['errors'][-2:]) or \
+        messages.msg('value.subscription.stopped' if cancelled else 'value.subscription.unfinished')
     return record['pages'], successful, error
 
 MODE_STATIC = '普通网页'
@@ -51,14 +55,9 @@ FILTERS = ('媒体候选', '全部链接')
 STATUS_IDLE = '支持普通页面和动态页面；采集结果供你选择，不会自动下载。'
 NOTE_PAGES = '翻页只跟随同站的 rel=next 链接。'
 NOTE_DYNAMIC = '动态模式使用独立的临时 Chrome，不读取现有浏览器的登录状态。'
-# (1.7.0) The stored link kind the media filter leaves out (collector.py; library.sqlite3).
-WEB_LINK = stored_text('value.link_kind.web')
-# (1.7.0) A collected page or link title equal to the collector's fallback '网页' is shown localized,
-# any other title (user data) as it is (I18N.md 9.3).  (final fix round 2, CR2-1) So is the collector's
-# title of a start page that is itself a media file, '媒体直链' (collector.py; the link-kind label's text).
-# (final fix round 3, CR3-1) So is the title of a media request a dynamic collection captured,
-# '动态页面媒体请求' (collector.py parse_page; the link-kind label's text as well).
-PAGE_TITLE_KEYS = ('value.page_title.', 'value.link_kind.direct', 'value.link_kind.dynamic_request')
+# (1.7.0) The stored link kind the media filter leaves out (collector.py; library.sqlite3); a
+# compared stored value, not a message (MESSAGES.md 6.3).
+WEB_LINK = i18n.all_values('value.link_kind.web')[0]
 # Polish ui-daily-flow-5: the links go into the download page's link box (nothing starts or joins
 # a running queue), so the button says so; 加入队列 is the download page's word for a running job.
 ADD_TEXT = '添加到下载列表'
@@ -316,7 +315,7 @@ class CollectionUI:
         try:
             options = self.collection_options()
         except ValueError as error:
-            messagebox.showwarning(i18n.t('dialog.collect.check_settings'), i18n.localize(str(error)), parent=self)
+            messagebox.showwarning(i18n.t('dialog.collect.check_settings'), messages.error_text(error), parent=self)
             return
         self.active_subscription = None
         self.launch_collection(options)
@@ -338,7 +337,8 @@ class CollectionUI:
         self.collect_pending = None
         try:
             if fresh:
-                job_id = self.library.create_job('collect', title or options.urls[0], asdict(options),
+                # (1.8.0) Untitled: the first start link, user data (MESSAGES.md 3.3).
+                job_id = self.library.create_job('collect', title or messages.raw(options.urls[0]), asdict(options),
                                                  self.active_subscription)
             else:
                 self.library.change_job(job_id, status='running', errors=[], owner=os.getpid(), worker=None)
@@ -366,11 +366,11 @@ class CollectionUI:
                 return False
             applog.get('ui').exception('collection history could not be written')
             self.active_subscription = None
-            # (final fix round 2, CR2-3; I18N.md 8.4) A core exception's canonical text in the running language.
-            self.append_log(i18n.t('log.collect.not_started', error=i18n.localize(str(error))))
+            # (final fix round 2, CR2-3; I18N.md 8.4) A core exception's text in the running language.
+            self.append_log(i18n.t('log.collect.not_started', error=messages.error_text(error)))
             self.set_collect_status(i18n.t('collect.status.not_started'), 'warn')
             messagebox.showwarning(i18n.t('dialog.collect.not_started.title'),
-                                   i18n.t('dialog.collect.not_started.text', error=i18n.localize(str(error))),
+                                   i18n.t('dialog.collect.not_started.text', error=messages.error_text(error)),
                                    parent=self)
             return False
         if fresh and not background:
@@ -443,10 +443,10 @@ class CollectionUI:
         background = getattr(self, 'collection_background', False)
         if kind == 'collect_status':
             if not background:
-                self.set_collect_status(i18n.localize(value))       # a collector text (I18N.md 9.3)
+                self.set_collect_status(messages.show(value))       # a collector message (MESSAGES.md 6.2)
         elif kind == 'collect_page' and background:
             # An automatic check: the worker has stored the page; the collect page keeps what it shows.
-            self.append_log(i18n.t('log.collect.page', title=i18n.localize(value['title'], keys=PAGE_TITLE_KEYS),
+            self.append_log(i18n.t('log.collect.page', title=messages.show(value['title']),
                                    count=len(value['links'])))
             if value.get('text_truncated'):
                 self.append_log(i18n.t('collect.truncated'))
@@ -459,17 +459,17 @@ class CollectionUI:
             self.render_collection_links()
             self.set_collect_status(i18n.t('collect.status.progress', pages=len(self.collected_pages),
                                            links=len(self.collected_links)))
-            self.append_log(i18n.t('log.collect.page', title=i18n.localize(value['title'], keys=PAGE_TITLE_KEYS),
+            self.append_log(i18n.t('log.collect.page', title=messages.show(value['title']),
                                    count=len(value['links'])))
             if value.get('text_truncated'):
                 self.append_log(i18n.t('collect.truncated'))
         elif kind == 'collect_error':
             self.collection_errors += 1
-            error = i18n.localize(value)        # a collector text (I18N.md 9.3)
-            self.append_log(i18n.t('log.collect.unfinished', error=error))
+            shown = messages.show(value)        # a collector message (MESSAGES.md 6.2)
+            self.append_log(i18n.t('log.collect.unfinished', error=shown))
             if not background:
                 # One line, cut by pixels; ui_theme.full_text(collect_status) keeps the whole message.
-                self.set_collect_status(i18n.t('collect.status.partial', error=error), 'warn')
+                self.set_collect_status(i18n.t('collect.status.partial', error=shown), 'warn')
         elif kind == 'collect_done':
             # The bookkeeping may fail (a locked or broken history): the window is released anyway (arch-3 a).
             record = None
@@ -492,7 +492,7 @@ class CollectionUI:
                     self.library_busy(error)
                 else:
                     applog.get('ui').exception('collection bookkeeping failed')
-                    self.append_log(i18n.t('log.collect.record_failed', error=i18n.localize(str(error))))
+                    self.append_log(i18n.t('log.collect.record_failed', error=messages.error_text(error)))
             finally:
                 self.collection_job = None
                 self.active_subscription = None
@@ -511,7 +511,7 @@ class CollectionUI:
                     self.load_collection_record(record)
                 except Exception as error:
                     applog.get('ui').exception('loading the collection record failed')
-                    self.append_log(i18n.t('log.collect.load_failed', error=i18n.localize(str(error))))
+                    self.append_log(i18n.t('log.collect.load_failed', error=messages.error_text(error)))
             self.collect_text.configure(state='normal' if any(p['text'] for p in self.collected_pages) else 'disabled')
             self.collection_selection_changed()
             status = i18n.t('collect.status.stopped') if value['cancelled'] else i18n.t('collect.status.finished')
@@ -530,17 +530,18 @@ class CollectionUI:
         for item in self.collected_links.values():
             if self.collect_filter.get() == FILTERS[0] and item['kind'] == WEB_LINK:
                 continue
-            # (final fix round 2, CR2-1) The search also finds the title as shown (zh: the same text).
-            shown_title = i18n.localize(item['title'], keys=PAGE_TITLE_KEYS)
-            if term and term not in (item['url']+' '+item['title']+' '+shown_title).casefold():
+            # (final fix round 2, CR2-1) The search also finds the title as shown (zh: the same text);
+            # (1.8.0, MESSAGES.md 6.1) the stored text through messages.zh, the shown one through show.
+            shown_title = messages.show(item['title'])
+            if term and term not in (item['url']+' '+messages.zh(item['title'])+' '+shown_title).casefold():
                 continue
             shown.append(item)
         self.visible_collection_links = shown
         # The iids are positions in the new list: an old selection would point at other links.
         self.collect_tree.selection_remove(self.collect_tree.selection())
-        # (1.7.0) The stored link kind and the collector's fallback title in the running language.
+        # (1.7.0) The stored link kind and the title (a message or user data) in the running language.
         self.collect_tree.fill((str(index), (i18n.label('link_kind', item['kind']),
-                                             i18n.localize(item['title'], keys=PAGE_TITLE_KEYS), item['url']))
+                                             messages.show(item['title']), item['url']))
                                for index, item in enumerate(shown))
         self.collection_selection_changed()
 
@@ -619,7 +620,7 @@ class CollectionUI:
             try:
                 Path(path).write_text('\n'.join(i['url'] for i in items)+'\n', encoding='utf-8-sig')
             except OSError as error:
-                messagebox.showerror(i18n.t('dialog.save_failed'), str(error), parent=self)
+                messagebox.showerror(i18n.t('dialog.save_failed'), messages.error_text(error), parent=self)
 
     def export_collected_text(self):
         pages = [p for p in self.collected_pages if p['text']]
@@ -636,8 +637,8 @@ class CollectionUI:
                     # (I18N.md 8.8) the labels of the file in the running language; zh: the 1.6.0 bytes
                     note = i18n.t('filetext.truncated_export') if p.get('text_truncated') else ''
                     parts.append(i18n.t('filetext.export_page', heading='# ' if markdown else '',
-                                        title=i18n.localize(p['title'], keys=PAGE_TITLE_KEYS), url=p['url'], note=note,
+                                        title=messages.show(p['title']), url=p['url'], note=note,
                                         body=p['markdown'] if markdown else p['text']))
                 Path(path).write_text('\n\n---\n\n'.join(parts)+'\n', encoding='utf-8-sig')
             except OSError as error:
-                messagebox.showerror(i18n.t('dialog.save_failed'), str(error), parent=self)
+                messagebox.showerror(i18n.t('dialog.save_failed'), messages.error_text(error), parent=self)

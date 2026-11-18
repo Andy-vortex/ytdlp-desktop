@@ -19,6 +19,7 @@ import collection_ui
 import engine
 import library
 import library_ui
+import messages
 import ui_download
 import ui_theme
 import updater
@@ -27,7 +28,8 @@ from collector import CollectOptions
 from engine import MODES
 from studio import StudioApp
 
-WARNING = '历史记录本次不保存：unable to open database file'
+# (1.8.0) What open_library returns: a message with the sqlite text as its raw param (C-F26).
+WARNING = messages.msg('core.library.temporary', error='unable to open database file')
 
 
 def no_network(*_args, **_kwargs):

@@ -20,6 +20,8 @@ import urllib.parse
 
 import applog
 import formats
+import messages
+from messages import cut, message_of, msg
 import naming
 import paths
 import procutil
@@ -28,7 +30,7 @@ import updater
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '1.7.0'
+APP_VERSION = '1.8.0'
 # Names kept for 1.5.1 importers (from engine import ...). They are copies made at import:
 # code in this module reads paths.X when it runs.
 RESOURCE_ROOT = paths.RESOURCE_ROOT
@@ -54,9 +56,8 @@ SLEEP_PATTERN = re.compile(r'\bSleeping\s+([\d.]+)\s+seconds?\b', re.I)
 RETRY_AFTER_PATTERN = re.compile(r'\bRetry-After\s*[:=]\s*(\d+)\b', re.I)
 # YouTube's IP-level bot check; only logged-in cookies get past it.
 BOT_CHECK_PATTERN = re.compile(r'confirm you.{0,3}re not a bot', re.I)
-BOT_CHECK_HINT = ('YouTube 暂时拒绝了当前网络出口（Sign in to confirm you’re not a bot）。这通常在 30 分钟左右自行解除，'
-                  '链接已保留在“未完成”列表，稍后重试即可；也可以在“偏好设置 → 网络”选择已登录 YouTube 的 cookies.txt 后重试。')
-BOT_CHECK_STALE_HINT = 'YouTube 仍要求验证：所选 cookies 可能已过期或导出时未登录。可以稍后重试，或重新导出 cookies.txt。'
+BOT_CHECK_HINT = msg('core.engine.bot_check_hint')
+BOT_CHECK_STALE_HINT = msg('core.engine.bot_check_stale')
 # Engine output that usually means the bundled or updated yt-dlp is too old for the site.
 STALE_PATTERN = re.compile(r'Confirm you are on the latest version|Signature solving failed|n challenge solving failed|older than 90 days')
 SUBTITLE_FAILURE = 'Unable to download video subtitles'
@@ -65,23 +66,23 @@ ENGINE_OPTION_ERROR = 'no such option'
 # (The region rule stands first: YouTube words a region block as "Video unavailable. The uploader
 # has not made this video available in your country".)
 ERROR_REASONS = (
-    (re.compile(r'not (?:made this video )?available in your country|geo.?restrict', re.I), '该地区不可观看，可更换网络节点'),
-    (re.compile(r'Video unavailable|Private video|has been removed', re.I), '视频不存在或已设为私享'),
+    (re.compile(r'not (?:made this video )?available in your country|geo.?restrict', re.I), msg('core.reason.region')),
+    (re.compile(r'Video unavailable|Private video|has been removed', re.I), msg('core.reason.unavailable')),
     # The site answered, but refused the page or has no such page ("Unable to download webpage:
     # HTTP Error 404: Not Found"): not a network problem.  Before the network rule, which also
     # matches "Unable to download webpage".  Media data refused later keeps the two rules below.
-    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 403\b', re.I), '页面不存在或无权访问（403）'),
-    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 404\b', re.I), '页面不存在或无权访问（404）'),
-    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 410\b', re.I), '页面不存在或无权访问（410）'),
+    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 403\b', re.I), msg('core.reason.page_403')),
+    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 404\b', re.I), msg('core.reason.page_404')),
+    (re.compile(r'Unable to download (?!video data)[^:]*: HTTP Error 410\b', re.I), msg('core.reason.page_410')),
     (re.compile(r'timed out|getaddrinfo failed|Unable to download webpage|Connection (reset|refused)|10060', re.I),
-     '连不上网站，请检查网络或 VPN'),
-    (re.compile(r'HTTP Error 403', re.I), '网站拒绝访问（403）'),
-    (re.compile(r'HTTP Error 404', re.I), '链接不存在（404）'),
-    (re.compile(r'HTTP Error 410', re.I), '链接已失效（410）'),
-    (re.compile(r'Requested format is not available', re.I), '没有可用的所选格式或画质'),
-    (re.compile(r'Unsupported URL', re.I), '不支持这个链接'),
+     msg('core.reason.network')),
+    (re.compile(r'HTTP Error 403', re.I), msg('core.reason.http_403')),
+    (re.compile(r'HTTP Error 404', re.I), msg('core.reason.http_404')),
+    (re.compile(r'HTTP Error 410', re.I), msg('core.reason.http_410')),
+    (re.compile(r'Requested format is not available', re.I), msg('core.reason.format')),
+    (re.compile(r'Unsupported URL', re.I), msg('core.reason.unsupported')),
 )
-NETWORK_REASON = '连不上网站，请检查网络或 VPN'
+NETWORK_REASON = msg('core.reason.network')
 # (polish, ui-daily-flow-2; a deviation from WP2 section _note_line) yt-dlp appends its bug-report
 # text, which ends in "Confirm you are on the latest version", to some transport errors (a proxy
 # that is down).  STALE_PATTERN stays as H8 has it; a line that is a transport or proxy failure
@@ -89,27 +90,41 @@ NETWORK_REASON = '连不上网站，请检查网络或 VPN'
 _TRANSPORT_FAILURE = re.compile(r'Unable to connect to proxy|ProxyError|Tunnel connection failed|'
                                 + next(pattern.pattern for pattern, reason in ERROR_REASONS if reason == NETWORK_REASON),
                                 re.I)
-BOT_CHECK_REASON = 'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）'
-STALE_REASON = '解析失败，下载引擎可能已过期'
-ENGINE_ERROR_REASON = '下载引擎无法运行'
+BOT_CHECK_REASON = msg('core.reason.bot_check')
+STALE_REASON = msg('core.reason.stale')
+ENGINE_ERROR_REASON = msg('core.reason.engine_error')
+# (1.8.0, S1) The reason of the waiting events of _run_once's own sleep / retry countdown.
+WAIT_PACE_OR_RETRY = msg('core.wait.pace_or_retry')
 # "[youtube] AAA: " in front of an engine error; never "[WinError 5] ...: " or "[Errno 2] ...: ",
 # whose text is the cause itself.
 _EXTRACTOR_PREFIX = re.compile(r'^\[(?!(?:WinError|Errno)\b)[A-Za-z][^\]]*\]\s+\S+:\s+')
 
 
 def explain_error(text, code=1, bot_check=False, stale=False) -> str:
-    """A short Chinese reason for a download that did not finish.  Pure; never raises."""
-    text = str(text or '').strip()
+    """A short Chinese reason for a download that did not finish.  Pure; never raises.
+
+    (1.8.0) A message.  The patterns run on the zh text, as in 1.7.0.  The fallback keeps the
+    type of ``text``: a Message keeps its key (en shows it whole) and its zh text is the 1.7.0
+    expression (stripped, the extractor prefix removed, cut to 70 characters), a Raw text stays
+    Raw, a plain text gives the 1.7.0 expression."""
+    plain = messages.zh(text or '').strip()
     if bot_check:
         return BOT_CHECK_REASON
     for pattern, reason in ERROR_REASONS:
-        if pattern.search(text):
+        if pattern.search(plain):
             return reason
     if stale:
         return STALE_REASON
-    if not text:
-        return f'下载未完成（退出码 {code}）'
-    return _EXTRACTOR_PREFIX.sub('', text, count=1)[:70]
+    if not plain:
+        return msg('core.reason.exit_code', code=code)
+    fallback = _EXTRACTOR_PREFIX.sub('', plain, count=1)[:70]
+    if isinstance(text, messages.Message):
+        if fallback == messages.zh(text)[:70]:
+            return cut(text, 70)
+        # (final review 1, ZH-1) edge whitespace or an extractor prefix: the 1.7.0 zh text, key kept
+        # (rebuilt the way cut() and library._stripped_reason rebuild a Message)
+        return messages.Message(fallback, text.key, text.params, text.origin, text.entry)
+    return messages.raw(fallback) if isinstance(text, messages.Raw) else fallback
 
 
 def parse_urls(text):
@@ -120,18 +135,18 @@ def parse_urls(text):
             continue
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname or any(c.isspace() for c in url):
-            raise ValueError(f'第 {line_number} 行不是有效的 HTTP / HTTPS 链接。请每行填写一个链接。')
+            raise ValueError(msg('core.links.bad_line', line=line_number))
         if url not in urls:
             urls.append(url)
     if not urls:
-        raise ValueError('请先粘贴至少一个视频或音频链接。')
+        raise ValueError(msg('core.links.none'))
     return urls
 
 
 def read_url_file(path):
     path = Path(path)
     if path.stat().st_size > 5 * 1024 * 1024:
-        raise ValueError('链接文件超过 5 MB，请分成多个较小的 TXT 文件导入。')
+        raise ValueError(msg('core.links.file_too_large'))
     data = path.read_bytes()
     encodings = ('utf-16',) if data.startswith((b'\xff\xfe', b'\xfe\xff')) else ('utf-8-sig', 'gb18030')
     for encoding in encodings:
@@ -139,7 +154,7 @@ def read_url_file(path):
             return parse_urls(data.decode(encoding))
         except UnicodeDecodeError:
             continue
-    raise ValueError('无法读取文本编码，请将链接文件另存为 UTF-8。')
+    raise ValueError(msg('core.links.encoding'))
 
 
 @dataclass(frozen=True)
@@ -175,19 +190,19 @@ class Options:
         """The reverse of to_dict.  Unknown keys are ignored, missing ones get their default,
         flags are coerced; ValueError for an output, format or resolution that cannot be used."""
         if not isinstance(data, dict):
-            raise ValueError('Options data must be an object')
+            raise ValueError(msg('core.options.not_object'))
         values = {**data, **overrides}
         output = values.get('output')
         if isinstance(output, Path):
             output = str(output)
         if not isinstance(output, str) or not output.strip():
-            raise ValueError('Options data has no usable output folder')
+            raise ValueError(msg('core.options.no_output'))
         mode = values.get('mode', MODES[0])
         resolution = values.get('resolution', RESOLUTIONS[0])
         if not isinstance(mode, str) or mode not in MODES:
-            raise ValueError(f'Unsupported output format: {mode!r}')
+            raise ValueError(msg('core.formats.bad_mode', mode=repr(mode)))
         if not isinstance(resolution, str) or resolution not in RESOLUTIONS:
-            raise ValueError(f'Unsupported resolution: {resolution!r}')
+            raise ValueError(msg('core.options.bad_resolution', resolution=repr(resolution)))
 
         def text(key):
             return values[key] if isinstance(values.get(key), str) else ''
@@ -240,19 +255,18 @@ def check_cookie_file(path):
     """
     file = Path(os.path.abspath(Path(path).expanduser()))
     if not file.is_file():
-        raise ValueError(f'找不到 cookies 文件：{file}\n请在“偏好设置 → 网络”中重新选择。')
+        raise ValueError(msg('core.cookies.missing', file=os.fspath(file)))
     if file.stat().st_size > 10 * 1024 * 1024:
-        raise ValueError('cookies 文件超过 10 MB，请确认选择的是导出的 cookies.txt。')
+        raise ValueError(msg('core.cookies.too_large'))
     with file.open('rb') as handle:
         head = handle.read(64 * 1024)
     stripped = head.lstrip(b'\xef\xbb\xbf \t\r\n')
     if stripped.startswith((b'{', b'[')):
-        raise ValueError('这个 cookies 文件是 JSON 格式，yt-dlp 需要 Netscape 格式的 cookies.txt，请重新导出。')
+        raise ValueError(msg('core.cookies.json'))
     text = head.decode('utf-8', 'replace').removeprefix('\ufeff')
     first = _first_kept_cookie_line(text)
     if first is None or not COOKIE_HEADER.search(first):
-        raise ValueError('这个文件不是 Netscape 格式的 cookies.txt（第一行应为 “# Netscape HTTP Cookie File”），'
-                         '请重新导出。')
+        raise ValueError(msg('core.cookies.not_netscape'))
     return file
 
 
@@ -263,8 +277,11 @@ def check_cookie_file(path):
 COOKIE_ECHO_PATTERN = re.compile(r'cookie file entry|cookies? file\b.*?:\s*[\'"]', re.I)
 # A line with four or more tabs (raw or escaped as \t) is a cookies-file line when cookies are in use.
 _TABS = re.compile(r'\\t|\t')
-COOKIE_LINE_SKIPPED = 'WARNING: cookies 文件中有一行格式不对，已跳过（内容不记录）'
-COOKIE_LINE_FAILED = 'ERROR: cookies 文件中有一行格式不对，无法读取（内容不记录）'
+COOKIE_LINE_SKIPPED = msg('core.cookies.line_skipped')
+COOKIE_LINE_FAILED = msg('core.cookies.line_failed')
+# (1.8.0, D-H-1) The item's error for such a line: the text 1.7.0 stored (COOKIE_LINE_FAILED without its
+# 'ERROR: '), now with a key of its own.
+COOKIE_LINE_ITEM = msg('core.cookies.line_failed_item')
 
 
 def _cookie_echo(line, cookies_in_use=True) -> bool:
@@ -422,7 +439,7 @@ def build_command(url, options, temp=True):
     """The engine's argv for one link.  ``temp=False`` leaves out -P temp: (the Runner does that
     for a link whose unfinished download of 1.5.1 lies in the output folder, to resume it there)."""
     if options.mode not in MODES or options.resolution not in RESOLUTIONS:
-        raise ValueError('Unsupported output option')
+        raise ValueError(msg('core.options.unsupported'))
     preset = formats.by_mode(options.mode)
     command = [str(engine_path()), '--ignore-config', '--no-plugin-dirs', '--encoding', 'utf-8',
                '--ffmpeg-location', str(paths.BIN), '--js-runtimes', 'deno:' + str(paths.BIN / 'deno.exe'),
@@ -461,7 +478,7 @@ def build_command(url, options, temp=True):
     if options.proxy.strip():
         parsed = urllib.parse.urlsplit(options.proxy.strip())
         if parsed.scheme not in ('http', 'https', 'socks5', 'socks5h') or not parsed.hostname:
-            raise ValueError('代理地址应以 http://、https:// 或 socks5:// 开头。')
+            raise ValueError(msg('core.proxy.scheme'))
         command += ['--proxy', options.proxy.strip()]
     if options.cookies.strip():
         command += ['--cookies', str(check_cookie_file(options.cookies.strip()))]
@@ -469,7 +486,7 @@ def build_command(url, options, temp=True):
     if referer:
         parsed_referer = urllib.parse.urlsplit(referer)
         if parsed_referer.scheme not in ('http', 'https') or not parsed_referer.hostname or any(c in referer for c in '\r\n'):
-            raise ValueError('采集来源地址无效，请重新采集后加入下载列表。')
+            raise ValueError(msg('core.collect.bad_source'))
         command += ['--referer', referer]
     command += formats.format_args(preset, options.resolution)
     if options.embed_metadata:
@@ -488,7 +505,7 @@ def build_command(url, options, temp=True):
     if len(subprocess.list2cmdline(command)) > COMMAND_LINE_LIMIT:
         # Windows would refuse to start the engine (WinError 206), which looks like a broken
         # engine and stops the queue: refused here, this link fails alone (final-privacy-security-2).
-        raise LinkTooLong(f'链接过长（{len(url)} 个字符），无法交给下载引擎：{urltools.display(url)}')
+        raise LinkTooLong(msg('core.links.too_long', length=len(url), url=urltools.display(url)))
     return command
 
 
@@ -576,14 +593,16 @@ class QueueItem:
 
 def _masked(text, options) -> str:
     """Engine text that is kept (item_done.error, the unfinished list, the history) without the
-    proxy address, which may carry a password."""
+    proxy address, which may carry a password.  (1.8.0, P8) messages.masked: the same replacements
+    as 1.7.0, on the text and on the raw params of a message, whose type and key are kept."""
     text = str(text or '')
     proxy = options.proxy.strip() if options is not None else ''
     if proxy:
-        text = text.replace(proxy, '[代理]')
+        pairs = [(proxy, messages.PROXY_TOKEN)]
         credentials = urllib.parse.urlsplit(proxy).netloc.rpartition('@')[0]
         if credentials:
-            text = text.replace(credentials + '@', '')
+            pairs.append((credentials + '@', ''))
+        text = messages.masked(text, pairs)
     return text
 
 
@@ -695,7 +714,7 @@ class _SafeArchive:
         try:
             return self._archive.media(*arguments, **keywords)
         except sqlite3.Error as error:
-            raise OSError(f'资料库无法写入：{error}') from error
+            raise OSError(msg('core.archive.unwritable', error=message_of(error))) from error
 
     def __getattr__(self, name):
         return getattr(self._archive, name)
@@ -996,12 +1015,19 @@ def _with_filters(command, words):
 
 def _source_line(name) -> str:
     """The log line for an older file of the link in another format that the item converts."""
-    return f'保存位置已有这个链接的另一种格式（{name}，之前下载的）；本条用它转换成所选格式，原文件保留不动。'
+    return msg('core.engine.other_format_source', name=name)
 
 
 def _sentence(error) -> str:
     """An error's text without its own closing full stop (Windows' messages end in '。'),
-    for a log line that adds its own."""
+    for a log line that adds its own.
+
+    (1.8.0 WP-6, MESSAGES.md 15 A11.5) An error that carries a Message keeps it: its text is cut
+    before the closing stop with cut(), which keeps the key (en shows the whole message), instead of
+    a str method that would flatten it.  The zh text is the 1.7.0 one either way."""
+    text = message_of(error)
+    if isinstance(text, messages.Message):
+        return cut(text, len(messages.zh(text).rstrip().rstrip('。.．').rstrip()))
     return str(error).rstrip().rstrip('。.．').rstrip()
 
 
@@ -1044,7 +1070,7 @@ class Runner:
         Runner.last_media_end = None
 
     def __init__(self, emit, library=None):
-        self.emit = emit
+        self.emit = messages.guarded(emit, 'engine')     # (1.8.0) the G2 emit hook; ``emit`` itself in the program
         self.cancelled = threading.Event()
         self.process = None
         self.lock = threading.Lock()
@@ -1148,7 +1174,7 @@ class Runner:
 
     def _wait(self, seconds, index, total, reason):
         deadline = time.monotonic() + seconds
-        self.emit('log', f'{reason}，等待 {math.ceil(seconds)} 秒；可随时点击停止。')
+        self.emit('log', msg('core.engine.waiting', reason=reason, seconds=math.ceil(seconds)))
         while not self.cancelled.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1197,7 +1223,7 @@ class Runner:
                 if filtered and self._present:
                     # An entry whose finished file was there before the item (_present_filters): the
                     # engine's line repeats the whole filter; one short line instead.
-                    return 'log', f'保存位置已有这一条（{filtered.group(1)}，之前下载的），已跳过，原文件保留不动。'
+                    return 'log', msg('core.engine.present_skipped', name=filtered.group(1))
                 written = _THUMBNAIL_WRITTEN.match(value)
                 if written and _normal(Path(written.group(1)).parent) in self._cover_folders:
                     self._covers.append(written.group(1))     # removed when the item ends (_discard_covers)
@@ -1212,7 +1238,7 @@ class Runner:
                         # the file stays as it was.
                         self._kept = found
                         self._stop_engine()
-                        say(f'保存位置已有这个文件（之前下载的），保留原文件名：{Path(found).name}')
+                        say(msg('core.engine.kept_existing', name=Path(found).name))
                     elif self._source is None and not _FORMAT_PART.search(Path(found).name) \
                             and (self._keep_early or not self._keep_source):
                         # Another format of this link (an older MP4 before audio extraction or
@@ -1251,7 +1277,7 @@ class Runner:
                         except OSError:
                             pass
                     if existed and folder is None:
-                        say(f'保存位置已有这个文件（之前下载的），保留原文件名：{Path(filepath).name}')
+                        say(msg('core.engine.kept_existing', name=Path(filepath).name))
                     else:
                         final = naming.finalize(source, value['id'], options.naming,
                                                 audio=item.preset is None or item.preset.kind == 'audio',
@@ -1290,7 +1316,9 @@ class Runner:
         if line.startswith('ERROR:'):
             if _cookie_echo(line, self._uses_cookies()):
                 line = COOKIE_LINE_FAILED       # the item's error never repeats a cookies-file line
-            self.last_error = line[6:].strip()[:200]
+                self.last_error = COOKIE_LINE_ITEM      # (1.8.0, D-H-1) the 1.7.0 text, with its key
+            else:
+                self.last_error = messages.raw(line[6:].strip()[:200])     # (1.8.0) raw engine text
         if STALE_PATTERN.search(line) and not _TRANSPORT_FAILURE.search(line):
             self.stale = True
         if ENGINE_OPTION_ERROR in line:
@@ -1351,7 +1379,7 @@ class Runner:
                     elif seconds != last_seconds:
                         last_seconds = seconds
                         self.emit('waiting', {'index': index, 'total': total, 'seconds': seconds,
-                                              'reason': '下载间隔 / 重试等待'})
+                                              'reason': WAIT_PACE_OR_RETRY})
                 try:
                     raw = output.get(timeout=0.2)
                 except queue.Empty:
@@ -1370,7 +1398,7 @@ class Runner:
                         self.archive.media(self.archive_folder, value)
                     except (OSError, ValueError, KeyError, TypeError) as error:
                         # Media success is retained, but the archive failure is surfaced separately.
-                        self.emit('log', f'归档信息保存失败（媒体已保留）：{error}')
+                        self.emit('log', msg('core.engine.archive_info_failed', error=message_of(error)))
                         self.archive_errors.append(str(error))
                 self.emit(kind, value)
                 if kind == 'log':
@@ -1650,7 +1678,7 @@ class Runner:
                 result, limited, retry_after = self._run_once(command, index, len(self.items), files)
             except OSError as error:
                 self.engine_error = start_failed = True
-                self.emit('log', f'无法启动下载引擎：{_sentence(error)}。可在“偏好设置”恢复内置引擎。')
+                self.emit('log', msg('core.engine.cannot_start_engine', error=_sentence(error)))
                 break
             if not limited or self.cancelled.is_set():
                 break
@@ -1659,17 +1687,17 @@ class Runner:
             cooldown = max(cooldown, retry_after or 0)
             if self._rate_attempt >= MAX_RATE_LIMIT_RETRIES:
                 result = result or 1
-                self.emit('log', '此链接多次触发 HTTP 429，已记入失败清单。')
+                self.emit('log', msg('core.engine.rate_limited_out'))
                 # The whole queue pauses when anything still waits: a later item, or a
                 # link that enqueue() accepted meanwhile (still in the inbox).
                 with self.queue_lock:
                     more = bool(self.inbox) or any(entry.state == 'pending' for entry in self.items)
                 if more:
-                    self._wait(cooldown, index, len(self.items), '网站限流，暂停整个下载队列')
+                    self._wait(cooldown, index, len(self.items), msg('core.wait.rate_queue'))
                 break
             self._rate_attempt += 1
             if not self._wait(cooldown, index, len(self.items),
-                              f'网站限流，冷却后重试此链接（{self._rate_attempt}/{MAX_RATE_LIMIT_RETRIES}）'):
+                              msg('core.wait.rate_retry', attempt=self._rate_attempt, limit=MAX_RATE_LIMIT_RETRIES)):
                 break
         return result, start_failed
 
@@ -1707,8 +1735,7 @@ class Runner:
         plain = replace(effective, embed_metadata=False, embed_cover=False, subtitles=False)
         command = build_command(item.url, plain) if self._work == temp_path(plain) \
             else build_command(item.url, plain, temp=False)
-        self.emit('log', f'保存位置已有本条的 {sum(len(titles) for titles in self._present.values())} 个文件；'
-                         '为了不改动它们，本次新下载的文件不写入标签、封面和字幕。')
+        self.emit('log', msg('core.engine.present_untagged', count=sum(len(titles) for titles in self._present.values())))
         return plain, command
 
     def _drop_filter_config(self):
@@ -1730,12 +1757,12 @@ class Runner:
             match = _WORK_MEDIA.search(path.name)
             if match and match.group(1) in self._present and path.name[:match.start()] in self._present[match.group(1)] \
                     and path.is_file() and not _is_link(path) and _normal(path) in self._existing:
-                kept.append(str(path))
+                kept.append(os.fspath(path))
         for path in kept:
             try:
                 self.archive.media(self.archive_folder, {'filepath': path})
             except (OSError, ValueError, KeyError, TypeError) as error:
-                self.emit('log', f'归档信息保存失败（媒体已保留）：{error}')
+                self.emit('log', msg('core.engine.archive_info_failed', error=message_of(error)))
                 self.archive_errors.append(str(error))
         if kept and not item.multi and len(files) == first_file:
             found = kept[0]
@@ -1743,7 +1770,7 @@ class Runner:
             files.append(found)
             stem = Path(found).stem
             media_id = stem[stem.rfind(' [') + 2:-1] if stem.endswith(']') and ' [' in stem else ''
-            self.emit('log', f'保存位置已有这个文件（之前下载的），保留原文件名：{Path(found).name}')
+            self.emit('log', msg('core.engine.kept_existing', name=Path(found).name))
             self.emit('media', {'id': media_id, 'extractor_key': '', 'title': item.title or stem,
                                 'webpage_url': item.url, 'filepath': found, 'index': item.index})
             self.emit('file', found)
@@ -1803,7 +1830,7 @@ class Runner:
                     self.items.append(item)
                 self.opened = True
             for url in merged:
-                self.emit('log', f'重复链接已合并：{url}')
+                self.emit('log', msg('core.engine.duplicate_merged', url=url))
             while (item := self._next()) is not None:
                 index = item.index
                 self.last_error, self.stale, self.subs_failed, self._renamed = '', False, False, {}
@@ -1831,7 +1858,7 @@ class Runner:
                         with worker_wait(FIND_TIMEOUT):
                             row = self.library.find_download([item.key], item.format)
                     except Exception as error:
-                        self.emit('log', f'下载记录无法读取，照常下载：{error}')
+                        self.emit('log', msg('core.engine.record_unreadable', error=message_of(error)))
                     if row and row.get('exists'):
                         item.state = 'skipped'
                         item.title, item.path = str(row.get('title') or ''), str(row.get('path') or '')
@@ -1847,7 +1874,7 @@ class Runner:
                     if gap > 0:
                         self.wait_kind = 'interval'
                         try:
-                            waited = self._wait(gap, index, len(self.items), '下载间隔')
+                            waited = self._wait(gap, index, len(self.items), msg('core.wait.pace'))
                         finally:
                             self.wait_kind = 'rate_limit'
                         if not waited:
@@ -1872,7 +1899,7 @@ class Runner:
                                 record = self.archive.library.job(context['job_id'])
                                 context['page'] = next((p for p in record['pages'] if p['url'] == context['page_url']), None)
                             except ValueError:
-                                self.emit('log', '找不到原采集历史，本次归档保留来源链接，未附网页正文。')
+                                self.emit('log', msg('core.engine.no_collect_history'))
                         self.archive_folder = self.archive.prepare(item.url, context)
                         effective = replace(item.options, output=self.archive_folder / '媒体')
                     else:
@@ -1886,7 +1913,7 @@ class Runner:
                         # output folder (1.5.1, the title_id style): without -P temp: the engine
                         # resumes it there instead of starting again and leaving it behind.
                         work = None
-                        self.emit('log', '保存位置有这个链接之前没下载完的部分文件，本条直接在保存位置继续下载。')
+                        self.emit('log', msg('core.engine.resume_partial'))
                     elif work is not None:
                         try:
                             paths.own_dir(work)               # created here, so that it carries the app's marker
@@ -1898,8 +1925,7 @@ class Runner:
                         pictures = _owner_pictures(existing, item.url, item.multi)
                         if pictures:
                             effective = replace(effective, embed_cover=False)
-                            self.emit('log', f'保存位置已有与本条同名的图片（{_shown_name(pictures[0])}），'
-                                             '本条不嵌入封面，图片保留不动。')
+                            self.emit('log', msg('core.engine.picture_exists', name=_shown_name(pictures[0])))
                     # (temp=False only when the planned work folder is not used: callers that stand
                     # in for build_command keep their two-argument form.)
                     command = build_command(item.url, effective) if work == planned \
@@ -1913,9 +1939,9 @@ class Runner:
                         # (final-data-safety-1) What is already there is skipped, never post-processed again.
                         effective, command = self._skip_present(item, effective, command)
                 except (ValueError, OSError, KeyError, TypeError, sqlite3.Error) as error:
-                    self.emit('log', f'此链接无法开始：{error}')
+                    self.emit('log', msg('core.engine.cannot_start_link', error=message_of(error)))
                     item.state = 'failed'
-                    item.error = _masked(error, item.options)[:200]
+                    item.error = cut(_masked(message_of(error), item.options), 200)
                     self._item_done(item, cancelled=False, success=False, bot_check=False)
                     continue
                 item.ran = True
@@ -1960,7 +1986,7 @@ class Runner:
                 # A subtitle that cannot be fetched must not cost the video: once more without it.
                 if (result not in (None, 0) and self.subs_failed and item.options.subtitles
                         and not self.engine_error and not self.cancelled.is_set()):
-                    self.emit('log', '字幕下载失败，已改为不带字幕重新下载此条。')
+                    self.emit('log', msg('core.engine.subtitles_dropped'))
                     self.last_error, self.subs_failed = '', False
                     try:
                         rerun = replace(effective, subtitles=False)
@@ -1971,8 +1997,8 @@ class Runner:
                         if self._filters:
                             command = _with_filters(command, self._filters)   # what is there stays skipped
                     except (ValueError, OSError) as error:
-                        self.emit('log', f'此链接无法开始：{error}')
-                        self.last_error = str(error)
+                        self.emit('log', msg('core.engine.cannot_start_link', error=message_of(error)))
+                        self.last_error = message_of(error)
                     else:
                         # (c3-retry-ratelimit) Through the same 429 cooldown as the main run.
                         again, start_failed = self._cooled(command, index, files)
@@ -2002,7 +2028,7 @@ class Runner:
                 self._drop_filter_config()
                 if result == 0:
                     Runner.last_media_end = time.monotonic()
-                item.error = _masked(self.last_error, item.options)[:200] if result != 0 else ''
+                item.error = cut(_masked(self.last_error, item.options), 200) if result != 0 else ''
                 if self.cancelled.is_set():
                     if self._finished_here(item, files, first_file):
                         # Stop came after the engine had delivered the file (moved, renamed and
@@ -2022,7 +2048,7 @@ class Runner:
                     break
                 if self.engine_error:
                     if not start_failed:
-                        self.emit('log', '当前 yt-dlp 引擎与本程序不兼容，请在“偏好设置”恢复内置引擎。')
+                        self.emit('log', msg('core.engine.incompatible'))
                     item.state = 'unstarted'
                     item.reason = ENGINE_ERROR_REASON
                     self._item_done(item, len(files) - first_file, cancelled=False, success=False, bot_check=False)
@@ -2038,7 +2064,7 @@ class Runner:
                             item.state = 'blocked'
                         self.emit('log', BOT_CHECK_STALE_HINT if item.options.cookies.strip() else BOT_CHECK_HINT)
                     item.reason = explain_error(item.error, result, bot_check=self.bot_check, stale=self.stale)
-                    self.emit('log', f'此链接未完成（退出码 {result}），继续处理队列中的下一项。')
+                    self.emit('log', msg('core.engine.item_unfinished', code=result))
                 self._item_done(item, len(files) - first_file, cancelled=False, success=result == 0,
                                 bot_check=result != 0 and self.bot_check)
         except Exception as error:
@@ -2047,9 +2073,9 @@ class Runner:
             for item in self.items:
                 if item.state == 'active':
                     item.state = 'failed'
-                    item.error = _masked(error, item.options)[:200]
+                    item.error = cut(_masked(message_of(error), item.options), 200)
                     item.reason = explain_error(item.error)
-            self.emit('log', f'错误：{error}')
+            self.emit('log', msg('core.engine.error', error=message_of(error)))
         finally:
             self._current = None
             # Close the queue (also on the paths that do not end in _next()) and take in what
@@ -2086,7 +2112,7 @@ class Runner:
             except Exception as error:   # whatever goes wrong here, done must still be the last event
                 if not isinstance(error, OSError):
                     applog.get('engine').exception('the unfinished list could not be saved')
-                self.emit('log', f'失败清单未能保存：{error}')
+                self.emit('log', msg('core.engine.unfinished_not_saved', error=message_of(error)))
             failed_items = [item for item in self.items if item.state == 'failed' or (item.state == 'blocked' and item.ran)]
             finished = {item.signature() for item in self.items if item.state in ('done', 'skipped')}
             self.emit('done', {'success': sum(item.state == 'done' for item in self.items),

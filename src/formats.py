@@ -1,4 +1,5 @@
-"""Output formats as one data table (1.6.0). Standard library only; imports no app module.
+"""Output formats as one data table (1.6.0). Standard library and messages only (1.8.0: the
+errors are messages).
 
 ``mode`` is the string that is persisted (settings.json, failed-downloads.json, the job
 records of the history) and never changes; ``id`` is the stable short name used in keys
@@ -10,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+
+import messages
 
 
 @dataclass(frozen=True)
@@ -72,21 +75,21 @@ def by_mode(mode) -> Preset:
     for preset in PRESETS:
         if preset.mode == mode:
             return preset
-    raise ValueError(f'Unsupported output format: {mode!r}')
+    raise ValueError(messages.msg('core.formats.bad_mode', mode=repr(mode)))
 
 
 def by_id(preset_id) -> Preset:
     for preset in PRESETS:
         if preset.id == preset_id:
             return preset
-    raise ValueError(f'Unsupported output format id: {preset_id!r}')
+    raise ValueError(messages.msg('core.formats.bad_id', id=repr(preset_id)))
 
 
 def by_label(label) -> Preset:
     for preset in PRESETS:
         if preset.label == label:
             return preset
-    raise ValueError(f'Unsupported output format label: {label!r}')
+    raise ValueError(messages.msg('core.formats.bad_label', label=repr(label)))
 
 
 def format_args(preset, resolution) -> list[str]:

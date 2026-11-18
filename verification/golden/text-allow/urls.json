@@ -1,0 +1,18 @@
+{
+ "module": "urls",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "literals": {
+  ".,;:!?)]}>'\"，。；：！？、）】》」』〉〕］｝”’…～·​‌‍⁠﻿": {
+   "category": "internal",
+   "reason": "not user-visible (module constant in urls.py); never translated"
+  },
+  "\\s<>\"'，。；：！？、（）【】《》「」『』〈〉〔〕［］｛｝“”‘’…​‌‍⁠﻿": {
+   "category": "internal",
+   "reason": "not user-visible (module constant in urls.py); never translated"
+  }
+ },
+ "raises": {},
+ "composed": {},
+ "sinks": {},
+ "pending_keys": {}
+}
