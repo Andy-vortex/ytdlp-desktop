@@ -849,16 +849,18 @@ class FinalFixRound3Tests(AppCase):
 
     def test_env3_2_the_subscription_status_line_fits_at_1000x740(self):
         """The English status line above the new-items table (counts + status_note) and the note
-        without a selection are shown whole at 1000x740, also with three-digit counts; zh unchanged."""
+        without a selection are shown whole at 1000x740, also with three-digit counts; zh as 1.8.1
+        words it.  (1.8.1) with the Ignore button beside Add."""
         self.assertEqual(i18n.CATALOG['zh']['library.subscription.status_note'],
-                         '仅下载成功后移出；可多选新增内容添加到下载列表。')
+                         '下载成功或忽略后移出；可多选后添加或忽略。')
         self.assertEqual(i18n.CATALOG['zh']['library.subscription.note'],
-                         '新增内容会保留，只有下载成功才从待处理列表消失；不会自动下载。')
+                         '新增内容会保留，直到下载成功或被忽略；不会自动下载。')
         self.enter(_sandbox.language('en'))
         app = self.make_app(size='1000x740', output='i18n-pages-env3-2')
         app.show_page('library')
         app.library_tabs.set(library_ui.TAB_SUBSCRIPTIONS)
         pump(app, timeout=0.3)
+        self.assertTrue(app.pending_ignore.winfo_ismapped(), '(1.8.1) the Ignore button shares the line')
         app.subscription_selection()
         pump(app, timeout=0.2)
         self.assertEqual(ui_theme.full_text(app.subscription_note), i18n.t('library.subscription.note'))

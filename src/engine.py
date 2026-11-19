@@ -30,7 +30,7 @@ import updater
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '1.8.0'
+APP_VERSION = '1.8.1'
 # Names kept for 1.5.1 importers (from engine import ...). They are copies made at import:
 # code in this module reads paths.X when it runs.
 RESOURCE_ROOT = paths.RESOURCE_ROOT

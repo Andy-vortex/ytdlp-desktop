@@ -30,7 +30,7 @@
    "category": "h4",
    "reason": "UI constant pinned by ParityTests to the UI key library.history.note (H4); the page shows the key through t()"
   },
-  "新增内容会保留，只有下载成功才从待处理列表消失；不会自动下载。": {
+  "新增内容会保留，直到下载成功或被忽略；不会自动下载。": {
    "category": "h4",
    "reason": "UI constant pinned by ParityTests to the UI key library.subscription.note (H4); the page shows the key through t()"
   },

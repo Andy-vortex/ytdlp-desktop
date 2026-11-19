@@ -197,7 +197,7 @@ class ModuleTests(Checks):
             module = sys.modules[name]
             self.assertFalse(hasattr(module, 'MESSAGES_READY'), f'{name}: WP-6 removed the staging flag (7.8)')
             self.assertIn(name, i18n_tool.g1_modules(), name)
-        self.assertEqual(engine.APP_VERSION, '1.8.0')
+        self.assertEqual(engine.APP_VERSION, '1.8.1')     # (1.8.1) the version bump; the test name keeps 1_8_0 (-k)
         self.assertEqual(old_constants({'APP_VERSION'})['APP_VERSION'], '1.7.0')
 
     def test_g1_family_is_clean_on_the_five_modules(self):

@@ -6,7 +6,9 @@ The carrier rules of 2.3 for Message, Raw and Value; show() / error_text() in zh
 texts (cut, masked, clauses, stripped, message_of); the collector wire form; the sidecar codec
 (build, prune, collision, cap, surrogates, foreign entries kept byte for byte); the key registry;
 the legacy reader L1-L9 (moved here from test_i18n_catalog's LocalizeTests; WP-6 deleted the
-live-localize variants together with localize, MESSAGES.md 6.4); zh catalog parity with release-sources/1.7.0; the
+live-localize variants together with localize, MESSAGES.md 6.4); zh catalog parity with release-sources/1.7.0
+(with the sanctioned 1.8.1 differences CHANGED_1_8_1 / ADDED_1_8_1: the owner asked for the two subscription
+notes to name 忽略, an exception to MESSAGES.md 8.1, and the subscription management added 13 library keys); the
 frozen data regeneration; and the G2 self-tests of 7.3 (they need YTDLP_DESKTOP_MSG_GUARD, which
 run_tests.py sets).  No window, no network.
 """
@@ -48,6 +50,41 @@ NEW_KEYS = {
     'core.formats.bad_mode': ('Unsupported output format: {mode}', 'Unsupported output format: {mode}'),
     'core.formats.bad_id': ('Unsupported output format id: {id}', 'Unsupported output format id: {id}'),
     'core.formats.bad_label': ('Unsupported output format label: {label}', 'Unsupported output format label: {label}'),
+}
+
+
+# (1.8.1, build/v181/design/DESIGN.md 5.1, 5.2, 6.2) The sanctioned differences from the 1.7.0 catalog: two
+# 1.7.0 keys whose wording the owner asked to update once 忽略所选 exists (an exception to MESSAGES.md 8.1
+# "the zh of a 1.7.0 key is unchanged"), and the 13 library keys of the subscription management.
+CHANGED_1_8_1 = {
+    'library.subscription.note': ('新增内容会保留，直到下载成功或被忽略；不会自动下载。',
+                                  'New items stay until downloaded or ignored; nothing downloads by itself.'),
+    'library.subscription.status_note': ('下载成功或忽略后移出；可多选后添加或忽略。',
+                                         'Items leave once downloaded or ignored.'),
+}
+ADDED_1_8_1 = {
+    'library.subscription.apply_name': ('应用名称', 'Apply name'),
+    'library.subscription.delete': ('删除订阅', 'Delete'),
+    'library.pending.ignore': ('忽略所选', 'Ignore'),
+    'library.pending.pick_ignore': ('请先在下方选择要忽略的新增条目。', 'Select the new items to ignore in the list below first.'),
+    'library.subscription.name_empty': ('请先在上方名称框输入新名称。', 'Type the new name in the name box above first.'),
+    'library.subscription.delete_title': ('删除订阅', 'Delete subscription'),
+    'library.subscription.delete_text': (
+        '删除订阅“{name}”和它的 {pending} 条待处理内容？已见记录也会一并删除，以后重新订阅时会重新建立基线。'
+        '任务历史、已下载的文件和下载记录都会保留。删除后无法恢复。',
+        'Delete the subscription “{name}” and its pending items ({pending})? Its record of seen links goes too; '
+        'subscribing again starts a new baseline. Task history, downloaded files and download records are kept. '
+        'This cannot be undone.'),
+    'library.subscription.delete_busy': ('这个订阅正在检查，检查结束后再删除。',
+                                         'This subscription is being checked; delete it after the check ends.'),
+    'library.subscription.delete_task_busy': ('当前任务结束后才能删除订阅。',
+                                              'A subscription can be deleted when the current task ends.'),
+    'library.subscription.gone': ('这个订阅已不存在。', 'This subscription no longer exists.'),
+    'library.subscription.log_renamed': ('已将订阅改名为：{name}', 'Subscription renamed: {name}'),
+    'library.subscription.log_deleted': ('已删除订阅：{name}（待处理内容 {pending} 条）',
+                                         'Subscription deleted: {name} · Pending items removed: {pending}'),
+    'library.pending.log_ignored': ('已忽略订阅“{name}”的 {count} 条新增内容。',
+                                    'New items ignored: {count} · Subscription: {name}'),
 }
 
 
@@ -661,15 +698,25 @@ class LegacyReaderTests(unittest.TestCase):
 
 class CatalogParityTests(unittest.TestCase):
     def test_zh_catalog_equals_1_7_0_and_the_eight_new_keys(self):
+        """Every 1.7.0 key keeps its zh and en (MESSAGES.md 8.1), and the catalog adds the eight core keys.
+
+        (1.8.1) The sanctioned exceptions, nothing else: CHANGED_1_8_1 (two subscription notes the owner
+        asked to name 忽略) and ADDED_1_8_1 (the 13 library keys of the subscription management)."""
         released_zh = i18n_tool.release_catalog('1.7.0', 'zh')
         released_en = i18n_tool.release_catalog('1.7.0', 'en')
         self.assertGreater(len(released_zh), 500)
+        self.assertLessEqual(set(CHANGED_1_8_1), set(released_zh))
         for key, text in released_zh.items():
+            if key in CHANGED_1_8_1:
+                self.assertEqual((i18n.CATALOG['zh'].get(key), i18n.CATALOG['en'].get(key)), CHANGED_1_8_1[key], key)
+                continue
             self.assertEqual(i18n.CATALOG['zh'].get(key), text, f'{key}: zh text of a 1.7.0 key is unchanged (8.1)')
             self.assertEqual(i18n.CATALOG['en'].get(key), released_en[key], f'{key}: en text unchanged in WP-1')
         added = set(i18n.CATALOG['zh']) - set(released_zh)
-        self.assertEqual(added, set(NEW_KEYS))
+        self.assertEqual(added, set(NEW_KEYS) | set(ADDED_1_8_1))
         for key, (zh, english) in NEW_KEYS.items():
+            self.assertEqual((i18n.CATALOG['zh'][key], i18n.CATALOG['en'][key]), (zh, english), key)
+        for key, (zh, english) in ADDED_1_8_1.items():
             self.assertEqual((i18n.CATALOG['zh'][key], i18n.CATALOG['en'][key]), (zh, english), key)
         inventory = i18n_tool.load_inventory(i18n_tool.INVENTORY)
         self.assertEqual({item['key'] for item in inventory['new_strings_1_8_0']}, set(NEW_KEYS))

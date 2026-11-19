@@ -596,6 +596,7 @@ class SettingsUI:
         self.update_status.configure(text=(i18n.t('settings.update.latest') if value['unchanged'] else
                                            i18n.t('settings.update.done')), text_color=ui_theme.OK)
         self.prefs['latest_engine'] = version
+        self.schedule_save()        # (1.8.1) as on_engine_check: the new version survives a restart
         self.append_log(i18n.t('log.engine_checked', version=shown))
 
     def on_update_error(self, value):

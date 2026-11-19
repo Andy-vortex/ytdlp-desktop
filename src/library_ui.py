@@ -43,7 +43,7 @@ RESUME_POLL = 100     # ms between the checks that hand the other formats of res
 RESUME_LATER_LOG = '继续未完成：同一链接的其他格式 {count} 条已加入队列'
 RESUME_DROPPED_LOG = '继续未完成：同一链接的其他格式 {count} 条没有开始，可在资料管理中再次“继续未完成”'
 HISTORY_NOTE = '已完成页不会重采；失败页和中断页可以继续。下载任务恢复未成功的链接。'
-SUBSCRIPTION_NOTE = '新增内容会保留，只有下载成功才从待处理列表消失；不会自动下载。'
+SUBSCRIPTION_NOTE = '新增内容会保留，直到下载成功或被忽略；不会自动下载。'
 HISTORY_UNREADABLE = '这条记录暂时无法读取，请稍后点“刷新记录”。'
 LIBRARY_UNREADABLE = '历史记录暂时无法读取：{error}'
 PICK_SUBSCRIPTION = '请先在上方列表中选择一个订阅。'
@@ -518,6 +518,16 @@ class LibraryUI:
                    ui_theme.button(actions, i18n.t('library.subscription.apply_interval'), self.change_interval)]
         for column, button in enumerate(buttons):
             button.grid(row=0, column=column, sticky='w', padx=(0 if column == 0 else 8, 0))
+        # (1.8.1) Apply name / delete: not in self.controls (golden ui-1.6.0.json records that list);
+        # their busy state follows set_busy through history_selection (subscription_tools).
+        self.subscription_rename = ui_theme.button(actions, i18n.t('library.subscription.apply_name'),
+                                                   self.rename_subscription)
+        self.subscription_rename.grid(row=0, column=3, sticky='w', padx=(8, 0))
+        actions.grid_columnconfigure(4, weight=1)
+        self.subscription_delete = ui_theme.button(actions, i18n.t('library.subscription.delete'),
+                                                   self.delete_subscription, kind='danger')
+        self.subscription_delete.grid(row=0, column=5, sticky='e', padx=(8, 0))
+        self.subscription_actions = actions
         # Two bounded lists leave room for the new-content queue at minimum window size.
         # (final fix round 1, ENV-4) The Schedule column shows an interval label or 已暂停: as wide as the
         # widest of them needs (I18N.md 10.1 group-label rule; Chinese keeps its 110 px).
@@ -540,13 +550,17 @@ class LibraryUI:
         ui_theme.fit(self.subscription_note, i18n.t('library.subscription.note'))
         queue = ui_theme.button(pending, i18n.t('collect.add'), self.queue_subscription)
         queue.grid(row=0, column=1, sticky='e')
+        # (1.8.1) Ignore: kept out of self.controls as apply name / delete (subscription_tools).
+        self.pending_ignore = ui_theme.button(pending, i18n.t('library.pending.ignore'), self.ignore_pending)
+        self.pending_ignore.grid(row=0, column=2, sticky='e', padx=(8, 0))
+        self.pending_actions = pending
         buttons.append(queue)
         self.controls += buttons
         self.pending_tree = ui_theme.table(pending, columns(pending, [('title', i18n.t('table.new_items'), 290, True),
                                                                       ('url', i18n.t('table.link'), 420, True)]),
                                            selectmode='extended', height=4,
                                            empty=i18n.t('library.pending.empty'))
-        self.pending_tree.container.grid(row=1, column=0, columnspan=2, sticky='nsew', pady=(8, 0))
+        self.pending_tree.container.grid(row=1, column=0, columnspan=3, sticky='nsew', pady=(8, 0))
         pin_rows(self.pending_tree, 4)
         self.pending_tree.ellipsize(middle=('url',))
 
@@ -793,7 +807,11 @@ class LibraryUI:
             pass
 
     def history_selection(self):
-        """Note and button states for the selected job; never raises (set_busy calls it)."""
+        """Note and button states for the selected job; never raises (set_busy calls it).
+
+        (1.8.1) First of all it sets the busy state of the subscription tools (apply name, delete,
+        ignore; subscription_tools), so no error of the history widgets below can skip it."""
+        self.subscription_tools()
         selected = self.history_tree.selection()
         record = None
         if selected:
@@ -1210,14 +1228,126 @@ class LibraryUI:
         items = [self.visible_pending[int(n)] for n in self.pending_tree.selection()]
         if not items:
             # The same line as the other actions of this tab (no dialog for a missing selection).
-            if self.pending_tree.get_children():
-                self.subscription_hint(i18n.t('library.pick_pending'))
-            elif self.subscription_tree.selection():
-                self.subscription_hint(i18n.t('library.no_pending'))
-            else:
-                self.subscription_hint(self.pick_subscription_text())
+            self.pending_hint(i18n.t('library.pick_pending'))
             return
         self.queue_collected_items(items)
+
+    def subscription_tools(self):
+        """(1.8.1) Apply name, delete and ignore follow the busy state like the buttons of self.controls
+        (they are kept out of that list: golden ui-1.6.0.json records it).  set_busy is pinned (H3)
+        and calls history_selection, which calls this.  Never raises."""
+        state = 'disabled' if getattr(self, 'busy', False) else 'normal'
+        for name in ('subscription_rename', 'subscription_delete', 'pending_ignore'):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                try:
+                    widget.configure(state=state)
+                except tk.TclError:
+                    pass
+
+    def pending_hint(self, text):
+        """(1.8.1) Why a pending-list action did nothing: `text` (the action's own "select items
+        first" line) when the list has rows, else no pending items, else no subscription picked.
+        The callers pass i18n.t('...') with a literal key, so i18n_tool.api_calls sees each key."""
+        if self.pending_tree.get_children():
+            self.subscription_hint(text)
+        elif self.subscription_tree.selection():
+            self.subscription_hint(i18n.t('library.no_pending'))
+        else:
+            self.subscription_hint(self.pick_subscription_text())
+
+    def ignore_pending(self):
+        self.subscription_action(self._ignore_pending)
+
+    def _ignore_pending(self):
+        """(1.8.1) 忽略所选: the picked new items leave this subscription's pending list (they stay
+        seen, so a later check keeps them out).  One click, no dialog, as 添加到下载列表."""
+        if self.busy:
+            return
+        selected = self.subscription_tree.selection()
+        items = [self.visible_pending[int(n)] for n in self.pending_tree.selection()
+                 if n.isdigit() and int(n) < len(self.visible_pending)]
+        if not items:
+            self.pending_hint(i18n.t('library.pending.pick_ignore'))
+            return
+        row = self.selected_subscription()
+        if not selected or row is None:
+            self.refresh_library()
+            self.subscription_hint(i18n.t('library.subscription.gone'))
+            return
+        count = self.library.ignore_entries(row['id'], [item['url'] for item in items])
+        self.refresh_library()
+        self.append_log(i18n.t('library.pending.log_ignored', count=int(count), name=messages.show(row['name'])))
+
+    def delete_subscription(self):
+        self.subscription_action(self._delete_subscription)
+
+    def subscription_checking(self, key):
+        """(1.8.1) A check of this subscription runs now or waits for the library (collect_pending)."""
+        pending = self.collect_pending
+        return self.active_subscription == key or bool(pending and pending[3] == key)
+
+    def _delete_subscription(self):
+        """(1.8.1) 删除订阅, after a confirmation whose default answer is no.  A subscription whose own
+        check runs (or waits for the library) is never offered for deletion (delete_busy).  The dialog
+        runs the event loop, so its check and the busy state are looked at again after it: delete_busy
+        only when this subscription is being checked, delete_task_busy when another task (a download,
+        another subscription's check) made the window busy."""
+        row = self.selected_subscription()
+        if row and self.subscription_checking(row['id']):
+            self.subscription_hint(i18n.t('library.subscription.delete_busy'))
+            return
+        if self.busy:
+            return
+        if not row:
+            self.subscription_hint(self.pick_subscription_text())
+            return
+        if not messagebox.askyesno(i18n.t('library.subscription.delete_title'),
+                                   i18n.t('library.subscription.delete_text', name=messages.show(row['name']),
+                                          pending=int(row['pending'])),
+                                   icon='warning', default='no', parent=self):
+            return
+        # The dialog runs the event loop: the subscription timer may have started a check meanwhile.
+        if self.subscription_checking(row['id']):
+            self.subscription_hint(i18n.t('library.subscription.delete_busy'))
+            return
+        if self.busy:
+            self.subscription_hint(i18n.t('library.subscription.delete_task_busy'))
+            return
+        found = self.library.delete_subscription(row['id'])
+        self.subscription_backoff.pop(row['id'], None)
+        self.refresh_library()
+        if found:
+            self.append_log(i18n.t('library.subscription.log_deleted', name=messages.show(row['name']),
+                                   pending=int(row['pending'])))
+        else:
+            self.subscription_hint(i18n.t('library.subscription.gone'))
+
+    def rename_subscription(self):
+        self.subscription_action(self._rename_subscription)
+
+    def _rename_subscription(self):
+        """(1.8.1) 应用名称: the name typed in the creation strip becomes the selected subscription's
+        name (as 应用检查间隔 applies the strip's interval).  An empty box only says so: it is the
+        box's resting state, and saving it would silently replace the name."""
+        if self.busy:
+            return
+        row = self.selected_subscription()
+        if not row:
+            self.subscription_hint(self.pick_subscription_text())
+            return
+        text = self.subscription_name.get().strip()
+        if not text:
+            self.subscription_hint(i18n.t('library.subscription.name_empty'))
+            return
+        found = self.library.rename_subscription(row['id'], text)
+        self.refresh_library()
+        if not found:
+            self.subscription_hint(i18n.t('library.subscription.gone'))
+            return
+        renamed = self.selected_subscription()
+        if renamed is not None and renamed['id'] == row['id']:
+            self.append_log(i18n.t('library.subscription.log_renamed', name=messages.show(renamed['name'])))
 
     def collection_contexts(self, urls):
         # Provenance stays available after restarting without embedding body copies per URL.

@@ -637,10 +637,18 @@ class EnglishReplayTests(ReplayCase):
 class ZhDumpTests(ReplayCase):
     """G6: zh pages of 1.8.0 equal those of the frozen 1.7.0 page code, for old and for new data."""
 
+    # (1.8.1) the note names 忽略; the only sanctioned zh difference (build/v181/design/DESIGN.md 5.2, 6.2:
+    # the owner asked for the wording of library.subscription.status_note to follow the Ignore button).
+    OLD_STATUS_NOTE = '仅下载成功后移出；可多选新增内容添加到下载列表。'
+
     def assertSameDump(self, mine, theirs):
         self.assertEqual(sorted(mine), sorted(theirs))
+        new_note = i18n.CATALOG['zh']['library.subscription.status_note']
         for name in sorted(mine):
-            self.assertEqual(mine[name], theirs[name], name)
+            expected = theirs[name]
+            if name.startswith('subscription note '):
+                expected = [text.replace(self.OLD_STATUS_NOTE, new_note) for text in expected]
+            self.assertEqual(mine[name], expected, name)
 
     def test_old_data_zh_is_what_1_7_0_shows(self):
         theirs = render_by_1_7_0(self.old)

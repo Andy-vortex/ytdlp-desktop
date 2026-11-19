@@ -27,7 +27,7 @@
   "APP_VERSION": {
    "line_hint": 387,
    "function": "StudioApp.show_app_badge",
-   "reason": "engine.APP_VERSION, the program's version number ('1.8.0'): a language-neutral constant"
+   "reason": "engine.APP_VERSION, the program's version number ('1.8.1'): a language-neutral constant"
   },
   "f'v{APP_VERSION}'": {
    "line_hint": 390,

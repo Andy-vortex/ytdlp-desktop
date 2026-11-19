@@ -4037,13 +4037,13 @@
    "line": 37,
    "end_line": 37,
    "literal": "string",
-   "text": "新增内容会保留，只有下载成功才从待处理列表消失；不会自动下载。",
+   "text": "新增内容会保留，直到下载成功或被忽略；不会自动下载。",
    "key": "library.subscription.note",
    "flag": "ui",
    "translate": true,
    "placeholders": [],
    "zh_template": null,
-   "en": "New items stay until downloaded; nothing downloads by itself.",
+   "en": "New items stay until downloaded or ignored; nothing downloads by itself.",
    "context": "module constant in library_ui.py",
    "note": ""
   },
@@ -5749,13 +5749,13 @@
    "line": 991,
    "end_line": 991,
    "literal": "string",
-   "text": "仅下载成功后移出；可多选新增内容添加到下载列表。",
+   "text": "下载成功或忽略后移出；可多选后添加或忽略。",
    "key": "library.subscription.status_note",
    "flag": "ui",
    "translate": true,
    "placeholders": [],
    "zh_template": null,
-   "en": "Select new items to add them; they leave once downloaded.",
+   "en": "Items leave once downloaded or ignored.",
    "context": "value in library_ui.py LibraryUI._subscription_selection",
    "note": ""
   },
@@ -12724,6 +12724,84 @@
    "zh": "下载完成",
    "en": "Download complete",
    "context": "shorter form of a finished job's task title (final fix round 3, ENV3-1): English only, shown whole instead of download.title.done / done_skipped cut with \"…\" when the task header has no room for it; the counts it leaves out are in the stats line and on 重试未完成 (N) beside it.  Chinese never shows it (its header is unchanged)"
+  },
+  {
+   "key": "library.subscription.apply_name",
+   "zh": "应用名称",
+   "en": "Apply name",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.delete",
+   "zh": "删除订阅",
+   "en": "Delete",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.pending.ignore",
+   "zh": "忽略所选",
+   "en": "Ignore",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.pending.pick_ignore",
+   "zh": "请先在下方选择要忽略的新增条目。",
+   "en": "Select the new items to ignore in the list below first.",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.name_empty",
+   "zh": "请先在上方名称框输入新名称。",
+   "en": "Type the new name in the name box above first.",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.delete_title",
+   "zh": "删除订阅",
+   "en": "Delete subscription",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.delete_text",
+   "zh": "删除订阅“{name}”和它的 {pending} 条待处理内容？已见记录也会一并删除，以后重新订阅时会重新建立基线。任务历史、已下载的文件和下载记录都会保留。删除后无法恢复。",
+   "en": "Delete the subscription “{name}” and its pending items ({pending})? Its record of seen links goes too; subscribing again starts a new baseline. Task history, downloaded files and download records are kept. This cannot be undone.",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.delete_busy",
+   "zh": "这个订阅正在检查，检查结束后再删除。",
+   "en": "This subscription is being checked; delete it after the check ends.",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.delete_task_busy",
+   "zh": "当前任务结束后才能删除订阅。",
+   "en": "A subscription can be deleted when the current task ends.",
+   "context": "1.8.1 subscription management: delete while another task runs (review fix)"
+  },
+  {
+   "key": "library.subscription.gone",
+   "zh": "这个订阅已不存在。",
+   "en": "This subscription no longer exists.",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.log_renamed",
+   "zh": "已将订阅改名为：{name}",
+   "en": "Subscription renamed: {name}",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.subscription.log_deleted",
+   "zh": "已删除订阅：{name}（待处理内容 {pending} 条）",
+   "en": "Subscription deleted: {name} · Pending items removed: {pending}",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
+  },
+  {
+   "key": "library.pending.log_ignored",
+   "zh": "已忽略订阅“{name}”的 {count} 条新增内容。",
+   "en": "New items ignored: {count} · Subscription: {name}",
+   "context": "1.8.1 subscription management (build/v181/design/DESIGN.md)"
   }
  ],
  "new_strings_1_8_0": [

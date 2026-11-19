@@ -772,9 +772,65 @@ class Library:
         with self.db() as db:
             db.execute('UPDATE subscriptions SET enabled=?,interval=?,next_check=? WHERE id=?', (int(enabled), interval, time.time() + interval, key))
 
+    def rename_subscription(self, key, name):
+        """(1.8.1) The name column and the subscription's sidecar entry for it, in one transaction (as
+        rename_job).  The owner's text is raw, cut to 100 characters; an empty name is the untitled
+        message (as subscription(), C-F24).  The record is rewritten only when its sidecar changes.
+        True when the subscription exists."""
+        name = raw(str(name).strip()[:100]) or msg('value.subscription.untitled')
+        with self.tx() as db:
+            row = db.execute('SELECT data,name FROM subscriptions WHERE id=?', (key,)).fetchone()
+            if row is None:
+                return False
+            text = None
+            try:
+                stored = json.loads(row['data'])
+            except (TypeError, ValueError):
+                stored = None
+            if isinstance(stored, dict):
+                data, columns = _load_for_write(row['data'], 'subscription', {'name': row['name']})
+                columns['name'] = name
+                encoded = messages.encode(data, 'subscription', columns)
+                if encoded.get('msgs') != stored.get('msgs'):
+                    text = json.dumps(encoded, ensure_ascii=False)
+            if text is None:
+                db.execute('UPDATE subscriptions SET name=? WHERE id=?', (name, key))
+            else:
+                db.execute('UPDATE subscriptions SET name=?,data=? WHERE id=?', (name, text, key))
+            return True
+
+    def delete_subscription(self, key):
+        """(1.8.1) Remove a subscription and its entries, in one transaction.  The collection jobs of its
+        checks stay in the history; their record forgets the subscription (data['subscription'] =
+        None, through the read-modify-write path, so options and sidecar keep their bytes): a resumed
+        check never looks for it (1.5.1 to 1.8.0 read that id and their finish_subscription has no
+        None check; 1.5.1 would stay busy).  jobs.updated is kept, so the history order stays.
+        Downloads, archives and the job history are not touched.  True when the subscription existed."""
+        if not isinstance(key, str) or not key:
+            return False
+        with self.tx() as db:
+            found = db.execute('DELETE FROM subscriptions WHERE id=?', (key,)).rowcount
+            db.execute('DELETE FROM entries WHERE subscription=?', (key,))
+            # The id is 32 ASCII hex digits: no JSON escape hides it from instr; each hit is compared exactly.
+            rows = db.execute("SELECT id,data,kind,title FROM jobs WHERE kind='collect' AND instr(data, ?) > 0",
+                              (key,)).fetchall()
+            for row in rows:
+                try:
+                    stored = json.loads(row['data'])
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(stored, dict) or stored.get('subscription') != key:
+                    continue
+                data, columns = _load_for_write(row['data'], 'job', self._job_columns(row))
+                data['subscription'] = None
+                db.execute('UPDATE jobs SET data=? WHERE id=?', (_dump(data, 'job', columns), row['id']))
+        return bool(found)
+
     def finish_subscription(self, key, pages, successful, error=''):
         with self.tx() as db:
             row = db.execute('SELECT * FROM subscriptions WHERE id=?', (key,)).fetchone()
+            if row is None:
+                return 0        # (1.8.1) deleted meanwhile (delete_subscription): nothing to record
             data, columns = _load_for_write(row['data'], 'subscription', {'name': row['name']})
             new = 0
             if successful:
@@ -806,6 +862,30 @@ class Library:
         with self.db() as db:
             db.execute('UPDATE entries SET pending=0 WHERE key=?', (identity(url),))
 
+    def ignore_entries(self, key, urls):
+        """(1.8.1) The owner's 忽略所选: the entries of these links (by their link key, urls.identity, as
+        finish_subscription stores them) leave the pending list of this subscription the way a
+        download takes them out (pending=0).  The rows stay, so a later check keeps them out
+        (finish_subscription keeps an existing row's pending); other subscriptions are not touched.
+        One transaction; returns how many entries changed."""
+        keys = []
+        for url in urls:
+            if isinstance(url, str) and url:
+                try:
+                    keys.append(identity(url))
+                except ValueError:
+                    continue
+        keys = list(dict.fromkeys(keys))
+        if not keys:
+            return 0
+        changed = 0
+        with self.tx() as db:
+            for start in range(0, len(keys), 500):      # within the 999 parameters of any SQLite
+                part = keys[start:start + 500]
+                changed += db.execute('UPDATE entries SET pending=0 WHERE subscription=? AND pending=1 AND key IN (%s)'
+                                      % ','.join('?' * len(part)), (key, *part)).rowcount
+        return changed
+
     def archive_index(self, folder, data):
         with self.db() as db:
             db.execute('INSERT OR REPLACE INTO archives VALUES(?,?,?)', (str(folder), time.time(), _dump(data, 'archive')))
@@ -816,15 +896,66 @@ class Library:
                     for r in db.execute('SELECT * FROM archives ORDER BY updated DESC')]
 
     def contexts(self, urls):
+        """The newest collected page context of each link: {url: {title, source, job_id, page_url}}.
+
+        (1.8.1) The window calls this before a download with archiving on; a link that was never
+        collected used to cost a decode of every stored page (seconds with thousands of pages).  Now
+        only pages that can hold a wanted link are decoded: with at most `prefilter` search texts
+        the database keeps the rows whose data contains one of them (instr; each text costs one
+        pass over the data column); otherwise each row is loaded and decoded only when one of its
+        links is wanted.  The result is the same: newest page first (rowid DESC), each link
+        compared exactly, done once every link is found.
+
+        A search text is the link as json.dumps writes it in a page record (_dump: ensure_ascii=False,
+        the form every version of this program wrote), and as ensure_ascii=True writes it when that
+        differs (records another tool rewrote with escaped non-ASCII); a text that cannot be stored
+        (a lone surrogate) is never in a row and is skipped.  A row another tool rewrote with other
+        escapes (\\/, upper-case \\u hex) is missed by the instr way only; the link is then archived
+        as never collected.  A broken row (not JSON, no links) on the instr way: one whose data holds
+        no search text is never read, so it is skipped where the old loop raised; one that holds a
+        search text raises as before.  On the row-by-row way every row reached is loaded (json.loads
+        and its links), so a row that is not JSON or has no links raises as in the old loop; only
+        a row that parses but holds no wanted link is not decoded (messages.decode), so a fault that
+        only decoding would find is not raised for it.  Rows after the last wanted link was found are
+        not read on either way, as before."""
+        prefilter = 4           # measured break-even of the two ways (1.8.1 design 1.1)
         remaining, result = set(urls), {}
+        if not remaining:
+            return result
+        needles = {}
+        for url in remaining:
+            if not isinstance(url, str):
+                continue
+            for ascii_only in (False, True):
+                text = json.dumps(url, ensure_ascii=ascii_only)
+                try:
+                    text.encode('utf-8')
+                except UnicodeEncodeError:
+                    continue
+                needles[text] = None
+        needles = list(needles)
+        screen = len(needles) > prefilter or any(not isinstance(url, str) for url in remaining)
         with self.db() as db:
-            for row in db.execute('SELECT job,url,data FROM pages ORDER BY rowid DESC'):
+            if screen:
+                rows = db.execute('SELECT job,url,data FROM pages ORDER BY rowid DESC')
+            elif needles:
+                rows = db.execute('SELECT job,url,data FROM pages WHERE '
+                                  + ' OR '.join(['instr(data, ?) > 0'] * len(needles))
+                                  + ' ORDER BY rowid DESC', needles)
+            else:
+                return result
+            for row in rows:
                 if not remaining:
                     break
-                page = messages.decode(json.loads(row['data']), 'page')
+                stored = json.loads(row['data'])
+                if screen and not any(isinstance(item, dict) and item.get('url') in remaining
+                                      for item in stored['links']):
+                    continue
+                page = messages.decode(stored, 'page')
                 for item in page['links']:
                     if item['url'] in remaining:
-                        result[item['url']] = dict(title=item['title'], source=item['source'], job_id=row['job'], page_url=page['url'])
+                        result[item['url']] = dict(title=item['title'], source=item['source'], job_id=row['job'],
+                                                   page_url=page['url'])
                         remaining.remove(item['url'])
         return result
 
@@ -834,7 +965,8 @@ class Library:
 UI_RETRIED = ('create_job', 'job', 'change_job', 'collection_event', 'history', 'history_count', 'extend_job',
               'rename_job', 'record_download', 'find_download', 'download_event', 'subscription',
               'subscriptions', 'configure_subscription', 'finish_subscription', 'pending', 'downloaded',
-              'archive_index', 'archives', 'contexts')
+              'archive_index', 'archives', 'contexts',
+              'ignore_entries', 'delete_subscription', 'rename_subscription')
 for _name in UI_RETRIED:
     setattr(Library, _name, _ui_retrying(getattr(Library, _name)))
 del _name

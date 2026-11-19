@@ -308,7 +308,7 @@ class SpacingTests(Base):
         app.subscription_tree.selection_set(key)
         app.subscription_selection()
         self.assertEqual(ui_theme.full_text(app.subscription_note),
-                         '最近检查新增 3 条 · 待处理 3 条 · 仅下载成功后移出；可多选新增内容添加到下载列表。')
+                         '最近检查新增 3 条 · 待处理 3 条 · 下载成功或忽略后移出；可多选后添加或忽略。')
         # The interval chosen in the menu is still stored as seconds.
         app.subscription_interval.set('每 15 分钟')
         app.change_interval()
