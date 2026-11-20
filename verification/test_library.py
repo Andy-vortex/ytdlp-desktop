@@ -145,7 +145,7 @@ try:
     url = BASE + '/fixture.mp4'
     events = []
     # 1.6.0: the window hands these events to the history before it shows them.
-    history_job = db.create_job('download', '1条 · 视频 · 最佳画质 MKV', dict(urls=[url]))
+    history_job = db.create_job('download', '', dict(urls=[url]))      # (2.0.0) untitled until the media title
     def emit(k, v):
         if k in ('item', 'title', 'media', 'file', 'queued', 'item_done', 'done'):
             db.download_event(history_job, k, v)
@@ -158,7 +158,7 @@ try:
     assert done['success'] == 1 and not done['archive_errors'], events
     assert not list(output.rglob('*.mkv'))
     recorded = db.job(history_job)
-    assert recorded['status'] == 'completed' and recorded['data']['completed'] == [url], recorded
+    assert recorded['status'] == 'completed' and [pair[0] for pair in recorded['data']['done']] == [url], recorded
     assert recorded['title'] == 'fixture', recorded['title']
     saved = db.find_download([urls.link_key(url)], 'video_mkv')
     assert saved and saved['exists'] and saved['job'] == history_job and saved['path'] == done['files'][0], saved

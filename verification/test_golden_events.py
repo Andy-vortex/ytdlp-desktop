@@ -1,17 +1,16 @@
+# quick
 """Golden event transcripts of engine.Runner.download.
 
 Each scenario runs the real download() with _run_once replaced by a script and _wait
 replaced by a recorder, so the transcript shows exactly which events the queue logic
 emits, in which order, and what it leaves in failed-downloads.json.
 
-Two goldens:
-* events-1.6.0.json (1.6.0 WP2): every scenario below on the current engine.  Written by
-  this work package, so on its own it proves nothing about compatibility.  To record on
-  purpose, run this file directly (not through run_tests.py) with GOLDEN_UPDATE=1.
-* events-1.5.1.json (WP0, recorded from the 1.5.1 sources, never rewritten): the
-  projection test runs the 1.5.1 scenarios on the current engine, drops every kind and
-  key that SPEC section 3.8 marks as new, and requires the 1.5.1 transcript except for
-  the differences enumerated in PERMITTED_DIFFERENCES.
+The golden, events.json (1.6.0 WP2): every scenario below on the current engine.  To
+record on purpose, run this file directly (not through run_tests.py) with GOLDEN_UPDATE=1.
+(2.0.0 S2) Re-recorded for the format-2 store and renamed from events-1.6.0.json: the unfinished list
+of version 2 (P3), then the stored enum values as codes (Q1: options.mode / resolution of every
+failed_file); each time the new recording equalled the old golden with only those values changed,
+all 61 scenarios (docs/2.0.0/handoff/S2.md).
 
 Transcript entries are [kind, value]; a call of _wait appears in place as
 ["_wait", [seconds, index, total, reason]].
@@ -34,60 +33,8 @@ from unittest.mock import patch
 import engine
 import urls
 
-GOLDEN_NAME = 'events-1.6.0.json'
-LEGACY_GOLDEN = 'events-1.5.1.json'
+GOLDEN_NAME = 'events.json'
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
-
-# The ten scenarios of WP0.md step 5, for which the projection is normative (WP2.md "Order").
-NORMATIVE = ('two_success', 'fail_then_success', 'rate_limit_then_success', 'rate_limit_exhausted_then_next',
-             'retry_after', 'cancel_during_first', 'bot_check_first_of_two', 'exception_on_second_of_three',
-             'previous_job_same_options', 'previous_job_other_format')
-
-# What the projection may differ in.  Anything else fails the test.
-PERMITTED_DIFFERENCES = (
-    'done.failed_path: None when nothing is stored (1.5.1 always named the file, also after writing an empty list)',
-    'done.pending_urls in the scenarios of PENDING_THIS_RUN: the links of this run only (1.5.1 added the older list)',
-    'failed_file: the entries key is added; the legacy urls and options are compared separately '
-    '(no file where 1.5.1 wrote an empty list)',
-    'log: the wording of BOT_CHECK_HINT and BOT_CHECK_STALE_HINT, which WP2.md section F replaces',
-)
-# done.pending_urls of 1.6.0 in the two scenarios with an older list (scenarios 9 and 10 of WP0.md).
-PENDING_THIS_RUN = {'previous_job_same_options': [], 'previous_job_other_format': []}
-# The same difference in a scenario outside the ten (an older list that this run did not touch).
-PENDING_THIS_RUN_MORE = {'previous_job_same_options_despite_proxy_and_cookies': []}
-# The two hint texts as 1.5.1 logged them (engine.py:36-39 of the backup).
-OLD_BOT_CHECK_HINT = ('YouTube 要求登录验证（Sign in to confirm you’re not a bot）。这是 YouTube 对当前网络出口 IP 的限制，'
-                      '不是链接解析错误。请在“偏好设置 → 网络”选择已登录 YouTube 的 cookies.txt，然后点“重试失败”。')
-OLD_BOT_CHECK_STALE_HINT = ('YouTube 仍要求登录验证：所选 cookies 可能已过期或导出时未登录，'
-                            '请重新导出 cookies.txt 后点“重试失败”。')
-# Kinds and keys that SPEC section 3.8 marks with "+": dropped before the comparison with 1.5.1.
-NEW_KINDS = ('media', 'queued')
-NEW_KEYS = {'item': ('key', 'format', 'origin', 'multi'),
-            'waiting': ('kind',),
-            'item_done': ('url', 'origin', 'title', 'path', 'error', 'reason', 'skipped', 'stale_engine', 'format'),
-            'done': ('total', 'skipped', 'blocked', 'unfinished', 'engine_error')}
-# Scenarios of events-1.5.1.json outside the ten that pin behaviour 1.6.0 changes on purpose.
-# The projection test requires that each of them really differs, so the list cannot go stale.
-NOT_PROJECTED = {
-    'output_folder_unusable':
-        'robust-8: a folder that cannot be created fails each link on its own (item, 此链接无法开始, item_done) '
-        'instead of aborting the queue before the first link',
-    'emit_raises_after_success':
-        'done.failed counts the items that failed; 1.5.1 added one for the aborted queue although the link had finished',
-    'emit_raises_after_failure':
-        'done.failed counts the items that failed (1); 1.5.1 counted the link and the aborted queue (2)',
-    'previous_job_same_options_new_failure':
-        'the list is kept per link and format: older entries keep their place and the new failure is appended '
-        '(1.5.1 put this run first), and pending_urls names this run only',
-    'previous_job_same_options_cancelled':
-        'as above: older entries first, then this run; pending_urls names this run only',
-    'previous_job_same_options_all_set':
-        'as above; and archive contexts are no longer part of what makes two lists the same job',
-    'previous_job_other_referers_failure':
-        'robust-1: referers are per link and no longer decide whether an older list is replaced; it is kept',
-    'previous_job_other_archive_contexts_failure':
-        'robust-1: archive contexts no longer decide whether an older list is replaced; it is kept',
-}
 
 
 def report(command, files, name):
@@ -167,7 +114,7 @@ def archive_error_but_ok(name):
     """The download finished, but the archive record of its file could not be written: the real
     _run_once then adds the error text to runner.archive_errors and carries on."""
     def step(runner, command, index, total, files):
-        runner.archive_errors.append('归档文件与本条资料目录不匹配。')
+        runner.archive_errors.append(_sandbox.zh_t('core.archive.media_mismatch'))
         return ok(name)(runner, command, index, total, files)
     return step
 
@@ -279,7 +226,7 @@ class GoldenEventsTests(unittest.TestCase):
             return _sandbox.normalise({'events': transcript, 'failed_file': failed_file}, replacements)
 
     def legacy_scenarios(self):
-        """The scenarios of events-1.5.1.json: urls, steps, options, hooks and what is stored
+        """The scenarios recorded from 1.5.1 in WP0: urls, steps, options, hooks and what is stored
         beforehand are exactly as WP0 recorded them (only the log prefix after which an
         operating-system text is expected was extended for output_folder_unusable)."""
         def cancel_on_first_item_event(runner, kind, value):
@@ -316,24 +263,24 @@ class GoldenEventsTests(unittest.TestCase):
             'exception_on_second_of_three': dict(urls=[A, B, C], steps=[ok('a.wav'), boom]),
             'previous_job_same_options': dict(
                 urls=[A], steps=[ok('a.wav')],
-                before=lambda p, options: engine.store_failed_job([A, B], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], options)),
             'previous_job_other_format': dict(
                 urls=[A], steps=[ok('a.mp3')],
                 options=lambda p: engine.Options(p['out'], engine.MODES[3]),
-                before=lambda p, options: engine.store_failed_job([A, B], engine.Options(p['out'], engine.MODES[4]))),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], engine.Options(p['out'], engine.MODES[4]))),
             # --- further branches of download() and of its finally block
             'previous_job_cleared_by_success': dict(
                 urls=[A], steps=[ok('a.wav')],
-                before=lambda p, options: engine.store_failed_job([A], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A], options)),
             'previous_job_other_format_failure': dict(
                 urls=[C], steps=[fail],
                 options=lambda p: engine.Options(p['out'], engine.MODES[3]),
-                before=lambda p, options: engine.store_failed_job([A, B], engine.Options(p['out'], engine.MODES[4]))),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], engine.Options(p['out'], engine.MODES[4]))),
             # The comparison with the previous job ignores proxy and cookies (both are session values).
             'previous_job_same_options_despite_proxy_and_cookies': dict(
                 urls=[A], steps=[ok('a.wav')],
                 options=lambda p: engine.Options(p['out'], proxy='http://127.0.0.1:7890', cookies=str(p['cookies'])),
-                before=lambda p, options: engine.store_failed_job([A, B], engine.Options(p['out']))),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], engine.Options(p['out']))),
             'cancel_between_items': dict(urls=[A, B, C], steps=[ok('a.wav')], hook=cancel_after_first_item),
             'cancel_during_cooldown': dict(urls=[A, B], steps=[limited()], wait_result=cancel_in_wait),
             'rate_limit_exhausted_on_last': dict(urls=[A], steps=[limited(), limited(), limited()]),
@@ -357,14 +304,15 @@ class GoldenEventsTests(unittest.TestCase):
             # failed_urls stays empty (urls[index - 1] would be the last link).
             # (1.6.0 fails each link on its own, with the line 此链接无法开始.)
             'output_folder_unusable': dict(urls=[A, B, C], steps=[], blocked=('out',),
-                                           os_errors=('此链接无法开始：', '错误：')),
+                                           os_errors=(_sandbox.zh_head('core.engine.cannot_start_link'),
+                                                     _sandbox.zh_head('core.engine.error'))),
             # emit raises after the link's result is known: a finished link is not stored again, and a
             # failed one is listed once although both the loop and the except block add it.
             'emit_raises_after_success': dict(urls=[A, B], steps=[ok('a.wav')], hook=raise_on_item_done),
             'emit_raises_after_failure': dict(urls=[A, B], steps=[fail], hook=raise_on_item_done),
             # The list cannot be written: one log line, failed_path stays None, done still arrives.
             'failed_list_cannot_be_saved': dict(urls=[A], steps=[fail], blocked=('state',),
-                                                os_errors=('失败清单未能保存：',)),
+                                                os_errors=(_sandbox.zh_head('core.engine.unfinished_not_saved'),)),
             # --- fix round 1: details of the 429 loop and of the item_done payload
             # A Retry-After shorter than the computed cooldown does not shorten the wait.
             'retry_after_shorter_than_cooldown': dict(urls=[A], steps=[limited(7), ok('a.wav')]),
@@ -378,16 +326,16 @@ class GoldenEventsTests(unittest.TestCase):
             # A new failure goes in front of the older links; neither the new link nor the older ones are lost.
             'previous_job_same_options_new_failure': dict(
                 urls=[C], steps=[fail],
-                before=lambda p, options: engine.store_failed_job([A, B], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], options)),
             # The older link is retried together with a new one and both finish: the list is emptied,
             # although one link of this run was never on it.
             'previous_job_retried_with_new_link': dict(
                 urls=[A, C], steps=[ok('a.wav'), ok('c.wav')],
-                before=lambda p, options: engine.store_failed_job([A], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A], options)),
             # A stop with an older list: the unfinished links of this run first, then the older ones, each once.
             'previous_job_same_options_cancelled': dict(
                 urls=[C, B], steps=[cancel_and_fail],
-                before=lambda p, options: engine.store_failed_job([A, B], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], options)),
             # --- fix round 2: corner cases of the item loop
             # Exit code 0 does not end the 429 loop: the link is retried after the cooldown, and when the
             # retries are used up it counts as failed (exit code reported as 1) although a file was written.
@@ -426,7 +374,7 @@ class GoldenEventsTests(unittest.TestCase):
                     p['out'], engine.MODES[4], engine.RESOLUTIONS[3], playlist=True, batch_safe=False,
                     referers={C: 'https://example.org/page'}, archive_root=str(p['archive']),
                     archive_contexts={C: {'title': '标题丙', 'source': 'https://example.invalid/page'}}),
-                before=lambda p, options: engine.store_failed_job([A, B], options)),
+                before=lambda p, options: _sandbox.save_unfinished([A, B], options)),
         }
         # An older list that differs in one single option other than proxy and cookies is another job:
         # it is not merged, and the new failure replaces it (as in previous_job_other_format_failure).
@@ -442,7 +390,7 @@ class GoldenEventsTests(unittest.TestCase):
         for key, other in other_values.items():
             scenarios[f'previous_job_other_{key}_failure'] = dict(
                 urls=[C], steps=[fail],
-                before=lambda p, options, key=key, other=other: engine.store_failed_job(
+                before=lambda p, options, key=key, other=other: _sandbox.save_unfinished(
                     [A, B], replace(options, **{key: other(p)})))
         return scenarios
 
@@ -542,7 +490,7 @@ class GoldenEventsTests(unittest.TestCase):
             # downloaded through a search link.  The media id clears the entry.
             'media_id_clears_the_entry_of_another_link': dict(
                 urls=[search], steps=[reports_media('白羊 [AAA].opus', 'AAA')],
-                before=lambda p, options: engine.store_failed_job([Y1, B], options)),
+                before=lambda p, options: _sandbox.save_unfinished([Y1, B], options)),
             'failed_link_queued_again_succeeds': dict(urls=[A, B], steps=[fail, enqueue_and_ok('b.wav', [A]), ok('a.wav')]),
         }
 
@@ -552,85 +500,8 @@ class GoldenEventsTests(unittest.TestCase):
         self.assertEqual(set(scenarios) & set(added), set())
         scenarios.update(added)
         result = {name: self.scenario(**arguments) for name, arguments in scenarios.items()}
-        _sandbox.check_golden(self, GOLDEN_NAME, result)
-
-    # --- the 1.5.1 scenarios on the current engine, compared with the 1.5.1 golden
-
-    @staticmethod
-    def project(record, legacy):
-        """A transcript reduced to what 1.5.1 knew.  ``legacy`` says which side is being prepared:
-        the wording of the two bot-check hints is replaced by a token on both."""
-        hints = ({OLD_BOT_CHECK_HINT: '<BOT_CHECK_HINT>', OLD_BOT_CHECK_STALE_HINT: '<BOT_CHECK_STALE_HINT>'} if legacy
-                 else {engine.BOT_CHECK_HINT: '<BOT_CHECK_HINT>', engine.BOT_CHECK_STALE_HINT: '<BOT_CHECK_STALE_HINT>'})
-        events = []
-        for kind, value in copy.deepcopy(record['events']):
-            if kind in NEW_KINDS:
-                continue
-            if isinstance(value, dict):
-                for key in NEW_KEYS.get(kind, ()):
-                    value.pop(key, None)
-            if kind == 'log':
-                value = hints.get(value, value)
-            events.append([kind, value])
-        return events
-
-    def compare_with_legacy(self, name, expected, actual):
-        """Raise AssertionError unless ``actual`` (this engine) is ``expected`` (events-1.5.1.json)
-        apart from PERMITTED_DIFFERENCES."""
-        stored_path = '<STATE>' + chr(92) + 'failed-downloads.json'
-        old_events, new_events = self.project(expected, True), self.project(actual, False)
-        old_done, new_done = old_events[-1][1], new_events[-1][1]
-        self.assertEqual((old_events[-1][0], new_events[-1][0]), ('done', 'done'), name)
-        old_file, new_file = expected['failed_file'], actual['failed_file']
-        # 1. failed_path names the file exactly when a list is stored.
-        self.assertEqual(new_done.pop('failed_path'), stored_path if new_file else None, name)
-        old_path = old_done.pop('failed_path')
-        if new_file is None:
-            self.assertFalse((old_file or {}).get('urls'), f'{name}: 1.5.1 stored links, 1.6.0 stored nothing')
-        else:
-            self.assertEqual(old_path, stored_path, name)
-        # 2. pending_urls: this run only.
-        this_run = {**PENDING_THIS_RUN, **PENDING_THIS_RUN_MORE}
-        if name in this_run:
-            self.assertEqual(new_done.pop('pending_urls'), this_run[name], name)
-            old_done.pop('pending_urls')
-        # 3. failed_file: the view 1.5.1 reads holds the links 1.5.1 stored, with the options it stored.
-        old_links = (old_file or {}).get('urls', [])
-        self.assertEqual((new_file or {}).get('urls', []), old_links, f'{name}: legacy urls')
-        if new_file is not None:
-            self.assertEqual(new_file['version'], 1, name)
-            self.assertIsInstance(new_file['entries'], list, name)
-            self.assertTrue(new_file['entries'], name)
-        if old_links:
-            self.assertEqual({key: new_file['options'].get(key) for key in old_file['options']}, old_file['options'],
-                             f'{name}: legacy options')
-        self.assertEqual(new_events, old_events, f'{name}: the transcript differs from events-1.5.1.json')
-
-    def test_projection_onto_the_1_5_1_golden(self):
-        legacy = json.loads((_sandbox.GOLDEN / LEGACY_GOLDEN).read_text(encoding='utf-8'))
-        scenarios = self.legacy_scenarios()
-        self.assertEqual(set(scenarios), set(legacy), 'the scenario table and events-1.5.1.json name the same scenarios')
-        self.assertEqual(len(PERMITTED_DIFFERENCES), 4)
-        self.assertEqual(set(NORMATIVE) & set(NOT_PROJECTED), set(), 'the ten scenarios of WP0.md are always projected')
-        self.assertLessEqual(set(NORMATIVE) | set(NOT_PROJECTED) | set(PENDING_THIS_RUN) | set(PENDING_THIS_RUN_MORE),
-                             set(legacy))
-        self.assertEqual(len(NORMATIVE), 10)
-        self.assertLessEqual(set(PENDING_THIS_RUN), set(NORMATIVE))
-        self.assertEqual(set(PENDING_THIS_RUN_MORE) & (set(NORMATIVE) | set(NOT_PROJECTED)), set())
-        self.assertEqual(len(legacy) - len(NOT_PROJECTED), 40, 'scenarios of 1.5.1 that the current engine still reproduces')
-        problems = []
-        for name, arguments in scenarios.items():
-            # WP2.md: Runner.reset_pacing() (done by scenario()) and PACE_SECONDS = (0, 0).
-            actual = self.scenario(**arguments, pace=(0, 0))
-            try:
-                self.compare_with_legacy(name, legacy[name], actual)
-            except AssertionError as error:
-                if name not in NOT_PROJECTED:
-                    problems.append(f'{name}: {str(error)[:1500]}')
-            else:
-                if name in NOT_PROJECTED:
-                    problems.append(f'{name}: listed in NOT_PROJECTED but equals the 1.5.1 transcript; remove it from the list')
-        self.assertEqual(problems, [], chr(10) * 2 + (chr(10) * 2).join(problems))
+        # (2.0.0 S3) keyed: catalog texts are recorded as their keys, so a wording change needs no re-record
+        _sandbox.check_golden(self, GOLDEN_NAME, result, keyed=True)
 
 
 if __name__ == '__main__':

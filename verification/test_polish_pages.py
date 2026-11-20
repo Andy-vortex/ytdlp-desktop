@@ -11,6 +11,7 @@ that never starts a process; the one download run uses the real Runner with a sc
 """
 import _sandbox
 import gc
+import re
 import threading
 import time
 import tkinter as tk
@@ -23,8 +24,10 @@ import customtkinter as ctk
 import collection_ui
 import engine
 import formats
+import i18n
 import library
 import library_ui
+import settings
 import ui_theme
 import updater
 import urls
@@ -32,18 +35,14 @@ from collector import MAX_LINKS, CollectOptions
 from engine import MODES
 from studio import StudioApp
 
+
+from _sandbox import no_clipboard, no_network, zh_t
+
+
 A = 'https://example.org/song.html'
 B = 'https://example.org/other.html'
 MP3 = MODES[3]
 FLAC = MODES[2]
-
-
-def no_network(*_args, **_kwargs):
-    raise AssertionError('updater.check_latest must not be called in this test')
-
-
-def no_clipboard(self, *_args, **_kwargs):
-    raise tk.TclError('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
 
 
 class FakeCollectionRunner:
@@ -65,7 +64,7 @@ class FakeCollectionRunner:
 
 
 def links(count, prefix='https://media.example.org/v/'):
-    return [{'url': f'{prefix}{number:03d}.mp4', 'title': f'第 {number} 集', 'kind': '媒体地址',
+    return [{'url': f'{prefix}{number:03d}.mp4', 'title': f'第 {number} 集', 'kind': 'media',
              'source': 'https://example.org/list'} for number in range(count)]
 
 
@@ -153,18 +152,18 @@ class CollectAddTests(Base):
         app.handle('collect_page', page(links(3)))
         app.collect_tree.selection_set(['0', '2'])
         app.collection_selection_changed()
-        self.assertEqual(app.collect_add.cget('text'), '添加到下载列表 (2)')
+        self.assertEqual(app.collect_add.cget('text'), f"{zh_t('collect.add')} (2)")
         # A download runs: the download page takes links (its button reads 加入队列), so this one does too.
         app.operation = 'download'
         app.set_busy(True)
-        self.assertEqual(app.start_button.cget('text'), '加入队列')
+        self.assertEqual(app.start_button.cget('text'), zh_t('download.start.queue'))
         self.assertEqual(app.collect_add.cget('state'), 'normal')
         app.show_page('collect')
         app.add_collected()
         self.assertEqual(app.current_page, 'download')
         self.assertEqual(app.urls.get('1.0', 'end-1c').splitlines(),
                          ['https://media.example.org/v/000.mp4', 'https://media.example.org/v/002.mp4'])
-        self.assertIn('采集结果已加入下载列表：新增 2 条，跳过重复 0 条。', lines)
+        self.assertIn(zh_t('log.collect.queued', added=2, skipped=0), lines)
         self.assertTrue(app.busy, 'nothing was started or stopped')
         # A collection (or an engine update) runs: the download box takes no links then.
         app.set_busy(False)
@@ -186,12 +185,18 @@ class CollectAddTests(Base):
         for name in ('collect', 'library'):
             found = [text for text in texts_below(app.pages[name]) if '加入下载队列' in text]
             self.assertEqual(found, [], name)
-        self.assertIn(collection_ui.SUBTITLE, texts_below(app.pages['collect']))
-        self.assertIn('添加到下载列表', texts_below(app.pages['library']))
+        self.assertIn(i18n.t('nav.collect'), texts_below(app.pages['collect']))     # (2.0.0 S4) the page title; no tagline
+        self.assertIn(zh_t('collect.add'), texts_below(app.pages['library']))
 
 
 class HistoryTests(Base):
     """ui-daily-flow-6, ui-wording-consistency-5."""
+
+    @staticmethod
+    def note(completed, error=None):
+        """(2.0.0 S3 W4) The history note in zh: the downloads, then the last error (library_ui.history_note_text)."""
+        text = zh_t('library.history.downloaded', completed=completed)
+        return text if error is None else text + zh_t('library.history.last_error', error=error)
 
     def test_a_download_job_without_any_success_reads_unfinished(self):
         app = self.make_app()
@@ -199,34 +204,36 @@ class HistoryTests(Base):
         job = store.create_job('download', '一首歌', {'urls': [A], 'output': 'x', 'mode': MP3})
         store.download_event(job, 'done', {'success': 0, 'failed': 1, 'cancelled': False, 'files': []})
         self.assertEqual(store.job(job)['status'], 'partial', 'the stored status stays (1.5.1 reads it)')
-        self.assertEqual(self.history_row(app, job)[2], '未完成')
-        store.change_job(job, completed=[A])
-        self.assertEqual(self.history_row(app, job)[2], '部分完成')
+        self.assertEqual(self.history_row(app, job)[2], zh_t('common.unfinished'))
+        store.change_job(job, done=[[A, library._format_of({'mode': MP3})]])
+        self.assertEqual(self.history_row(app, job)[2], zh_t('library.state.partial'))
         collect = store.create_job('collect', '列表', {'urls': [A]})
         store.change_job(collect, status='partial')
-        self.assertEqual(self.history_row(app, collect)[2], '部分完成')
-        for status, word in (('completed', '已完成'), ('interrupted', '已中断')):
-            store.change_job(job, status=status, completed=[])
+        self.assertEqual(self.history_row(app, collect)[2], zh_t('library.state.partial'))
+        for status, word in (('completed', zh_t('library.state.completed')),
+                             ('interrupted', zh_t('library.state.interrupted'))):
+            store.change_job(job, status=status, done=[])
             self.assertEqual(self.history_row(app, job)[2], word)
 
     def test_a_job_without_a_title_is_named_after_its_first_link(self):
         app = self.make_app()
         store = app.library
-        one = store.create_job('download', f'1条 · {MP3}', {'urls': [A], 'output': 'x', 'mode': MP3})
-        two = store.create_job('download', f'2 条 · {MP3}', {'urls': [A, B], 'output': 'x', 'mode': MP3})
+        # (2.0.0 S2 P2) the window stores no placeholder any more: an untitled job has the title ''
+        one = store.create_job('download', '', {'urls': [A], 'output': 'x', 'mode': MP3})
+        two = store.create_job('download', '', {'urls': [A, B], 'output': 'x', 'mode': MP3})
         self.assertEqual(self.history_row(app, one)[1], urls.display(A))
-        self.assertEqual(self.history_row(app, two)[1], f'{urls.display(A)} 等 2 条')
-        # A title from the engine wins; the stored placeholder itself is never rewritten.
+        self.assertEqual(self.history_row(app, two)[1], zh_t('value.job_title.multi', title=urls.display(A), count=2))
+        # A title from the engine wins.
         store.download_event(two, 'title', '晴天')
-        self.assertEqual(self.history_row(app, two)[1], '晴天 等 2 条')
-        self.assertEqual(store.job(one)['title'], f'1条 · {MP3}')
-        # Other names stay as they are.
+        self.assertEqual(self.history_row(app, two)[1], zh_t('value.job_title.multi', title='晴天', count=2))
+        self.assertEqual(store.job(one)['title'], '')
+        # Other names stay as they are, also one that reads like the old placeholder (user data).
         named = store.create_job('download', '我的歌单', {'urls': [A], 'output': 'x', 'mode': MP3})
+        placeholder_like = store.create_job('download', f'1条 · {MP3}', {'urls': [A], 'output': 'x', 'mode': MP3})
         collect = store.create_job('collect', '3条 · 列表', {'urls': [A]})
-        # (1.8.0) a collect job's title that reads like the placeholder is user data, shown as it is
-        with _sandbox.fixture_texts('a collect job titled like the 1.5.1 placeholder: user data'):
-            self.assertEqual(self.history_row(app, named)[1], '我的歌单')
-            self.assertEqual(self.history_row(app, collect)[1], '3条 · 列表')
+        self.assertEqual(self.history_row(app, named)[1], '我的歌单')
+        self.assertEqual(self.history_row(app, placeholder_like)[1], f'1条 · {MP3}')
+        self.assertEqual(self.history_row(app, collect)[1], '3条 · 列表')
 
     def test_the_note_shows_the_reason_of_the_task_row(self):
         app = self.make_app()
@@ -240,34 +247,44 @@ class HistoryTests(Base):
         app.refresh_library()
         app.history_tree.selection_set(job)
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), f'0 条下载成功 · 最近错误：{engine.STALE_REASON}')
+        self.assertEqual(ui_theme.full_text(app.history_note), self.note(0, engine.STALE_REASON))
         data = store.job(job)['data']
-        self.assertEqual(data['errors'], [line], 'the raw line is kept')
-        self.assertEqual(data['last_reason'], {'error': line, 'reason': engine.STALE_REASON})
+        self.assertEqual(data['errors'], [{'error': line, 'reason': engine.STALE_REASON}], 'the raw line is kept')
         # A reason the engine words itself (no pattern of explain_error finds it from the line).
         store.download_event(job, 'item_done', {'index': 1, 'success': False, 'cancelled': False, 'files': 0,
                                                 'bot_check': False, 'url': A, 'error': 'ERROR: something odd',
                                                 'reason': '下载未完成（退出码 2）'})
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), '0 条下载成功 · 最近错误：下载未完成（退出码 2）')
-        # A record without the stored reason (1.5.1, or before this round): explain_error of the line.
-        store.change_job(job, last_reason=None, errors=[line])
+        self.assertEqual(ui_theme.full_text(app.history_note), self.note(0, '下载未完成（退出码 2）'))
+        # An error without a stored reason: explain_error of the line.
+        store.change_job(job, errors=[{'error': line, 'reason': None}])
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), f'0 条下载成功 · 最近错误：{engine.STALE_REASON}')
-        store.change_job(job, errors=["ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies"])
+        self.assertEqual(ui_theme.full_text(app.history_note), self.note(0, engine.STALE_REASON))
+        store.change_job(job, errors=[{'error': "ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies",
+                                       'reason': None}])
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), f'0 条下载成功 · 最近错误：{engine.BOT_CHECK_REASON}')
+        self.assertEqual(ui_theme.full_text(app.history_note), self.note(0, engine.BOT_CHECK_REASON))
         # Downloads count per (link, format).
         store.extend_job(job, [A], {A: engine.Options(_sandbox.out('polish-flac'), FLAC).to_dict()})
         flac_key = library._format_of({'mode': FLAC})
         mp3_key = library._format_of({'mode': MP3})
-        store.change_job(job, completed=[A], completed_variants=[[A, mp3_key], [A, flac_key]], errors=[])
+        store.change_job(job, done=[[A, mp3_key], [A, flac_key]], errors=[])
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), '2 条下载成功')
+        self.assertEqual(ui_theme.full_text(app.history_note), self.note(2))
 
 
 class SpacingTests(Base):
     """ui-wording-consistency-4, lead-review item 3: '3 条', '每 15 分钟', 'ID'/'TXT' with spaces."""
+
+    # (2.0.0 S3 W4) The expected texts are read from the catalog (one place for the wording); what this
+    # class guards is how the shown texts are spaced: no Latin letter or digit right next to a Chinese
+    # character ('3 条', '每 15 分钟', 'ID 分目录').
+    HAN = '%s-%s' % (chr(0x3400), chr(0x9fff))           # CJK ideographs
+    UNSPACED = re.compile(f'[0-9A-Za-z][{HAN}]|[{HAN}][0-9A-Za-z]')
+
+    def shown(self, text):
+        self.assertIsNone(self.UNSPACED.search(text), text)
+        return text
 
     def test_collect_page_numbers(self):
         app = self.make_app()
@@ -279,53 +296,68 @@ class SpacingTests(Base):
         found = dict(page(links(3)), text_truncated=True)
         app.library.collection_event(job, 'collect_page', dict(found, _checkpoint=None))     # what the worker stores
         app.handle('collect_page', found)
-        self.assertEqual(ui_theme.full_text(app.collect_status), '已采集 1 页，发现 3 条链接')
+        self.assertEqual(self.shown(ui_theme.full_text(app.collect_status)),
+                         zh_t('collect.status.progress', pages=1, links=3))
         app.handle('collect_error', '网站返回 HTTP 503')
         app.handle('collect_done', {'cancelled': False})
-        self.assertEqual(ui_theme.full_text(app.collect_status), '采集结束：1 页 / 3 条链接；1 个错误，详情见任务日志')
-        self.assertIn('本页正文超过 40 万字符，已截断；导出文件会注明。', lines)
+        self.assertEqual(self.shown(ui_theme.full_text(app.collect_status)),
+                         zh_t('collect.status.summary', status=zh_t('collect.status.finished'), pages=1, links=3,
+                              suffix=zh_t('collect.status.errors_suffix', errors=1)))
+        self.assertIn(self.shown(zh_t('collect.truncated')), lines)
         record = app.library.job(job)
         app.load_collection_record(record)
-        self.assertEqual(ui_theme.full_text(app.collect_status), '历史结果：1 页，3 条链接')
+        self.assertEqual(self.shown(ui_theme.full_text(app.collect_status)),
+                         zh_t('collect.status.from_history', pages=1, links=3))
         app.collected_links = {f'https://x.example.org/{n}': links(1)[0] for n in range(MAX_LINKS)}
         app.collection_errors = 0
         app.collection_job = None
         app.operation = 'collect'
         app.set_busy(True)
         app.handle('collect_done', {'cancelled': True})
-        self.assertTrue(ui_theme.full_text(app.collect_status).endswith(f'；已达 {MAX_LINKS} 条上限，请分批采集'))
+        self.assertTrue(self.shown(ui_theme.full_text(app.collect_status)).endswith(
+            zh_t('collect.status.limit_suffix', limit=MAX_LINKS)))
 
     def test_library_page_numbers(self):
         app = self.make_app()
         lines = self.logged(app)
-        self.assertEqual(list(library_ui.INTERVALS), ['仅手动', '每 15 分钟', '每小时', '每天'])
-        self.assertEqual(list(library_ui.INTERVALS.values()), [0, 900, 3600, 86400], 'the stored values stay')
+        # (2.0.0 S3 W4, R6) The menu itself (not i18n.label again) shows the four intervals in order.
+        # (2.0.0 S4 A1) in settings.SCHEDULES order, the one source of the schedules (manual only last)
+        menu = next(control for control in app.controls
+                    if getattr(control, 'stored_values', None) == list(settings.SCHEDULES))
+        self.assertEqual([self.shown(label) for label in menu.cget('values')],
+                         [zh_t('library.interval.15min'), zh_t('library.interval.hourly'),
+                          zh_t('library.interval.daily'), zh_t('library.interval.manual')])
+        self.assertEqual(settings.SCHEDULES, (900, 3600, 86400, 0), 'the stored values stay')
         options = CollectOptions(['https://example.org/feed']).validate()
         key = app.library.subscription('订阅', asdict(options), 900, True, True)
         app.library.finish_subscription(key, [page(links(3))], True)
         app.refresh_library()
-        self.assertEqual(app.subscription_tree.item(key, 'values')[1], '每 15 分钟')
+        self.assertEqual(self.shown(app.subscription_tree.item(key, 'values')[1]), zh_t('library.interval.15min'))
         app.subscription_tree.selection_set(key)
         app.subscription_selection()
-        self.assertEqual(ui_theme.full_text(app.subscription_note),
-                         '最近检查新增 3 条 · 待处理 3 条 · 下载成功或忽略后移出；可多选后添加或忽略。')
-        # The interval chosen in the menu is still stored as seconds.
-        app.subscription_interval.set('每 15 分钟')
-        app.change_interval()
-        self.assertEqual(next(row for row in app.library.subscriptions() if row['id'] == key)['interval'], 900)
+        # (2.0.0 S4, subscriptions.md 2.4) the count is beside the new-items table; the note says only an error
+        self.assertEqual(self.shown(app.pending_count.cget('text')), zh_t('library.pending.count', count=3))
+        self.assertEqual(ui_theme.full_text(app.subscription_note), '')
+        # ⋯ → Schedule ▸ lists the four schedules in the same order, the current one checked
+        schedule = app.subscription_menu_items()[2]
+        self.assertEqual([self.shown(item.label) for item in schedule.children],
+                         [zh_t('library.interval.15min'), zh_t('library.interval.hourly'),
+                          zh_t('library.interval.daily'), zh_t('library.interval.manual')])
+        self.assertEqual([item.checked for item in schedule.children], [True, False, False, False])
+        # The schedule chosen in the menu is still stored as seconds.
+        schedule.children[1].command()
+        self.assertEqual(next(row for row in app.library.subscriptions() if row['id'] == key)['interval'], 3600)
         app.collected_pages = [page(links(1))]
         app.archive_root.set(str(_sandbox.out('polish-archive')))
         app.archive_pages()
-        self.assertIn('已归档当前 1 个页面正文。', lines)
-        self.assertIn('按来源站点与稳定 ID 分目录：媒体 / 网页正文 TXT 与 MD / 资料信息 / 转写稿。旧文件不会被移动。',
-                      texts_below(app.pages['library']))
+        self.assertIn(self.shown(zh_t('log.archive.pages', count=1)), lines)
         # A manual subscription check that ends: its log line.
         row = next(item for item in app.library.subscriptions() if item['id'] == key)
         app.check_subscription(row)
         FakeCollectionRunner.instances[-1].release.set()
         with mock.patch.object(app.library, 'finish_subscription', return_value=4):
             app.handle('collect_done', {'cancelled': False})
-        self.assertIn('订阅本轮新增 4 条；未下载的新增内容保留在资料管理中。', lines)
+        self.assertIn(self.shown(zh_t('log.subscription.new', new=4)), lines)
 
 
 class ResumeTests(Base):
@@ -336,20 +368,19 @@ class ResumeTests(Base):
         flac = engine.Options(_sandbox.out('polish-resume-flac'), FLAC)
         job = store.create_job('download', f'2条 · {MP3}', {**mp3.to_dict(), 'urls': [A, B]})
         store.extend_job(job, [A], {A: flac.to_dict()})        # A again, as FLAC into another folder
-        store.change_job(job, status='partial', completed_variants=[list(pair) for pair in done],
-                         completed=sorted({url for url, _key in done}))
+        store.change_job(job, status='partial', done=[list(pair) for pair in done])
         return job, mp3, flac
 
     def test_the_plan_takes_one_download_per_link_first(self):
         mp3_key, flac_key = library._format_of({'mode': MP3}), library._format_of({'mode': FLAC})
         data = {'options': {'urls': [A, B], 'output': 'x', 'mode': MP3,
                             'variants': [{'url': A, 'format': flac_key, 'options': {'output': 'y', 'mode': FLAC}}]},
-                'completed': [], 'completed_variants': []}
+                'done': []}
         first, rest = library_ui.resume_plan(library.job_downloads(data))
         self.assertEqual([(e['url'], e['format']) for e in first], [(A, mp3_key), (B, mp3_key)])
         self.assertEqual([(e['url'], e['format']) for e in rest], [(A, flac_key)])
         # The MP3 of A is done: the FLAC of A starts with the job (job order: links, then variants).
-        data['completed'], data['completed_variants'] = [A], [[A, mp3_key]]
+        data['done'] = [[A, mp3_key]]
         first, rest = library_ui.resume_plan(library.job_downloads(data))
         self.assertEqual([(e['url'], e['format']) for e in first], [(B, mp3_key), (A, flac_key)])
         self.assertEqual(rest, [])
@@ -388,7 +419,7 @@ class ResumeTests(Base):
         mp3_key, flac_key = library._format_of(mp3.to_dict()), library._format_of(flac.to_dict())
         self.assertEqual(ran, [(A, mp3_key, str(mp3.output)), (B, mp3_key, str(mp3.output)),
                                (A, flac_key, str(flac.output))])
-        self.assertIn(library_ui.RESUME_LATER_LOG.format(count=1), lines)
+        self.assertIn(i18n.t('log.resume.later', count=1), lines)
         self.assertEqual([model['url'] for model in app.row_model], [A, B, A])
         record = store.job(new)
         self.assertEqual([(e['url'], e['format'], e['done']) for e in library.job_downloads(record['data'])],
@@ -430,7 +461,7 @@ class ResumeTests(Base):
             app.resume_later([(A, flac)])
             pump(app, 0.2)
         launch.assert_not_called()
-        self.assertIn(library_ui.RESUME_DROPPED_LOG.format(count=1), lines)
+        self.assertIn(i18n.t('log.resume.dropped', count=1), lines)
         app.busy = False
 
     def test_a_run_that_ended_first_is_followed_by_the_other_formats(self):

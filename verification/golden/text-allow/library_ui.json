@@ -1,116 +1,7 @@
 {
  "module": "library_ui",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
- "literals": {
-  "\\d+\\s*条 · .+": {
-   "category": "internal",
-   "reason": "not user-visible (re.compile in library_ui.py module level); never translated"
-  },
-  "下载和采集任务会记录在这里": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.history.empty (H4); the page shows the key through t()"
-  },
-  "仅手动": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.interval.manual (H4); the page shows the key through t()"
-  },
-  "历史记录暂时无法读取：{error}": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.unreadable (H4); the page shows the key through t()"
-  },
-  "已中断": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.state.interrupted (H4); the page shows the key through t()"
-  },
-  "已完成": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.state.completed (H4); the page shows the key through t()"
-  },
-  "已完成页不会重采；失败页和中断页可以继续。下载任务恢复未成功的链接。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.history.note (H4); the page shows the key through t()"
-  },
-  "新增内容会保留，直到下载成功或被忽略；不会自动下载。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.subscription.note (H4); the page shows the key through t()"
-  },
-  "未完成": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key common.unfinished (H4); the page shows the key through t()"
-  },
-  "每 15 分钟": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.interval.15min (H4); the page shows the key through t()"
-  },
-  "每天": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.interval.daily (H4); the page shows the key through t()"
-  },
-  "每小时": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.interval.hourly (H4); the page shows the key through t()"
-  },
-  "没有标题或链接包含“{term}”的任务": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.history.none_found (H4); the page shows the key through t()"
-  },
-  "继续未完成：同一链接的其他格式 {count} 条已加入队列": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key log.resume.later (H4); the page shows the key through t()"
-  },
-  "继续未完成：同一链接的其他格式 {count} 条没有开始，可在资料管理中再次“继续未完成”": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key log.resume.dropped (H4); the page shows the key through t()"
-  },
-  "请先在上方列表中选择一个订阅。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.pick_subscription (H4); the page shows the key through t()"
-  },
-  "请先在下方列表中选择一条资料。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.pick_archive (H4); the page shows the key through t()"
-  },
-  "请先在下方选择需要下载的新增条目。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.pick_pending (H4); the page shows the key through t()"
-  },
-  "资料库正被其他程序占用（{error}）：窗口不等待，稍后自动重试；新的记录会在可写入后补写。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key log.library.busy (H4); the page shows the key through t()"
-  },
-  "资料库正被其他程序占用，稍后自动重试": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.busy (H4); the page shows the key through t()"
-  },
-  "资料库正被其他程序占用，请稍后再点一次。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.busy_click (H4); the page shows the key through t()"
-  },
-  "资料归档": {
-   "category": "file",
-   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
-  },
-  "还没有订阅：在网页采集页设置好起始网页后点“保存为订阅”。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.no_subscription (H4); the page shows the key through t()"
-  },
-  "这个订阅目前没有待处理的新增内容。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.no_pending (H4); the page shows the key through t()"
-  },
-  "这条记录暂时无法读取，请稍后点“刷新记录”。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.history.unreadable (H4); the page shows the key through t()"
-  },
-  "进行中": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.state.running (H4); the page shows the key through t()"
-  },
-  "部分完成": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key library.state.partial (H4); the page shows the key through t()"
-  }
- },
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
+ "literals": {},
  "raises": {
   "the history job was never written": {
    "exception": "LookupError",
@@ -153,27 +44,10 @@
    "function": "LibraryUI.save_subscription",
    "reason": "the subscription name the owner typed (or the first start link cut to 65 characters, user data); shown as typed in the two log lines of save_subscription, as in 1.7.0"
   },
-  "data['last_new']": {
-   "line_hint": 1097,
-   "function": "LibraryUI._subscription_selection",
-   "reason": "a number, not a text: the stored int count of new entries of the last check"
-  },
   "row['pending']": {
    "line_hint": 1097,
-   "function": [
-    "LibraryUI._subscription_selection",
-    "subscription_row"
-   ],
-   "reason": "a number, not a text: the int count of pending entries Library.subscriptions() computes (the fourth cell of subscription_row, checked cell by cell since A11.4, and the pending count of _subscription_selection)"
-  },
-  "search": {
-   "line_hint": 615,
-   "function": [
-    "LibraryUI.refresh_library",
-    "LibraryUI.refresh_history"
-   ],
-   "reason": "the owner's own search text (typed into the history search box, user data shown as typed) that show_history_count puts, cut to 30 characters as in 1.7.0, into library.history.none_found; its parameter is a sink parameter (A15), so the entry stands at the two callers"
+   "function": "subscription_row",
+   "reason": "a number, not a text: the int count of pending entries Library.subscriptions() computes (the fourth cell of subscription_row, checked cell by cell since A11.4)"
   }
- },
- "pending_keys": {}
+ }
 }

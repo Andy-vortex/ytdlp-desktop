@@ -27,24 +27,18 @@ import paths
 import procutil
 import unfinished
 import updater
+# (2.0.0 S2 P4) Used unqualified here (Runner._run_once, diagnostics); the 1.5.1 copies of the paths
+# names (RESOURCE_ROOT, VENDOR, BIN, APP_DIR, STATE_DIR, engine_version) are gone: import them from paths
+# / updater.
+from procutil import HIDDEN, process_environment
+from updater import engine_path
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '1.8.1'
-# Names kept for 1.5.1 importers (from engine import ...). They are copies made at import:
-# code in this module reads paths.X when it runs.
-RESOURCE_ROOT = paths.RESOURCE_ROOT
-VENDOR = paths.VENDOR
-BIN = paths.BIN
-APP_DIR = paths.APP_DIR
-STATE_DIR = paths.STATE_DIR
-HIDDEN = procutil.HIDDEN
-process_environment = procutil.process_environment
-engine_path = updater.engine_path
-engine_version = updater.engine_version
-# The persisted format strings: the five of 1.5.1 first, in their old order, then the new ones.
+APP_VERSION = '2.0.0'
+# The persisted format values (the preset ids, formats.MODES) and resolutions ('best': no limit).
 MODES = formats.MODES
-RESOLUTIONS = ('最佳', '2160p / 4K', '1440p', '1080p', '720p', '480p')
+RESOLUTIONS = (formats.BEST, '2160p / 4K', '1440p', '1080p', '720p', '480p')
 RATE_LIMIT_COOLDOWN = 300
 MAX_RATE_LIMIT_COOLDOWN = 900
 MAX_RATE_LIMIT_RETRIES = 2
@@ -122,8 +116,8 @@ def explain_error(text, code=1, bot_check=False, stale=False) -> str:
         if fallback == messages.zh(text)[:70]:
             return cut(text, 70)
         # (final review 1, ZH-1) edge whitespace or an extractor prefix: the 1.7.0 zh text, key kept
-        # (rebuilt the way cut() and library._stripped_reason rebuild a Message)
-        return messages.Message(fallback, text.key, text.params, text.origin, text.entry)
+        # (rebuilt the way cut() rebuilds a Message)
+        return messages.Message(fallback, text.key, text.params)
     return messages.raw(fallback) if isinstance(text, messages.Raw) else fallback
 
 
@@ -299,29 +293,10 @@ def _entry_options(options) -> dict:
     return data
 
 
-def store_failed_job(urls, options):
-    """Replace the unfinished list by these links (kept for 1.5.1 callers and tests)."""
-    unfinished.save([unfinished.entry(url, _entry_options(options), 'failed', playlist=options.playlist,
-                                      referer=options.referers.get(url, ''))
-                     for url in dict.fromkeys(urls)])
-    return paths.failed_file()
-
-
-def load_failed_job():
-    """The newest group of the unfinished list as {'urls', 'options'}, or None (kept for 1.5.1 callers)."""
-    group = unfinished.newest_group(unfinished.load())
-    if not group:
-        return None
-    try:
-        return {'urls': list(dict.fromkeys(item['url'] for item in group)),
-                'options': Options.from_dict(unfinished.group_options(group))}
-    except (ValueError, TypeError, KeyError):
-        return None
-
-
-def load_unfinished() -> list[dict]:
-    """The entries of the unfinished list (see unfinished.py)."""
-    return unfinished.load()
+def load_unfinished(log=None) -> list[dict]:
+    """The entries of the unfinished list (see unfinished.py).  With ``log`` (the window's start, 2.0.0
+    PLAN 3.10) a list file that gives no entry is set aside now and reported to ``log``."""
+    return unfinished.load_at_start(log) if log is not None else unfinished.load()
 
 
 def save_unfinished(entries):
@@ -440,7 +415,7 @@ def build_command(url, options, temp=True):
     for a link whose unfinished download of 1.5.1 lies in the output folder, to resume it there)."""
     if options.mode not in MODES or options.resolution not in RESOLUTIONS:
         raise ValueError(msg('core.options.unsupported'))
-    preset = formats.by_mode(options.mode)
+    preset = formats.by_id(options.mode)
     command = [str(engine_path()), '--ignore-config', '--no-plugin-dirs', '--encoding', 'utf-8',
                '--ffmpeg-location', str(paths.BIN), '--js-runtimes', 'deno:' + str(paths.BIN / 'deno.exe'),
                '--newline', '--no-color', '--no-quiet', '--progress', '--progress-delta', '0.15', '--no-simulate',
@@ -516,7 +491,7 @@ def probe_args() -> list[str]:
     --cookies is missing, because it needs a file."""
     link, arguments = 'https://example.invalid/probe', []
     for preset in formats.PRESETS:
-        arguments += build_command(link, Options(Path(tempfile.gettempdir()), preset.mode, playlist=True, batch_safe=True,
+        arguments += build_command(link, Options(Path(tempfile.gettempdir()), preset.id, playlist=True, batch_safe=True,
                                                  subtitles=True, proxy='http://127.0.0.1:9',
                                                  referers={link: 'https://example.invalid/'}))[1:-2]
     arguments += build_command(link, Options(Path(tempfile.gettempdir())))[1:-2]
@@ -571,7 +546,7 @@ class QueueItem:
         self.origin = origin or url
         self.options = options
         try:
-            self.preset = formats.by_mode(options.mode)
+            self.preset = formats.by_id(options.mode)
         except ValueError:
             self.preset = None      # build_command refuses the item when it is its turn
         # formats.format_key: the preset id, with '@<resolution>' for a video preset with a height limit.
@@ -1070,7 +1045,7 @@ class Runner:
         Runner.last_media_end = None
 
     def __init__(self, emit, library=None):
-        self.emit = messages.guarded(emit, 'engine')     # (1.8.0) the G2 emit hook; ``emit`` itself in the program
+        self.emit = emit
         self.cancelled = threading.Event()
         self.process = None
         self.lock = threading.Lock()
@@ -1889,7 +1864,8 @@ class Runner:
                         if archive is None:
                             from library import Archive, Library
                             archive = self._archives[item.options.archive_root] = _SafeArchive(Archive(
-                                item.options.archive_root, self.library or Library()))
+                                item.options.archive_root, self.library or Library(),
+                                log=lambda text: self.emit('log', text)))
                     self.archive, self.archive_folder = archive, None
                     effective = item.options
                     if archive:
@@ -2128,14 +2104,15 @@ class Runner:
                                'blocked': 'bot_check' if self.blocked else '',
                                'unfinished': stored, 'engine_error': self.engine_error})
 
-    def update(self):
-        updater.EngineUpdater(self.emit, self.cancelled, probe_args(), legacy_events=True).run()
-
 
 def diagnostics():
+    # 'catalog': the history file the window would look at first; not probed for writing (the self-test
+    # writes nothing beside the owner's data), so a read-only file there is still named.
+    catalog = paths.data_dir() / 'library.sqlite3'
     result = {'app_version': APP_VERSION, 'resource_root': str(paths.RESOURCE_ROOT),
               'app_dir': str(paths.APP_DIR), 'state_dir': str(paths.STATE_DIR),
-              'catalog': str(paths.catalog_path()), 'components': {}}
+              'catalog': str(catalog if catalog.is_file() else paths.STATE_DIR / 'library.sqlite3'),
+              'components': {}}
     import scrapling
     from scrapling.fetchers import Fetcher, StealthyFetcher
     from collector import browser_available

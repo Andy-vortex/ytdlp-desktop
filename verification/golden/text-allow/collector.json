@@ -1,20 +1,7 @@
 {
  "module": "collector",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
- "literals": {
-  "媒体地址": {
-   "category": "stored",
-   "reason": "stored / compared enum value (value.link_kind.media); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "网页链接": {
-   "category": "stored",
-   "reason": "stored / compared enum value (value.link_kind.web); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "视频页面": {
-   "category": "stored",
-   "reason": "stored / compared enum value (value.link_kind.video_page); shown through i18n.label or a value.* message, never as text (P7)"
-  }
- },
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
+ "literals": {},
  "raises": {},
  "composed": {
   "plain[:MAX_TEXT]": {
@@ -22,6 +9,5 @@
    "reason": "the page's own body text (user data, never an app text) cut to MAX_TEXT as in 1.7.0; the dict key 'text' is not a message field and the value is never shown as a message"
   }
  },
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

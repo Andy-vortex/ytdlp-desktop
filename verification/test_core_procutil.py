@@ -1,3 +1,4 @@
+# serial: brings windows to the foreground (focus_window) and times it
 """Process and window helpers of procutil.py (1.6.0 WP1).
 
 R14 single instance (mutex name, the sandbox's own name from the environment, a second

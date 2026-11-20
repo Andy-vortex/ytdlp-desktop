@@ -1,3 +1,4 @@
+# quick
 """Deterministic queue tests. No external websites or media are requested."""
 from __future__ import annotations
 
@@ -14,6 +15,14 @@ from unittest.mock import patch
 
 
 import engine
+import unfinished
+
+
+def stored_list():
+    """(2.0.0 S2 P4) The unfinished list as (links, the Options of each entry), read with unfinished.load; it
+    replaces engine.load_failed_job, a 1.5.1 wrapper that gave the same links and options as one group."""
+    entries = unfinished.load()
+    return [item['url'] for item in entries], [engine.Options.from_dict(item['options']) for item in entries]
 
 
 class BatchResilienceTests(unittest.TestCase):
@@ -81,9 +90,9 @@ class BatchResilienceTests(unittest.TestCase):
         result = self.done()
         self.assertEqual((result['success'], result['failed']), (1, 1))
         self.assertEqual(result['failed_urls'], self.urls[:1])
-        job = engine.load_failed_job()
-        self.assertEqual(job['urls'], self.urls[:1])
-        self.assertEqual(job['options'], self.options)
+        links, options = stored_list()
+        self.assertEqual(links, self.urls[:1])
+        self.assertEqual(options, [self.options])
 
     def test_rate_limit_holds_queue_and_retries_same_link_before_next(self):
         trace = []
@@ -134,7 +143,7 @@ class BatchResilienceTests(unittest.TestCase):
         self.assertTrue(self.done()['cancelled'])
         self.assertEqual(self.done()['success'], 0)
         self.assertEqual(self.done()['pending_urls'], self.urls)
-        self.assertEqual(engine.load_failed_job()['urls'], self.urls)
+        self.assertEqual(stored_list()[0], self.urls)
 
     def test_retry_after_header_is_respected(self):
         results = iter([(1, True, 650), (0, False, None)])
@@ -145,26 +154,26 @@ class BatchResilienceTests(unittest.TestCase):
         self.assertEqual(self.done()['failed'], 0)
 
     def test_retry_clears_successful_urls_but_retains_unstarted_links(self):
-        engine.store_failed_job(self.urls, self.options)
+        _sandbox.save_unfinished(self.urls, self.options)
         with patch.object(self.runner, '_run_once', return_value=(0, False, None)):
             self.runner.download(self.urls[:1], self.options)
-        self.assertEqual(engine.load_failed_job()['urls'], self.urls[1:])
+        self.assertEqual(stored_list()[0], self.urls[1:])
         next_runner = engine.Runner(lambda kind, value: self.events.append((kind, value)))
         with patch.object(next_runner, '_run_once', return_value=(0, False, None)):
             next_runner.download(self.urls[1:], self.options)
-        self.assertIsNone(engine.load_failed_job())
+        self.assertEqual(unfinished.load(), [])
 
     def test_success_in_different_format_does_not_clear_prior_failed_job(self):
         video = engine.Options(self.root / 'original-video', engine.MODES[4], '2160p / 4K', True)
-        engine.store_failed_job(self.urls[:1], video)
+        _sandbox.save_unfinished(self.urls[:1], video)
         audio = engine.Options(self.root / 'new-audio', engine.MODES[3])
         with patch.object(self.runner, '_run_once', return_value=(0, False, None)):
             self.runner.download(self.urls[:1], audio)
         self.assertEqual(self.done()['success'], 1)
-        prior = engine.load_failed_job()
-        self.assertIsNotNone(prior, 'Different-format success discarded an unfinished video job')
-        self.assertEqual(prior['urls'], self.urls[:1])
-        self.assertEqual(prior['options'], video)
+        links, options = stored_list()
+        self.assertTrue(links, 'Different-format success discarded an unfinished video job')
+        self.assertEqual(links, self.urls[:1])
+        self.assertEqual(options, [video])
 
     def test_wait_is_cancellable_without_waiting_for_cooldown(self):
         waiting = threading.Event()
@@ -200,20 +209,23 @@ class BatchResilienceTests(unittest.TestCase):
     def test_failed_job_roundtrip_retains_original_options(self):
         options = engine.Options(self.root / '原始目录', engine.MODES[4], '1080p', True,
                                  'http://127.0.0.1:7890', False)
-        path = engine.store_failed_job(self.urls, options)
+        path = _sandbox.save_unfinished(self.urls, options)
         self.assertTrue(Path(path).is_file())
-        job = engine.load_failed_job()
-        self.assertEqual(job['urls'], self.urls)
-        self.assertEqual(job['options'], replace(options, proxy=''))
+        links, stored = stored_list()
+        self.assertEqual(links, self.urls)
+        self.assertEqual(stored, [replace(options, proxy='')] * len(self.urls))
         # Proxy credentials are session-only; retry UI preserves the currently entered proxy.
-        self.assertEqual(json.loads(Path(path).read_text(encoding='utf-8'))['options']['proxy'], '')
-        engine.store_failed_job([], options)
-        self.assertIsNone(engine.load_failed_job())
+        # (2.0.0 S2 P3) no 1.5.1 view: every entry's own options
+        self.assertEqual({item['options'].get('proxy', '') for item in
+                          json.loads(Path(path).read_text(encoding='utf-8'))['entries']}, {''})
+        self.assertNotIn('7890', Path(path).read_text(encoding='utf-8'))
+        _sandbox.save_unfinished([], options)
+        self.assertEqual(unfinished.load(), [])
 
     def test_corrupt_failed_job_does_not_prevent_application_start(self):
-        path = engine.store_failed_job(self.urls, self.options)
+        path = _sandbox.save_unfinished(self.urls, self.options)
         Path(path).write_text('{truncated', encoding='utf-8')
-        self.assertIsNone(engine.load_failed_job())
+        self.assertEqual(unfinished.load(), [])
 
     def test_local_subprocess_429_detection_and_non_rate_error(self):
         for message, expected in [('ERROR: HTTP Error 429: Too Many Requests', True),
@@ -255,9 +267,12 @@ class BatchResilienceTests(unittest.TestCase):
     def test_failed_job_does_not_persist_cookies_path(self):
         cookies = self.root / 'cookies.txt'
         cookies.write_text('# Netscape HTTP Cookie File\n', encoding='utf-8')
-        path = engine.store_failed_job(self.urls, replace(self.options, cookies=str(cookies)))
-        self.assertEqual(json.loads(Path(path).read_text(encoding='utf-8'))['options']['cookies'], '')
-        self.assertEqual(engine.load_failed_job()['options'].cookies, '')
+        path = _sandbox.save_unfinished(self.urls, replace(self.options, cookies=str(cookies)))
+        # (2.0.0 S2 P3) no 1.5.1 view: every entry's own options
+        self.assertEqual({item['options'].get('cookies', '') for item in
+                          json.loads(Path(path).read_text(encoding='utf-8'))['entries']}, {''})
+        self.assertNotIn('cookies.txt', Path(path).read_text(encoding='utf-8'))
+        self.assertEqual({item.cookies for item in stored_list()[1]}, {''})
 
     def test_native_sleep_log_emits_countdown_and_resumes_on_progress(self):
         script = (

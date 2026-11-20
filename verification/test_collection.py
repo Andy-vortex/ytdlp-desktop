@@ -12,6 +12,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 import engine
+import unfinished
 from collector import CollectOptions, CollectionRunner, parse_page, web_url
 from scrapling import Selector
 
@@ -90,7 +91,7 @@ try:
     empty = run(CollectOptions([BASE+'/empty']))
     assert not empty[0]['links']
     direct = run(CollectOptions([BASE+'/fixture.mp4']))
-    assert direct[0]['links'][0]['kind'] == '媒体地址'
+    assert direct[0]['links'][0]['kind'] == 'media'
     report['empty_and_direct_media'] = 'passed'
     dynamic = run(CollectOptions([BASE+'/dynamic'], dynamic=True, scrolls=1))
     assert '动态正文已加载' in dynamic[0]['text'], dynamic
@@ -103,7 +104,9 @@ try:
     engine.Runner(lambda k, v: events.append((k, v))).download([BASE+'/guarded.mp4'], options)
     done = next(v for k, v in reversed(events) if k == 'done')
     assert done['success'] == 1 and done['files'], events
-    assert engine.load_failed_job()['options'].referers == options.referers if engine.load_failed_job() else True
+    # (2.0.0 S2 P4) engine.load_failed_job (a 1.5.1 wrapper) is gone: the entries' own referers
+    stored = unfinished.load()
+    assert not stored or {item['url']: item['referer'] for item in stored if item['referer']} == options.referers, stored
     report['collected_media_to_ytdlp_with_required_Referer'] = 'passed'
     for dynamic_mode in (False, True):
         events = []

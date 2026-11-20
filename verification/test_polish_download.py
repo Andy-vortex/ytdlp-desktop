@@ -23,12 +23,18 @@ from unittest import mock
 import customtkinter as ctk
 import engine
 import formats
+import i18n
+import library_ui
 import ui_download
 import ui_theme
 import unfinished
 import updater
 from engine import MODES, Options
 from studio import StudioApp
+
+
+from _sandbox import no_clipboard, no_network, pump, zh_t
+
 
 LINK = 'https://www.youtube.com/watch?v=AAAAAAAAAAA'
 PROXY_LINE = ("ERROR: [generic] song-g: Unable to download webpage: ('Unable to connect to proxy', "
@@ -38,14 +44,6 @@ PROXY_LINE = ("ERROR: [generic] song-g: Unable to download webpage: ('Unable to 
 STALE_LINE = ('ERROR: [youtube] AAAAAAAAAAA: Signature solving failed: Some formats may be missing; please report '
               'this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= . Confirm you are on the latest version '
               'using  yt-dlp -U')
-
-
-def no_network(*_args, **_kwargs):
-    raise AssertionError('updater.check_latest must not be called in this test')
-
-
-def no_clipboard(self, *_args, **_kwargs):
-    raise tk.TclError('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
 
 
 class FakeRunner:
@@ -76,16 +74,6 @@ class FakeRunner:
     def cancel(self):
         self.cancelled.set()
         self.release.set()
-
-
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.01)
-    return condition is None
 
 
 def store_unfinished(urls, options):
@@ -204,15 +192,17 @@ class A_UnfinishedRowsTests(Base):
         self.run_job(app, succeed_one, lambda: app.retry_row(1))
         self.assertEqual(self.states(app), [('done', 'b'), ('unfinished', 'a'), ('unfinished', 'c')])
         self.assertEqual(len(app.unfinished), 2)
-        self.assertEqual(app.retry_button.cget('text'), '重试未完成 (2)')
-        self.assertEqual(app.queue_stats.cget('text'), '成功 1  /  未完成 2  /  共 3')
+        self.assertEqual(app.retry_button.cget('text'), zh_t('download.retry_unfinished_n', count=2))
+        # (2.0.0 S4) no stats line: the unfinished count is on 重试未完成 (N), shown with the task '⋯' while
+        # there are unfinished links (was: download.stats.final beside it, the same count again)
+        self.assertTrue(app.retry_button.winfo_manager() and app.task_menu.winfo_manager())
         self.assertEqual([row['index'] for row in app.rows], [0, 1, 2])
-        self.assertEqual(app.rows[1]['badge'].cget('text'), '未完成')
+        self.assertEqual(app.rows[1]['badge'].cget('text'), zh_t('common.unfinished'))
         # The per-row actions work on a leftover row again: 从列表移除 removes it and its entry.
         app.remove_row(2)
         self.assertEqual(self.states(app), [('done', 'b'), ('unfinished', 'a')])
         self.assertEqual([entry['url'] for entry in engine.load_unfinished()], ['https://example.org/a'])
-        self.assertEqual(app.retry_button.cget('text'), '重试未完成 (1)')
+        self.assertEqual(app.retry_button.cget('text'), zh_t('download.retry_unfinished_n', count=1))
 
     def test_a_new_job_shows_the_leftovers_below_its_rows(self):
         store_unfinished(['https://example.org/old1', 'https://example.org/old2'], self.options())
@@ -224,7 +214,9 @@ class A_UnfinishedRowsTests(Base):
             self.assertEqual(self.states(app), [('waiting', 'new1'), ('waiting', 'new2'),
                                                 ('unfinished', 'old1'), ('unfinished', 'old2')])
             self.assertEqual(app.job_row_count(), 2)
-            self.assertIn('未完成 2', app.queue_stats.cget('text'))
+            # (2.0.0 S4) the leftovers' count is on 重试未完成 (N) (grey while the job runs), not in a stats line
+            self.assertEqual((app.retry_button.cget('text'), str(app.retry_button.cget('state'))),
+                             (zh_t('download.retry_unfinished_n', count=2), 'disabled'))
             # 加入队列 while it runs: the new link joins the job's rows, the leftovers move down,
             # and the engine's item numbers still address the job's rows.
             app.urls.insert('1.0', 'https://example.org/new3')
@@ -266,9 +258,9 @@ class A_UnfinishedRowsTests(Base):
                                  'bot_check': False})
         self.run_job(app, fail, lambda: app.launch(['https://example.org/broken'], self.options()))
         self.assertEqual(self.states(app), [('failed', 'broken'), ('unfinished', 'left')])
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 0 条成功，1 条未完成')
-        self.assertEqual(app.queue_stats.cget('text'), '成功 0  /  未完成 2  /  共 2')
-        self.assertEqual(app.retry_button.cget('text'), '重试未完成 (2)')
+        # (2.0.0 S4) the title names the successes only; every link 重试未完成 retries is counted on the button
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.finished_n', success=0))
+        self.assertEqual(app.retry_button.cget('text'), zh_t('download.retry_unfinished_n', count=2))
         # 清除未完成 empties the list and takes the leftover rows with it.
         with mock.patch.object(ui_download.messagebox, 'askyesno', return_value=True):
             app.clear_unfinished()
@@ -334,7 +326,7 @@ class B_FocusTests(Base):
         self.assertEqual(page_of(app, focus), 'download')
         self.assertFalse(self.paste_link(focus))
         self.assertEqual(app.urls.get('1.0', 'end-1c'), LINK)
-        self.assertEqual(app.link_count.cget('text'), '1 条链接')
+        self.assertEqual(app.link_count.cget('text'), '1')        # (2.0.0 S4) the chip shows the number only
 
     def press(self, widget, sequence, fallback):
         """Deliver key ``sequence`` to ``widget``.  Tk drops generated key events while the window has no
@@ -379,12 +371,12 @@ class B_FocusTests(Base):
             app.show_page('library' if name != 'library' else 'download')
             app.show_page(name)
             self.assertIs(lastfocus(app), widget, name)
-        app.library_tabs.set('统一资料归档')
+        app.library_tabs.set(library_ui.TAB_ARCHIVE)
         app.show_page('library')
         self.assertIs(lastfocus(app), app.archive_tree)
         # Focus already inside the new page stays where it is.
         app.show_page('download')
-        app.output_entry.focus_set()
+        app.output_button.focus_set()       # (2.0.0 S4) the folder is a button now (no entry)
         app.show_page('download')
         self.assertEqual(page_of(app, lastfocus(app)), 'download')
         self.assertIsNot(lastfocus(app), expected['download'])
@@ -426,9 +418,11 @@ class C_EngineReasonTests(Base):
         for index, reason in ((1, engine.NETWORK_REASON), (2, engine.NETWORK_REASON), (3, engine.msg('core.reason.http_404'))):
             app.handle('item_done', {'index': index, 'cancelled': False, 'success': False, 'files': 0,
                                      'bot_check': False, 'reason': reason, 'stale_engine': True})
-        self.assertEqual(ui_theme.full_text(app.rows[0]['detail']), '01  ·  无法连接代理或网站，请检查代理地址')
-        self.assertEqual(ui_theme.full_text(app.rows[1]['detail']), f'02  ·  {engine.NETWORK_REASON}')
-        self.assertEqual(ui_theme.full_text(app.rows[2]['detail']), '03  ·  引擎可能过旧，可在偏好设置更新 · 链接不存在（404）')
+        # (2.0.0 S4) one space each side of the '·' (00-system 2.7)
+        self.assertEqual(ui_theme.full_text(app.rows[0]['detail']), f"01 · {zh_t('download.reason.proxy')}")
+        self.assertEqual(ui_theme.full_text(app.rows[1]['detail']), f'02 · {engine.NETWORK_REASON}')
+        self.assertEqual(ui_theme.full_text(app.rows[2]['detail']),
+                         f"03 · {zh_t('download.detail.stale_maybe', reason=zh_t('core.reason.http_404'))}")
 
 
 class D_DoneTests(Base):
@@ -451,7 +445,11 @@ class D_DoneTests(Base):
         self.run_job(app, bot, app.start)
         self.assertIsNotNone(app.bot_retry)
         self.assertEqual(app.notice_kind, 'bot')
-        self.assertIn('后自动重试（第 1/3 次）', ui_theme.full_text(app.notice_text))
+        # the countdown changes; what follows it is fixed
+        after = zh_t('download.notice.bot_retry', time='{time}', round=1, rounds=3).split('{time}')[1]
+        self.assertIn(after, app.notice_bar.full_text)
+        self.assertEqual([button.cget('text') for button in app.notice_bar.buttons],
+                         [zh_t('download.notice.retry_now'), zh_t('common.cancel')])
         self.assertEqual(app.progress.target, 0.5)                 # ui-daily-flow-7: 1 of 2
         app.cancel_bot_retry()
 
@@ -468,8 +466,13 @@ class D_DoneTests(Base):
                                  'pending_urls': [], 'failed_path': None, 'archive_errors': [], 'bot_check': False})
         self.run_job(app, done, app.start)
         self.assertEqual(app.notice_kind, 'undo')
-        self.assertEqual(ui_theme.full_text(app.notice_text), '刚才的 2 条链接可放回输入框')
-        app.notice_buttons[0].invoke()
+        # (2.0.0 S4) the notice keeps its words when the job ends (download.notice.undo is gone); it still
+        # puts the links back, and goes away by itself
+        self.assertEqual(app.notice_bar.full_text, zh_t('download.notice.started', count=2))
+        self.assertEqual([button.cget('text') for button in app.notice_bar.buttons],
+                         [zh_t('download.notice.restore_links')])
+        app.notice_bar.buttons[0].invoke()
+        self.assertFalse(app.notice_bar.shown)
         self.assertEqual(app.urls.get('1.0', 'end-1c'), 'https://example.org/one\nhttps://example.org/two')
 
     def test_undo_keeps_its_place_while_the_job_runs(self):
@@ -500,17 +503,21 @@ class D_DoneTests(Base):
         app = self.make_app()
         self.run_job(app, self.skip_job(app, 0),
                      lambda: app.launch(['https://example.org/a', 'https://example.org/b'], self.options()))
-        self.assertEqual(ui_theme.full_text(app.current_title), '已下载过 · 跳过 2 条')
-        self.assertEqual(ui_theme.full_text(app.metrics), ui_download.SKIPPED_TEXT)
-        self.assertEqual(app.queue_stats.cget('text'), '成功 0  /  未完成 0  /  共 2  /  跳过 2')
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.all_skipped', skipped=2))
+        # (2.0.0 S4) the title says it; the rows say 已下载过 and offer 仍然下载 in their menu (no metrics sentence)
+        self.assertEqual(ui_theme.full_text(app.metrics), '')
+        self.assertEqual([model['state'] for model in app.row_model], ['skipped', 'skipped'])
+        self.assertIn(zh_t('download.menu.anyway'), [item.label for item in app.row_menu_items(0) if item])
         self.assertEqual(app.progress.target, 1)
 
     def test_a_job_that_downloaded_and_skipped(self):
         app = self.make_app()
         self.run_job(app, self.skip_job(app, 1),
                      lambda: app.launch(['https://example.org/a', 'https://example.org/b'], self.options()))
-        self.assertEqual(ui_theme.full_text(app.current_title), '下载完成 · 1 条成功，跳过 1 条')
-        self.assertTrue(ui_theme.full_text(app.metrics).startswith('文件已保存'))
+        # (2.0.0 S4) one title for a successful job; the skipped row keeps its chip (已下载过)
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.done', success=1))
+        self.assertEqual(ui_theme.full_text(app.metrics), '')
+        self.assertEqual(app.rows[1]['badge'].cget('text'), zh_t('download.chip.skipped'))
 
     def test_partial_job_progress_and_log_wording(self):
         app = self.make_app()
@@ -531,7 +538,7 @@ class D_DoneTests(Base):
         self.assertAlmostEqual(app.progress.target, 2 / 3, places=3)
         app.flush_log()
         text = app.logs.get('1.0', 'end-1c')
-        self.assertIn('未完成列表：X:\\state\\failed-downloads.json', text)
+        self.assertIn(zh_t('log.unfinished_list', path='X:\\state\\failed-downloads.json'), text)
         self.assertNotIn('失败清单', text)
 
     def test_history_title_spacing(self):
@@ -547,7 +554,10 @@ class D_DoneTests(Base):
                 mock.patch.object(ui_download, 'Runner', FakeRunner):
             app.launch(['https://example.org/a', 'https://example.org/b'], self.options(mode=MODES[0]))
             pump(app, lambda: not app.busy, 5)
-        self.assertEqual(created, [f'2 条 · {MODES[0]}'])
+        # (2.0.0 S2 P2) no placeholder title any more: the history names the job after its links
+        self.assertEqual(created, [''])
+        row = app.library.history()[0]
+        self.assertEqual(library_ui.history_title(row), i18n.t('value.job_title.multi', title='example.org/a', count=2))
 
 
 class E_LongListTests(Base):
@@ -584,7 +594,7 @@ class E_LongListTests(Base):
         state['stop'] = True
         pump(app, timeout=0.1)
         self.assertEqual(len(app.rows), min(ui_download.ROW_LIMIT, app.row_cap()))
-        self.assertEqual(ui_theme.full_text(app.row_footer), f'还有 {300 - len(app.rows)} 条未显示，会照常下载')
+        self.assertEqual(ui_theme.full_text(app.row_footer), zh_t('download.footer.hidden', hidden=300 - len(app.rows)))
         # Every timed step stops after ROW_SLICE s (plus the row that was being built).
         self.assertTrue(all(scheduled for scheduled, _ in steps[1:]))
         _sandbox.write_report('polish-long-list.json', {
@@ -602,11 +612,11 @@ class E_LongListTests(Base):
         self.assertTrue(pump(app, lambda: not app.row_queue, 30))
         app.operation = 'download'
         app.handle('item', {'index': 100, 'total': 120, 'url': links[99]})
-        self.assertEqual(ui_theme.full_text(app.current_title), '正在下载 100 / 120 · example.org/long/99')
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.downloading_n', index=100, total=120) + ' · example.org/long/99')
         app.handle('title', '第一百首')
-        self.assertEqual(ui_theme.full_text(app.current_title), '正在下载 100 / 120 · 第一百首')
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.downloading_n', index=100, total=120) + ' · 第一百首')
         app.handle('item', {'index': 2, 'total': 120, 'url': links[1]})
-        self.assertEqual(ui_theme.full_text(app.current_title), '正在下载 2 / 120')
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.downloading_n', index=2, total=120))
 
 
 if __name__ == '__main__':

@@ -1,4 +1,5 @@
 # tier: all
+# serial: screenshots (PrintWindow) of every page in both languages and appearances
 """1.7.0 language adaptation: the snapshot assertions in both languages (I18N.md 11.5).
 
     python -X utf8 -B test_i18n_snapshot.py
@@ -24,6 +25,7 @@ import unittest
 import unittest.mock
 
 import snapshot_ui
+from _sandbox import zh_t
 
 STATES = ('idle', 'active', 'bot', 'filled')
 
@@ -91,7 +93,7 @@ class ChineseOutsideUserDataTests(unittest.TestCase):
 
     def test_user_data_holds_only_fixture_texts_that_are_no_app_text(self):
         self.assertIn('城市夜谈', snapshot_ui.user_data())
-        for entry in ('媒体直链', '订阅：城市夜谈'):
+        for entry in (zh_t('value.link_kind.direct'), zh_t('value.job_title.subscription', name='城市夜谈')):
             with self.subTest(entry=entry), \
                     unittest.mock.patch.object(snapshot_ui, 'USER_DATA', snapshot_ui.USER_DATA + (entry,)), \
                     self.assertRaises(AssertionError):
@@ -99,16 +101,16 @@ class ChineseOutsideUserDataTests(unittest.TestCase):
 
     def test_a_run_finds_a_chinese_text_on_an_english_page(self):
         import i18n
-        saved = i18n.CATALOG['en']['download.title.ready']
-        i18n.CATALOG['en']['download.title.ready'] = i18n.CATALOG['zh']['download.title.ready']
+        saved = i18n.CATALOG['en']['download.empty']
+        i18n.CATALOG['en']['download.empty'] = i18n.CATALOG['zh']['download.empty']
         try:
             english = snapshot_ui.run(pages=['download'], sizes=('1000x740',), shots=False, language='en')
             chinese = snapshot_ui.run(pages=['download'], sizes=('1000x740',), shots=False, language='zh')
         finally:
-            i18n.CATALOG['en']['download.title.ready'] = saved
+            i18n.CATALOG['en']['download.empty'] = saved
         found = [failure for failure in english if '(13)' in failure]
         self.assertTrue(found, english)
-        self.assertTrue(all(i18n.CATALOG['zh']['download.title.ready'] in failure for failure in found), found)
+        self.assertTrue(all(i18n.CATALOG['zh']['download.empty'] in failure for failure in found), found)
         self.assertFalse([failure for failure in chinese if '(13)' in failure])
 
 

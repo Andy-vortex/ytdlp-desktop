@@ -7,11 +7,15 @@ One entry point that never downloads anything:
      each with its SHA-256 (ffmpeg.exe, ffprobe.exe, deno.exe always required); no *.zip / *.part leftovers; a
      manifest without a file list (older prepare_vendor.py) is refused with the offline fix
      (prepare_vendor.py --record-local); a difference from vendor.lock.json is only noted;
-  2. unless --skip-tests: verification/run_tests.py --all must exit 0;
+  2. unless --skip-tests: verification/run_tests.py --all must exit 0 (serial; it writes build/verify/report-source.json,
+     which the gate needs: with --skip-tests that file must already hold a green serial --all run of these sources
+     and of these tests: its tests_sha256 must be that of verification/ and vendor/manifest.json now);
   3. PyInstaller app.spec (onedir) into build/dist, work files in build/work;
   4. stage build/dist/YT-DLP下载器 as build/package-<version>/YT-DLP下载器 (an older stage is replaced, never merged)
      and write build/package-<version>/build.json {source_sha256, exe_sha256, built};
-  5. verification/run_tests.py --all --exe <staged exe>, then verification/verify_release.py.
+  5. (2.0.0) verification/run_tests.py --only-tier exe --exe <staged exe> (build/verify/report-exe.json; until 1.8.1
+     this ran every tier again, though only the tier exe reads the exe), then verification/verify_release.py, which
+     takes the two reports together.
 Everything this script writes stays under build/.  Child processes (tests, PyInstaller, the gate) are started with
 the interpreter that runs this script (sys.executable), so the script works in the source tree (where .venv sits
 beside it) and in a copy of the tree without .venv alike.
@@ -91,11 +95,23 @@ def run(command: list, timeout: int, what: str) -> None:
         raise BuildError(f'{what} failed (exit code {code})')
 
 
+def source_tests_command() -> list:
+    """Step 2: a serial run of the tiers default and all; run_tests.py writes it to build/verify/report-source.json."""
+    return [sys.executable, '-X', 'utf8', '-B', ROOT / 'verification' / 'run_tests.py', '--all']
+
+
+def exe_tests_command(exe) -> list:
+    """Step 5 (2.0.0): only the tier exe against the staged exe (no other file reads VERIFY_EXE, so the other tiers
+    would run a second time on the same sources); run_tests.py writes it to build/verify/report-exe.json."""
+    return [sys.executable, '-X', 'utf8', '-B', ROOT / 'verification' / 'run_tests.py', '--only-tier', 'exe',
+            '--exe', exe]
+
+
 def check_interpreter() -> None:
     if importlib.util.find_spec('PyInstaller') is None:
         raise BuildError(f'this Python cannot import PyInstaller: {sys.executable}\n'
                          'Run build.py with the project interpreter, for example\n'
-                         r'  D:\YT-DLP下载器\源码\.venv\Scripts\python.exe -B build.py')
+                         r'  .venv\Scripts\python.exe -X utf8 -B build.py   (from the repository root)')
 
 
 def load_prepare_vendor():
@@ -214,7 +230,9 @@ def main(argv=None) -> int:
             pass
     parser = argparse.ArgumentParser(description='Build, stage and gate the release; never downloads anything.')
     parser.add_argument('--skip-tests', action='store_true',
-                        help='skip step 2 (run_tests.py --all before building); the gate of step 5 always runs')
+                        help='skip step 2 (run_tests.py --all before building); the gate of step 5 always runs and '
+                             'then needs build/verify/report-source.json of a green serial --all run of these sources '
+                             'and of these tests (src, verification/ and vendor/manifest.json unchanged since)')
     options = parser.parse_args(argv)
     started = time.monotonic()
     timings = {}
@@ -234,8 +252,7 @@ def main(argv=None) -> int:
             say('step 2 skipped (--skip-tests)')
         else:
             clock = time.monotonic()
-            run([sys.executable, '-X', 'utf8', '-B', ROOT / 'verification' / 'run_tests.py', '--all'],
-                TEST_TIMEOUT, 'run_tests.py --all')
+            run(source_tests_command(), TEST_TIMEOUT, 'run_tests.py --all')
             timings['tests_source'] = round(time.monotonic() - clock, 1)
 
         # 3. PyInstaller (the source hash is taken before the build and must not change during it)
@@ -271,10 +288,9 @@ def main(argv=None) -> int:
         count, size = tree_size(stage)
         say(f'staged {stage} ({count} files, {size / 1e6:.1f} MB); build.json written')
 
-        # 5. tests against the staged exe, then the release gate
+        # 5. the tier exe against the staged exe, then the release gate
         clock = time.monotonic()
-        run([sys.executable, '-X', 'utf8', '-B', ROOT / 'verification' / 'run_tests.py', '--all', '--exe', exe],
-            TEST_TIMEOUT, 'run_tests.py --all --exe')
+        run(exe_tests_command(exe), TEST_TIMEOUT, 'run_tests.py --only-tier exe --exe')
         timings['tests_exe'] = round(time.monotonic() - clock, 1)
         clock = time.monotonic()
         run([sys.executable, '-X', 'utf8', '-B', ROOT / 'verification' / 'verify_release.py', '--stage', stage],

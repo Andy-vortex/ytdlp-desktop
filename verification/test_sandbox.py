@@ -19,6 +19,7 @@ from unittest import mock
 import urllib.request
 
 import engine
+import paths
 
 HIDDEN = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -54,40 +55,37 @@ class SandboxTests(unittest.TestCase):
 
     def test_app_modules_resolve_inside_the_sandbox(self):
         _sandbox.assert_isolated()
-        self.assertTrue(self.inside(engine.STATE_DIR))
-        self.assertTrue(self.inside(engine.APP_DIR))
-        self.assertEqual(Path(engine.STATE_DIR), _sandbox.state_dir())
-        import library
-        self.assertTrue(self.inside(library.CATALOG))
+        self.assertTrue(self.inside(paths.STATE_DIR))
+        self.assertTrue(self.inside(paths.APP_DIR))
+        self.assertEqual(Path(paths.STATE_DIR), _sandbox.state_dir())
+        self.assertTrue(self.inside(paths.data_dir()))
+        self.assertTrue(self.inside(paths.catalog_path()))
 
     def test_assert_isolated_notices_a_leak(self):
-        original = engine.APP_DIR
-        engine.APP_DIR = _sandbox.ROOT
+        original = paths.APP_DIR
+        paths.APP_DIR = _sandbox.ROOT
         try:
             with self.assertRaises(RuntimeError):
                 _sandbox.assert_isolated()
         finally:
-            engine.APP_DIR = original
+            paths.APP_DIR = original
         _sandbox.assert_isolated()
 
     def test_state_patch_redirects_and_restores(self):
-        original = engine.STATE_DIR
+        original = paths.STATE_DIR
         target = _sandbox.out('state-patch') / 'state'
         patcher = _sandbox.state_patch(target)
         self.assertEqual(patcher.start(), target)
         try:
-            self.assertEqual(engine.STATE_DIR, target)
-            paths = sys.modules.get('paths')
-            if paths is not None and hasattr(paths, 'STATE_DIR'):
-                self.assertEqual(paths.STATE_DIR, target)
-            engine.store_failed_job(['https://example.invalid/a'], engine.Options(_sandbox.out('state-patch') / 'out'))
+            self.assertEqual(paths.STATE_DIR, target)
+            _sandbox.save_unfinished(['https://example.invalid/a'], engine.Options(_sandbox.out('state-patch') / 'out'))
             self.assertTrue((target / 'failed-downloads.json').is_file())
         finally:
             patcher.stop()
-        self.assertEqual(engine.STATE_DIR, original)
+        self.assertEqual(paths.STATE_DIR, original)
         with _sandbox.state_patch(target) as path:
-            self.assertEqual((path, engine.STATE_DIR), (target, target))
-        self.assertEqual(engine.STATE_DIR, original)
+            self.assertEqual((path, paths.STATE_DIR), (target, target))
+        self.assertEqual(paths.STATE_DIR, original)
         self.assertFalse((_sandbox.state_dir() / 'failed-downloads.json').exists())
 
     def test_state_helpers_refuse_the_real_state_folder(self):
@@ -98,10 +96,10 @@ class SandboxTests(unittest.TestCase):
                 _sandbox.set_state_dir(target)
 
     def test_set_state_dir_is_permanent(self):
-        original = engine.STATE_DIR
+        original = paths.STATE_DIR
         try:
             _sandbox.set_state_dir(_sandbox.out('set-state') / 'state')
-            self.assertEqual(engine.STATE_DIR, _sandbox.out('set-state') / 'state')
+            self.assertEqual(paths.STATE_DIR, _sandbox.out('set-state') / 'state')
         finally:
             _sandbox.set_state_dir(original)
 
@@ -179,19 +177,117 @@ class SandboxTests(unittest.TestCase):
             self.assertIn('+    "c"', str(caught.exception))
             self.assertEqual((folder / 'sample.json').read_bytes(), recorded)
 
+    def test_zh_t_and_en_t_do_not_follow_the_running_language(self):
+        import i18n
+        for lang in ('zh', 'en'):
+            with _sandbox.language(lang):
+                self.assertEqual(_sandbox.zh_t('download.hint.queued', count=3),
+                                 i18n._t_in('zh', 'download.hint.queued', {'count': 3}))
+                self.assertEqual(_sandbox.en_t('download.hint.queued', count=3),
+                                 i18n._t_in('en', 'download.hint.queued', {'count': 3}))
+        self.assertNotEqual(_sandbox.zh_t('download.empty'), _sandbox.en_t('download.empty'))
+
+    def test_keyed_writes_catalog_texts_as_keys(self):
+        import i18n
+        zh_t, en_t, keyed = _sandbox.zh_t, _sandbox.en_t, _sandbox.keyed
+        self.assertEqual(keyed(zh_t('download.empty')), {'zh': 'download.empty'})
+        self.assertEqual(keyed(en_t('download.empty')), {'en': 'download.empty'})
+        # a template; of two that both match, the one with more own words wins
+        fake = {lang: dict(texts) for lang, texts in i18n.CATALOG.items()}
+        fake['zh'].update({'test.final': '成功 {done}  /  未完成 {unfinished}  /  共 {total}',
+                           'test.final_short': '成功 {done}  /  共 {total}'})
+        try:
+            with mock.patch.object(i18n, 'CATALOG', fake):
+                _sandbox._KEYED_INDEX = None
+                self.assertEqual(keyed('成功 1  /  未完成 0  /  共 1'),
+                                 {'zh': 'test.final', 'p': {'done': '1', 'unfinished': '0', 'total': '1'}})
+                self.assertEqual(keyed('成功 1  /  共 1'), {'zh': 'test.final_short', 'p': {'done': '1', 'total': '1'}})
+        finally:
+            _sandbox._KEYED_INDEX = None
+        # a parameter that is itself a catalog text is keyed too
+        wait = zh_t('download.metrics.wait', reason=zh_t('core.wait.pace_or_retry'), time='05:00')
+        self.assertEqual(keyed(wait), {'zh': 'download.metrics.wait',
+                                       'p': {'reason': {'zh': 'core.wait.pace_or_retry'}, 'time': '05:00'}})
+        # dictionary keys, other values, user data stay; lists are walked
+        title = zh_t('download.empty')
+        self.assertEqual(keyed({title: [title, 3, None, '我的歌单.opus']}),
+                         {title: [{'zh': 'download.empty'}, 3, None, '我的歌单.opus']})
+        # (S3 review fix) the same text in both languages, and the text of several keys, keep every candidate
+        plain = {}
+        for lang in i18n.LANGUAGES:
+            for key, text in i18n.CATALOG[lang].items():
+                if '{' not in text:
+                    plain.setdefault(text, set()).add((lang, key))
+        same = next(text for text, owners in plain.items() if len(owners) == 2 and len({k for _l, k in owners}) == 1)
+        shared = next(text for text, owners in plain.items() if len({k for _l, k in owners}) > 1)
+        [(_lang, same_key)] = {(None, key) for _lang, key in plain[same]}
+        self.assertEqual(keyed(same), {'zh': [same_key], 'en': [same_key]})
+        self.assertEqual(keyed(shared), {lang: sorted(key for other, key in plain[shared] if other == lang)
+                                         for lang in sorted({lang for lang, _key in plain[shared]})})
+        # (S3 review fix) a text that is no catalog text as a whole is split at the joiners of SPLITS
+        row = '02  ·  ' + zh_t('download.empty')
+        self.assertEqual(keyed(row), {'cat': ['02', '  ·  ', {'zh': 'download.empty'}]})
+        self.assertEqual(keyed('02  ·  我的歌单'), '02  ·  我的歌单', 'no part is a catalog text: as it is')
+
+    def test_rendered_compares_with_the_catalog_of_the_run(self):
+        """(S3 review fix) A golden is compared by rendering it, never by looking texts up again: changing one key's
+        text, or making it equal to another key's text, changes no other key's record."""
+        import i18n
+        a, b = 'download.empty', 'download.hint.already_queued'
+        record = {'x': [{'zh': a}, {'zh': [a, b]}, {'cat': ['01', '  ·  ', {'zh': b}]}, '用户']}
+        shown = [_sandbox.zh_t(a), _sandbox.zh_t(a), '01  ·  ' + _sandbox.zh_t(b), '用户']
+        self.assertEqual(_sandbox.rendered(record, {'x': shown}), {'x': shown})
+        reworded = {lang: dict(texts) for lang, texts in i18n.CATALOG.items()}
+        reworded['zh'][a] = reworded['zh'][b]                    # a now reads like b: b's records are not touched
+        with mock.patch.object(i18n, 'CATALOG', reworded):
+            again = [_sandbox.zh_t(a), _sandbox.zh_t(b), '01  ·  ' + _sandbox.zh_t(b), '用户']
+            self.assertEqual(_sandbox.rendered(record, {'x': again}), {'x': again})
+            wrong = ['其他', _sandbox.zh_t(a), '01  ·  其他', '用户']
+            self.assertNotEqual(_sandbox.rendered(record, {'x': wrong}), {'x': wrong})
+            self.assertEqual(_sandbox.rendered(record, {'x': wrong})['x'][0], _sandbox.zh_t(a),
+                             'a difference shows the expected text, not the key')
+        self.assertEqual(_sandbox.rendered(record, {'x': []}), {'x': [_sandbox.zh_t(a), _sandbox.zh_t(a),
+                                                                       '01  ·  ' + _sandbox.zh_t(b), '用户']})
+
+    def test_a_keyed_golden_does_not_pin_the_wording(self):
+        import i18n
+
+        class Probe(unittest.TestCase):
+            def runTest(self):
+                pass
+
+        folder = _sandbox.out('golden-keyed-self-test', 'x').parent
+        key = 'library.pending.count'
+        data = {'shown': [_sandbox.zh_t(key, count='abc'), '用户写的标题']}
+        try:
+            with mock.patch.object(_sandbox, 'GOLDEN', folder), mock.patch.dict(os.environ), \
+                    mock.patch.object(_sandbox, 'RUNNER_MODE', False), contextlib.redirect_stdout(io.StringIO()):
+                os.environ['GOLDEN_UPDATE'] = '1'
+                _sandbox.check_golden(Probe(), 'keyed.json', data, keyed=True)
+                os.environ.pop('GOLDEN_UPDATE')
+                self.assertEqual(json.loads((folder / 'keyed.json').read_text(encoding='utf-8')),
+                                 {'shown': [{'zh': key, 'p': {'count': 'abc'}}, '用户写的标题']})
+                reworded = {lang: dict(texts) for lang, texts in i18n.CATALOG.items()}
+                reworded['zh'][key] = '改过 ' + reworded['zh'][key]
+                with mock.patch.object(i18n, 'CATALOG', reworded):
+                    _sandbox._KEYED_INDEX = None
+                    _sandbox.check_golden(Probe(), 'keyed.json', {'shown': [_sandbox.zh_t(key, count='abc'),
+                                                                            '用户写的标题']}, keyed=True)
+                    with self.assertRaises(AssertionError):      # another value is still a difference
+                        _sandbox.check_golden(Probe(), 'keyed.json', {'shown': [_sandbox.zh_t(key, count='abd'),
+                                                                                '用户写的标题']}, keyed=True)
+        finally:
+            _sandbox._KEYED_INDEX = None
+
     def test_the_recorded_goldens_exist(self):
-        for name in ('argv-1.5.1.json', 'events-1.5.1.json', 'runonce-1.5.1.json', 'ui-1.5.1.json'):
+        for name in ('argv.json', 'events.json', 'runonce.json', 'ui.json'):
             self.assertTrue(json.loads((_sandbox.GOLDEN / name).read_text(encoding='utf-8')), name)
 
     def test_release_sources_and_fixture_texts(self):
-        """(1.8.0) The frozen released sources and the G2 exemption helper (MESSAGES.md D11, 7.3)."""
-        self.assertEqual(_sandbox.release_src('1.5.1'),
-                         _sandbox.ROOT / 'verification' / 'release-sources' / '1.5.1' / 'src')
-        for version in ('1.5.1', '1.6.0', '1.7.0'):
-            self.assertTrue((_sandbox.release_src(version) / 'engine.py').is_file(), version)
-        self.assertIn("APP_VERSION = '1.5.1'", (_sandbox.release_src('1.5.1') / 'engine.py').read_text(encoding='utf-8'))
-        with self.assertRaises(ValueError):
-            _sandbox.release_src('1.4.0')
+        """(1.8.0) The G2 exemption helper (MESSAGES.md 7.3).  (2.0.0 S2) The frozen released
+        sources are gone, and with them release_src."""
+        self.assertFalse(hasattr(_sandbox, 'release_src'))
+        self.assertFalse((_sandbox.ROOT / 'verification' / 'release-sources').exists())
         with _sandbox.fixture_texts('test_sandbox: the helper itself'):
             pass
         guarded = bool(os.environ.get(_sandbox.MSG_GUARD))
@@ -234,6 +330,38 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(self.runner.tier_of(self.write('c.py', '\n\n\n\n\n# tier: net\n')), 'default')
         self.assertEqual(self.runner.tier_of(self.write('d.py', 'import os  # tier: all\n')), 'default')
         self.assertEqual(self.runner.tier_of(self.write('e.py', '# tier: everything\n')), 'default')
+
+    def test_markers_are_read_from_the_first_five_lines(self):
+        """(2.0.0 S1) '# serial' (with or without a reason) and '# quick', like the tier comment."""
+        self.assertEqual(self.runner.marks_of(self.write('m1.py', '# tier: all\n# serial: screenshots\n"""doc"""\n')),
+                         {'serial'})
+        self.assertEqual(self.runner.marks_of(self.write('m2.py', '# quick\n"""doc"""\n')), {'quick'})
+        self.assertEqual(self.runner.marks_of(self.write('m3.py', '\n\n\n\n\n# serial\n')), set())
+        self.assertEqual(self.runner.marks_of(self.write('m4.py', 'import os  # quick\n# serialized\n')), set())
+        self.assertEqual(self.runner.tier_of(self.write('m5.py', '# quick\n# tier: all\n')), 'all')
+        self.assertEqual(self.runner.name_filters(' a, ,b,'), ['a', 'b'])
+        self.assertEqual(self.runner.name_filters(None), [])
+
+    def test_the_marked_files_of_this_repository(self):
+        """(2.0.0 S1) The quick set builds no window and starts no app; the serial set is the files that time
+        the wall clock tightly, take the foreground window or take screenshots, each with its reason."""
+        marks = {path.name: self.runner.marks_of(path) for path, _tier in self.runner.discover()}
+        quick = sorted(name for name, found in marks.items() if 'quick' in found)
+        serial = sorted(name for name, found in marks.items() if 'serial' in found)
+        self.assertEqual(serial, ['test_animation_timing.py', 'test_core_procutil.py', 'test_i18n_detect.py',
+                                  'test_i18n_snapshot.py', 'test_v170_ui.py'])
+        for name in serial:
+            line = next(line for line in self.runner.head_lines(_sandbox.ROOT / 'verification' / name)
+                        if line.startswith('# serial'))
+            self.assertRegex(line, r'^# serial: \S', f'{name}: say why it must run alone')
+        self.assertGreaterEqual(len(quick), 20)
+        tiers = {path.name: tier for path, tier in self.runner.discover()}
+        for name in quick:
+            text = (_sandbox.ROOT / 'verification' / name).read_text(encoding='utf-8')
+            self.assertEqual(tiers[name], 'default', name)
+            for needle in ('StudioApp(', 'tk.Tk(', 'ctk.CTk(', 'make_app(', 'app_args(', 'snapshot_ui'):
+                self.assertNotIn(needle, text, f'{name} is marked "# quick" but builds a window ({needle})')
+            self.assertNotIn('serial', marks[name], name)
 
     def test_discovery_finds_this_file_in_the_default_tier(self):
         tests = {path.name: tier for path, tier in self.runner.discover()}
@@ -301,13 +429,13 @@ class RunnerTests(unittest.TestCase):
     def test_tree_snapshot_ignores_pycache_only(self):
         tree = self.runner.snapshot_tree()
         self.assertIn('run_tests.py', tree)
-        self.assertIn('golden/argv-1.5.1.json', tree)
+        self.assertIn('golden/stored-keys.json', tree)
         self.assertFalse([name for name in tree if '__pycache__' in name])
         # Files carry (size, st_mtime_ns), so a rewritten file is noticed; folders carry None.
         status = (_sandbox.ROOT / 'verification' / 'run_tests.py').stat()
         self.assertEqual(tree['run_tests.py'], (status.st_size, status.st_mtime_ns))
         self.assertIsNone(tree['golden'])
-        self.assertIn('release-sources/1.7.0/src/engine.py', tree)
+        self.assertIn('golden/text-allow/engine.json', tree)
 
     def test_isolation_check_reports_new_paths_and_state_changes(self):
         real = self.root / 'real-state'
@@ -474,6 +602,90 @@ class RunnerMainTests(unittest.TestCase):
         self.assertEqual(report['exe'], {'path': str(exe.resolve()), 'sha256': hashlib.sha256(b'not really an exe').hexdigest()})
         self.assertEqual(self.main('--exe', str(self.root / 'missing.exe'))[0], 2)
 
+    def role(self, name):
+        path = self.report.with_name(name)
+        return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
+
+    def test_parallel_run_has_the_content_of_the_serial_run(self):
+        """(2.0.0 S1) -j: the same results in the same order, the serial file after the parallel batch, and the
+        files really overlap; only the serial run becomes the release gate's source report."""
+        timed = ('import json, os, time\n'
+                 'started = time.time()\ntime.sleep({sleep})\n'
+                 'json.dump({{"started": started, "ended": time.time()}}, '
+                 'open(os.path.join(os.environ["VERIFY_OUT"], "times.json"), "w"))\n'
+                 'print("{name} done")\n')
+        for name, sleep in (('a', 1.5), ('b', 1.5), ('c', 1.5)):
+            self.add(f'test_{name}.py', timed.format(sleep=sleep, name=name))
+        self.add('test_d.py', '# serial: reads the wall clock\n' + timed.format(sleep=0.1, name='d'))
+        self.add('test_e.py', '# tier: all\n' + timed.format(sleep=0.1, name='e'))
+        self.add('test_f.py', 'import sys\nprint("broken on purpose")\nsys.exit(4)\n')
+        code, serial_text, serial = self.main('--all')
+        self.assertEqual(code, 1, serial_text)
+        # A failing serial run replaces the gate's copy too (the gate refuses it): no older green copy survives.
+        self.assertEqual(self.role('report-source.json'), serial)
+        code, text, parallel = self.main('--all', '-j', '3')
+        self.assertEqual(code, 1, text)
+        self.assertIn('parallel 5 files, 3 at a time; then 1 serial: test_d.py', text)
+        self.assertIn('with -j 3', text)
+        self.assertIn('FAILED: test_f.py', text)
+
+        def content(report):
+            return [{key: value for key, value in item.items() if key != 'seconds'} for item in report['results']]
+        self.assertEqual(content(parallel), content(serial))
+        self.assertEqual([item['file'] for item in parallel['results']],
+                         ['test_a.py', 'test_b.py', 'test_c.py', 'test_d.py', 'test_f.py', 'test_e.py'])
+        for key in ('tiers', 'filter', 'not_run', 'msg_guard', 'source_sha256', 'app_version', 'exe', 'quick',
+                    'only_tier'):
+            self.assertEqual(parallel[key], serial[key], key)
+        self.assertEqual(set(parallel['reports']), set(serial['reports']))
+        self.assertEqual((serial['jobs'], parallel['jobs']), (1, 3))
+        times = {key.split('/')[0]: value for key, value in parallel['reports'].items()}
+        batch = [times[name] for name in ('test_a', 'test_b', 'test_c', 'test_e')]
+        self.assertGreaterEqual(times['test_d']['started'], max(item['ended'] for item in batch),
+                                'the serial file runs after the parallel batch')
+        self.assertLess(max(item['started'] for item in batch[:3]), min(item['ended'] for item in batch[:3]),
+                        'three files at a time overlap')
+        self.assertEqual(self.role('report-source.json'), serial, 'a parallel run is never the gate\'s source report')
+
+    def test_selection_by_names_quick_and_only_tier_and_the_gate_copies(self):
+        """(2.0.0 S1) -k with commas, --quick, --only-tier; report-source.json / report-exe.json are written by
+        unfiltered serial runs only."""
+        self.add('test_alpha.py', '# quick\nprint("alpha")\n')
+        self.add('test_beta.py', 'print("beta")\n')
+        self.add('test_slow.py', '# tier: all\nprint("slow")\n')
+        self.add('test_gamma.py', '# tier: exe\nimport os\nassert os.path.isfile(os.environ["VERIFY_EXE"])\n')
+        exe = self.root / 'app.exe'
+        exe.write_bytes(b'not really an exe')
+        code, text, report = self.main('-k', 'alpha,beta', '--all')
+        self.assertEqual((code, [item['file'] for item in report['results']], report['filter']),
+                         (0, ['test_alpha.py', 'test_beta.py'], 'alpha,beta'))
+        self.assertEqual((self.role('report-source.json'), self.role('report-exe.json')), (None, None))
+        code, text, report = self.main('--quick', '--all')
+        self.assertEqual((code, [item['file'] for item in report['results']], report['quick']),
+                         (0, ['test_alpha.py'], True))
+        self.assertEqual(self.role('report-source.json'), None)
+        self.assertEqual(self.main('--quick', '-k', 'beta')[0], 2)
+        self.assertEqual(self.main('--only-tier', 'exe')[0], 2)
+        self.assertEqual(self.main('-j', '0')[0], 2)
+        code, text, report = self.main('--only-tier', 'exe', '--exe', str(exe))
+        self.assertEqual(code, 0, text)
+        self.assertEqual(([item['file'] for item in report['results']], report['tiers'], report['only_tier']),
+                         (['test_gamma.py'], ['exe'], 'exe'))
+        self.assertIn('(also report-exe.json)', text)
+        self.assertEqual(self.role('report-exe.json'), report)
+        self.assertIsNone(self.role('report-source.json'))
+        code, text, report = self.main('--all')
+        self.assertEqual(code, 0, text)
+        self.assertEqual([item['file'] for item in report['results']], ['test_alpha.py', 'test_beta.py', 'test_slow.py'])
+        self.assertEqual(self.role('report-source.json'), report)
+        self.assertEqual(self.role('report-exe.json')['tiers'], ['exe'], 'the exe copy is left as it was')
+        code, text, report = self.main('--all', '-j', '2')
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.role('report-source.json')['jobs'], 1, 'the serial copy is kept')
+        self.assertEqual(self.runner.report_roles(dict(report, jobs=1)), ['source'])
+        self.assertEqual(self.runner.report_roles(dict(report, jobs=1, exe={'sha256': 'x'}, tiers=['default', 'all', 'exe'])),
+                         ['exe'])
+
     def test_failing_file_fails_the_run_and_keeps_the_sandbox(self):
         self.add('test_bad.py', 'print("about to fail")\nraise SystemExit("this test is broken")\n')
         self.add('test_good.py', 'print("fine")\n')
@@ -548,15 +760,6 @@ class RunnerMainTests(unittest.TestCase):
         code, text, _report = self.main()
         self.assertEqual(code, 0, text)
         self.assertIn('isolation ... ok', text)
-
-    def test_pycache_under_release_sources_is_an_isolation_failure(self):
-        (self.tests / 'release-sources' / '1.7.0' / 'src').mkdir(parents=True)
-        self.add('test_compile.py', 'import pathlib\n'
-                                    'folder = pathlib.Path(__file__).parent / "release-sources" / "1.7.0" / "src" / "__pycache__"\n'
-                                    'folder.mkdir()\n')
-        code, text, _report = self.main()
-        self.assertEqual(code, 1, text)
-        self.assertIn('new path in verification/: release-sources/1.7.0/src/__pycache__', text)
 
     def test_change_of_the_real_state_folder_is_an_isolation_failure(self):
         self.add('test_touch.py', 'import os, pathlib\n'

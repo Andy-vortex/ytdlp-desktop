@@ -1,7 +1,11 @@
 """Task recovery, incremental subscriptions, and source archive UI (mixin LibraryUI; 1.6.0 WP5).
 
-The library page is one ui_theme.tabs card with three tabs (WP5.md section C).  Every colour,
-font and widget comes from ui_theme.  Never import studio here at module level.
+(2.0.0 S4, library.md / subscriptions.md) The library page: the title and the view switch (History |
+Subscriptions | Archive) in the page header, one notice bar for the library file, and one view at a time;
+each view is a toolbar (search or nothing on the left, its actions and its '⋯' on the right) above its
+table.  Every action of a view has a visible control (a button or the view's '⋯'); the right click of a
+table mirrors the same menu (``*_menu_items``).  Every colour, font and widget comes from ui_theme.  Never
+import studio here at module level.
 
 (1.7.0) Every shown text through i18n (I18N.md 8); stored texts (job titles, subscription errors,
 reasons) keep their canonical Chinese form (1.7.0 showed them via i18n.localize, I18N.md 9.3);
@@ -14,7 +18,6 @@ from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 import os
-import re
 import sqlite3
 import threading
 import time
@@ -25,63 +28,31 @@ import customtkinter as ctk
 import applog
 import i18n
 import messages
+import settings
 import ui_theme
 from collector import MAX_LINKS, CollectOptions
-from engine import APP_DIR, BOT_CHECK_PATTERN, STALE_PATTERN, Options, explain_error
-from library import HISTORY_PAGE, JOB_OPTION_KEYS, Archive, is_busy, job_downloads, open_library, set_ui_thread, ui_wait
+from engine import BOT_CHECK_PATTERN, STALE_PATTERN, Options, explain_error
+from paths import APP_DIR
+from library import (HISTORY_PAGE, JOB_OPTION_KEYS, Archive, is_busy, job_downloads, open_library, set_ui_thread,
+                     title_parts, ui_wait)
 import urls as urltools
 
-# The labels are looked up from the stored seconds only; the label itself is never stored.
-INTERVALS = {'仅手动': 0, '每 15 分钟': 900, '每小时': 3600, '每天': 86400}
-STATES = {'running': '进行中', 'completed': '已完成', 'partial': '部分完成', 'interrupted': '已中断'}
-# A download job that ended without a single successful download is stored as 'partial' (1.5.1 reads
-# that string); the list says what the download page said (polish ui-daily-flow-6).
-NOTHING_DONE = '未完成'
-# The name a download job gets before the first title arrives ('3条 · 音频 · MP3 320K', also from 1.5.1).
-PLACEHOLDER_TITLE = re.compile(r'\d+\s*条 · .+')
+STATES = ('running', 'completed', 'partial', 'interrupted')      # the stored job statuses
 RESUME_POLL = 100     # ms between the checks that hand the other formats of resumed links to the run
-RESUME_LATER_LOG = '继续未完成：同一链接的其他格式 {count} 条已加入队列'
-RESUME_DROPPED_LOG = '继续未完成：同一链接的其他格式 {count} 条没有开始，可在资料管理中再次“继续未完成”'
-HISTORY_NOTE = '已完成页不会重采；失败页和中断页可以继续。下载任务恢复未成功的链接。'
-SUBSCRIPTION_NOTE = '新增内容会保留，直到下载成功或被忽略；不会自动下载。'
-HISTORY_UNREADABLE = '这条记录暂时无法读取，请稍后点“刷新记录”。'
-LIBRARY_UNREADABLE = '历史记录暂时无法读取：{error}'
-PICK_SUBSCRIPTION = '请先在上方列表中选择一个订阅。'
-NO_SUBSCRIPTION = '还没有订阅：在网页采集页设置好起始网页后点“保存为订阅”。'
-PICK_PENDING = '请先在下方选择需要下载的新增条目。'
-NO_PENDING = '这个订阅目前没有待处理的新增内容。'
-PICK_ARCHIVE = '请先在下方列表中选择一条资料。'
 RETRY_BACKOFF = 900     # s: an automatic check that could not start waits at least this long (or its interval)
-TAB_PAD = 10        # inside a tab frame (the Tabs card adds 6: a 16 px margin like every card)
-TAB_TOP = 2         # below the tab bar, which keeps 10 px under itself
 # (1.7.0 U1) Another program holds library.sqlite3: the window never waits for it (library.py
 # gives up after about 0.15 s on the window's thread); it says so calmly, writes what must not be
 # lost later (HistoryWriter) and looks again every LIBRARY_RETRY_MS.
-LIBRARY_BUSY = '资料库正被其他程序占用，稍后自动重试'
-LIBRARY_BUSY_LOG = '资料库正被其他程序占用（{error}）：窗口不等待，稍后自动重试；新的记录会在可写入后补写。'
-LIBRARY_BUSY_CLICK = '资料库正被其他程序占用，请稍后再点一次。'
 LIBRARY_RETRY_MS = 2000
 # (1.7.0 U2) The history list: the newest HISTORY_PAGE jobs, more on request, a search the database runs.
 HISTORY_SEARCH_MS = 250         # typing pause before the search runs
-HISTORY_EMPTY = '下载和采集任务会记录在这里'
-HISTORY_NONE_FOUND = '没有标题或链接包含“{term}”的任务'
 
-
-# (1.7.0) The library tab ids (stored by snapshot_ui and compared by studio.focus_page): the 1.6.0 names;
-# ids, not messages (MESSAGES.md 6.3).
-TAB_HISTORY = i18n.all_values('library.tab.history')[0]
-TAB_SUBSCRIPTIONS = i18n.all_values('library.tab.subscriptions')[0]
-TAB_ARCHIVE = i18n.all_values('library.tab.archive')[0]
-
-
-def text_button_width(parent, text, size='md'):
-    """(1.7.0, I18N.md 10.1) The logical width an AppButton needs to show ``text`` in full: the text,
-    the label's 1 px border on each side and the corner columns (ui_theme.fitted_width's measure
-    without its 72 px floor, so a 1.6.0 width below 72 stays as it was in Chinese)."""
-    scale = ui_theme._scaling(parent) or 1.0
-    measure = ui_theme._measure_font(parent, ui_theme.font('caption' if size == 'sm' else 'body'))
-    needed = measure.measure(text) + 2 + 2 * round(ui_theme.RADIUS * scale)
-    return int(-(-needed // scale))
+# The library tab ids (used by snapshot_ui and compared by studio.focus_page): codes, never shown;
+# the tab bar shows i18n.label('library_tab', id).
+TAB_HISTORY = 'history'
+TAB_SUBSCRIPTIONS = 'subscriptions'
+TAB_ARCHIVE = 'archive'
+VIEW_TABLES = {TAB_HISTORY: 'history_tree', TAB_SUBSCRIPTIONS: 'subscription_tree', TAB_ARCHIVE: 'archive_tree'}
 
 
 def text_width(parent, text, role='caption'):
@@ -295,38 +266,30 @@ def clock(stamp):
 
 
 def history_title(row):
-    """The name of a job in the history list.  A download job that never got a title keeps the
-    placeholder '<n>条 · <format>' in the store (1.5.1 shows it); the list names it after its first
-    link instead, like the task rows (polish ui-daily-flow-6).
-
-    (1.7.0) The stored title keeps its form; an app-made one ('3 条 · 音频 · …', '订阅：…',
-    '未命名订阅') is shown in the running language (I18N.md 9.3).
-
-    (final fix round 2, CR2-2) Only the forms the app makes for that kind of job: a title the engine
-    took from the media itself stays as it is, even when it reads like '订阅：…' or '3 条 · …'.
-
-    (1.8.0, MESSAGES.md 6.3) The library decoded the title with that rule already (a message or raw
-    user data); the structure stays, so zh shows exactly what 1.7.0 showed."""
-    title = str(row.get('title') or '')
-    data = row.get('data') if isinstance(row.get('data'), dict) else {}
-    options = data.get('options') if isinstance(data.get('options'), dict) else {}
-    urls = [url for url in options.get('urls') or [] if isinstance(url, str) and url]
-    if row.get('kind') != 'download':
-        return messages.show(title)
-    if data.get('titled'):
-        # library.py: the first media title, or '{title} 等 {count} 条' when the job has several links.
-        return messages.show(title)
-    if not PLACEHOLDER_TITLE.fullmatch(messages.zh(title)) or not urls:
-        return messages.show(title)
-    if len(urls) > 1:
-        return i18n.t('value.job_title.multi', title=urltools.display(urls[0]), count=len(urls))
-    return urltools.display(urls[0])
+    """The name of a job in the history list (2.0.0, S2-DESIGN.md 1.2): library.title_parts in the
+    running language.  The title column holds the media's or the owner's own text, shown as it is; a
+    download job without one is named after its first link, like the task rows (polish
+    ui-daily-flow-6); a subscription's job is '订阅：<name>'."""
+    parts = title_parts(row)
+    form, text = parts[0], parts[1]
+    if form == 'subscription':
+        return i18n.t('value.job_title.subscription',
+                      name=messages.show(messages.raw(text) or messages.msg('value.subscription.untitled')))
+    if form == 'multi':
+        return i18n.t('value.job_title.multi', title=messages.show(messages.raw(text)), count=int(parts[2]))
+    if form == 'link':
+        return urltools.display(text)
+    if form == 'multi_link':
+        return i18n.t('value.job_title.multi', title=urltools.display(text), count=int(parts[2]))
+    return messages.show(messages.raw(text))
 
 
 def history_status(row):
-    """The status word of a job in the history list (the stored status string is never changed)."""
+    """The status word of a job in the history list (the stored status string is never changed).
+    A download job that ended without a single successful download is stored as 'partial'; the list
+    says what the download page said (polish ui-daily-flow-6)."""
     data = row.get('data') if isinstance(row.get('data'), dict) else {}
-    if row.get('kind') == 'download' and row.get('status') == 'partial' and not data.get('completed'):
+    if row.get('kind') == 'download' and row.get('status') == 'partial' and not data.get('done'):
         return i18n.t('common.unfinished')
     status = row.get('status')
     return i18n.label('job_status', status) if status in STATES else status
@@ -338,11 +301,20 @@ def history_row(row):
     return kind, history_title(row), history_status(row), clock(row['updated'])
 
 
-def subscription_row(row):
-    """(1.7.0) The four cells of a subscription: its name (the app's default name in the running language), the
-    schedule (the label of the stored seconds) or 已暂停, the last check and the pending count."""
-    schedule = i18n.label('interval', row['interval']) if row['enabled'] else i18n.t('library.state.paused')
-    return (messages.show(row['name']), schedule, clock(row['data']['last_check']), row['pending'])
+def subscription_row(row, checking=False, now=None):
+    """(2.0.0 S4, subscriptions.md 6.3) The four cells of a subscription: its name (the app's default name in
+    the running language), the schedule word, the last success and the new count.  The schedule word says
+    why a subscription is not checked yet: Checking (its check runs or waits for the library), Paused, Due
+    (its time has come; the window is busy or the check backs off), else the label of the stored seconds."""
+    if checking:
+        state = i18n.t('library.state.checking')
+    elif not row['enabled']:
+        state = i18n.t('library.state.paused')
+    elif row['interval'] and row['next_check'] <= (time.time() if now is None else now):
+        state = i18n.t('library.state.due')
+    else:
+        state = i18n.label('interval', row['interval'])
+    return (messages.show(row['name']), state, clock(row['data']['last_check']), row['pending'])
 
 
 def resume_plan(entries):
@@ -386,230 +358,226 @@ class LibraryUI:
         self.library_problem = ''               # the history error shown in the warning strip ('' = none)
         self.download_job = None
         self.active_subscription = None
-        self.archive_enabled = tk.BooleanVar(value=False if self.smoke_mode else settings.get('archive_enabled', False))
-        self.archive_root = tk.StringVar(value=str(Path(self.output.get()) / '资料归档') if self.smoke_mode else settings.get('archive_root', str(Path(self.output.get()) / '资料归档')))
-        # The zh label of the stored seconds (INTERVALS keeps the zh dict, I18N.md 7); the menu shows it localized.
-        self.subscription_interval = tk.StringVar(value=next(name for name, seconds in INTERVALS.items() if seconds == 3600))
-        self.subscription_media = tk.BooleanVar(value=True)
-        self.subscription_first = tk.BooleanVar(value=True)
-        self.subscription_name = tk.StringVar()
+        # (2.0.0 S4) archive_enabled, archive_root and the defaults of a new subscription (subscription_interval,
+        # subscription_media_only, subscription_first_new) are studio's persisted variables (the settings page).
         self.archive_search = tk.StringVar()
+        self.library_warning_dismissed = False  # the open_library warning was closed with Got it
+        self._history_record = (None, None)     # (iid, record) that history_selection read last
 
     def build_library_page(self):
-        page = self.page('library', i18n.t('nav.library'), i18n.t('library.subtitle'))
+        page = self.page('library', i18n.t('nav.library'))
+        page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(2, weight=1)
-        # robust-6: a history that could not be opened is replaced for this session; say so here.
-        self.library_warning_bar = ctk.CTkFrame(page, fg_color=ui_theme.WARN_SOFT, corner_radius=ui_theme.RADIUS)
-        self.library_warning_bar.grid_columnconfigure(0, weight=1)
-        self.library_warning_label = ui_theme.label(self.library_warning_bar, '', role='caption',
-                                                    text_color=ui_theme.WARN, anchor='w')
-        self.library_warning_label.grid(row=0, column=0, sticky='ew', padx=12, pady=5)
-        self.library_warning_bar.grid(row=1, column=0, sticky='ew', pady=(0, ui_theme.GAP))
-        ui_theme.fit(self.library_warning_label, messages.show(self.library_warning))
-        if not self.library_warning:
-            self.library_warning_bar.grid_remove()
-        # A keyboard focus left in a tab that is switched away from moves to the new tab's table
-        # (final-fix-ui, polish-function-3); the hidden tabs take no Tab focus (ui_theme.Tabs).
-        # (1.7.0) The tab ids stay the 1.6.0 names; the bar shows the labels (I18N.md 7, library_tab).
-        tables = {TAB_HISTORY: 'history_tree', TAB_SUBSCRIPTIONS: 'subscription_tree', TAB_ARCHIVE: 'archive_tree'}
+        # robust-6, PLAN 3-10: a library file that could not be read, is locked or was set aside is said on
+        # one notice bar above the views (show_library_problem).
+        self.library_notice = ui_theme.notice_bar(page, tone='warn')
+        self.library_notice.grid(row=1, column=0, sticky='ew', pady=(0, ui_theme.GAP))
+        self.library_notice.hide()
+        # The view switch stands in the page header, right of the title.  A keyboard focus left in a view
+        # that is switched away from moves to the new view's table (final-fix-ui, polish-function-3); the
+        # hidden views take no Tab focus (ui_theme.Tabs).  The tab ids are codes; the bar shows the labels.
         ids = [TAB_HISTORY, TAB_SUBSCRIPTIONS, TAB_ARCHIVE]
-        self.library_tabs = ui_theme.tabs(page, ids, focus=lambda name: getattr(self, tables.get(name, ''), None),
-                                          labels={name: i18n.label('library_tab', name) for name in ids})
+        self.library_tabs = ui_theme.tabs(page, ids, focus=lambda name: getattr(self, VIEW_TABLES.get(name, ''), None),
+                                          labels=[i18n.label('library_tab', name) for name in ids],
+                                          bar_parent=page.header.left)
         self.library_tabs.grid(row=2, column=0, sticky='nsew')
-        history = self.library_tabs.add(TAB_HISTORY)
-        subscriptions = self.library_tabs.add(TAB_SUBSCRIPTIONS)
-        archive = self.library_tabs.add(TAB_ARCHIVE)
-        self.build_history_tab(history)
-        self.build_subscription_tab(subscriptions)
-        self.build_archive_tab(archive)
+        self.build_history_tab(self.library_tabs.tab(TAB_HISTORY))
+        self.build_subscription_tab(self.library_tabs.tab(TAB_SUBSCRIPTIONS))
+        self.build_archive_tab(self.library_tabs.tab(TAB_ARCHIVE))
+        # F5 refreshes the library while it is shown (the download page's F5 retries its unfinished links).
+        self.bind('<F5>', self.library_key_refresh, add='+')
+        self.show_library_problem('')
         self.refresh_library()
         self.after(1500, self.subscription_tick)
 
-    # Inside a tab frame: 10 px at the sides and the bottom (the Tabs card insets its frames by 6,
-    # which makes the 16 px card margin), 2 px at the top (the tab bar keeps 10 below itself), 12 between blocks.
+    def library_key_refresh(self, _event=None):
+        """F5: refresh the library page while it is shown."""
+        if getattr(self, 'current_page', None) == 'library':
+            self.refresh_library()
+
+    @staticmethod
+    def table_actions(tree, action):
+        """Double click on a row (not on the heading: that resizes columns) and Enter on the table run
+        ``action``, the row's most common "open" action (00-system 2.8)."""
+        def double(event):
+            if tree.identify_region(event.x, event.y) == 'cell':
+                action()
+
+        def enter(_event):
+            action()
+            return 'break'      # not on to the window's Enter (start a download)
+        tree.bind('<Double-Button-1>', double, add='+')
+        tree.bind('<Return>', enter, add='+')
+        tree.on_double_click, tree.on_enter = double, enter      # tests and agents call them (Tk cannot fake a double click)
+
+    @staticmethod
+    def toolbar(tab):
+        """The row above a view's table: column 1 is the elastic space (what to look at left, actions right)."""
+        bar = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
+        bar.grid(row=0, column=0, sticky='ew', pady=(0, ui_theme.GAP))
+        bar.grid_columnconfigure(1, weight=1)
+        return bar
+
     def build_history_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=1)
-        bar = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        bar.grid(row=0, column=0, sticky='ew', padx=TAB_PAD, pady=(TAB_TOP, 0))
-        bar.grid_columnconfigure(3, weight=1)
-        ui_theme.button(bar, i18n.t('library.refresh_list'), self.refresh_library).grid(row=0, column=0, sticky='w')
-        self.history_view = ui_theme.button(bar, i18n.t('library.view_results'), self.view_history)
-        self.history_view.grid(row=0, column=1, sticky='w', padx=(8, 0))
+        tab.grid_rowconfigure(1, weight=1)
+        bar = self.history_bar = self.toolbar(tab)
+        # (1.7.0 U2) The search runs in the database (title or link).
+        self.history_search_entry = ui_theme.entry(bar, textvariable=self.history_search,
+                                                   placeholder=i18n.t('common.search'), width=280)
+        self.history_search_entry.grid(row=0, column=0, sticky='w')
+        self.history_search.trace_add('write', lambda *_: self.history_search_changed())
+        # The count beside the search it answers, as on the collect page (Total: N, or Found: N).
+        self.history_count = ui_theme.label(bar, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        self.history_count.grid(row=0, column=1, sticky='w', padx=(ui_theme.PAD, 0))
         resume = i18n.t('library.resume')
         self.history_resume = ui_theme.button(bar, resume, self.resume_history, kind='primary',
-                                              width=max(112, text_button_width(bar, resume)))
-        self.history_resume.grid(row=0, column=2, sticky='w', padx=(8, 0))
-        self.controls += [self.history_view, self.history_resume]
-        # (1.7.0 U2) The search runs in the database (title or link), like the archive tab's field.
-        self.history_search_entry = ui_theme.entry(bar, textvariable=self.history_search,
-                                                   placeholder=i18n.t('library.history.search'), width=230)
-        self.history_search_entry.grid(row=0, column=4, sticky='e', padx=(12, 0))
-        self.history_search.trace_add('write', lambda *_: self.history_search_changed())
-        # One line (fit, the whole text in ui_theme.full_text): a wrapped note made the table jump
-        # whenever a job with a long error was selected.
-        self.history_note = ui_theme.label(tab, '', role='caption', text_color=ui_theme.MUTED,
-                                           anchor='w', justify='left')
-        self.history_note.grid(row=1, column=0, sticky='ew', padx=TAB_PAD, pady=(ui_theme.GAP, ui_theme.GAP))
-        ui_theme.fit(self.history_note, i18n.t('library.history.note'))
+                                              width=ui_theme.fitted_width(bar, resume), state='disabled')
+        self.history_resume.grid(row=0, column=2, sticky='e')
+        self.history_menu = ui_theme.menu_button(bar, self.history_menu_items)
+        self.history_menu.grid(row=0, column=3, sticky='e', padx=(ui_theme.INLINE, 0))
         self.history_tree = ui_theme.table(tab, columns(tab, [
             ('kind', i18n.t('table.type'), 80, False), ('title', i18n.t('table.task'), 360, True),
             ('status', i18n.t('table.status'), 96, False), ('time', i18n.t('table.updated'), 120, False)]),
-                                           empty=i18n.t('library.history.empty'))
-        self.history_tree.container.grid(row=2, column=0, sticky='nsew', padx=TAB_PAD, pady=(0, 8))
+                                           empty=i18n.t('common.no_match'))
+        self.history_tree.container.grid(row=1, column=0, sticky='nsew')
         pin_rows(self.history_tree, 4)
         self.history_tree.ellipsize()
         self.history_tree.bind('<<TreeviewSelect>>', lambda _: self.history_selection())
-        # (1.7.0 U2) Under the table: how many jobs are shown of how many, and 加载更多 while more exist.
-        footer = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        footer.grid(row=3, column=0, sticky='ew', padx=TAB_PAD, pady=(0, TAB_PAD))
+        ui_theme.bind_menu(self.history_tree, self.history_menu_items)
+        self.table_actions(self.history_tree, self.view_history)
+        # Under the table: the selected job's details (one line, fit: the whole text in ui_theme.full_text; a
+        # wrapped line made the table jump) and Load more while more exist (1.7.0 U2).
+        footer = self.history_footer = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
+        footer.grid(row=2, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
         footer.grid_columnconfigure(0, weight=1)
-        self.history_count = ui_theme.label(footer, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
-        self.history_count.grid(row=0, column=0, sticky='ew')
-        self.history_more = ui_theme.button(footer, i18n.t('library.history.more'), self.more_history, kind='ghost',
-                                            size='sm')
-        self.history_more.grid(row=0, column=1, sticky='e')
-        footer.grid_rowconfigure(0, minsize=self.history_more.winfo_reqheight())
+        footer.grid_rowconfigure(0, minsize=ui_theme.CONTROL_H_SM)
+        self.history_note = ui_theme.label(footer, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        self.history_note.grid(row=0, column=0, sticky='ew')
+        ui_theme.fit(self.history_note, '')
+        more = i18n.t('library.history.more')
+        self.history_more = ui_theme.button(footer, more, self.more_history, kind='ghost', size='sm',
+                                            width=ui_theme.fitted_width(footer, more, 'sm'))
+        self.history_more.grid(row=0, column=1, sticky='e', padx=(ui_theme.PAD, 0))
         self.history_more.grid_remove()
+        # The whole view is empty (no job, no search): one short line instead of a toolbar and an empty table.
+        self.history_empty = ui_theme.empty_state(tab, i18n.t('library.history.empty'), ui_theme.ICON_LIBRARY)
+        self.history_empty.grid(row=0, column=0, rowspan=3, sticky='nsew')
+        self.history_empty.grid_remove()
 
     def build_subscription_tab(self, tab):
+        """(2.0.0 S4, subscriptions.md 2.3) Check now and ⋯ above the subscriptions; the new count, the reason
+        of a failed check and Add to downloads / Ignore above the new items.  New subscriptions are made on the
+        collect page (Subscribe), their defaults on the settings page."""
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=2)
+        tab.grid_rowconfigure(1, weight=2)
         tab.grid_rowconfigure(3, weight=3)
-        schedule = ui_theme.label(tab, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
-        schedule.grid(row=0, column=0, sticky='ew', padx=TAB_PAD, pady=(TAB_TOP, 0))
-        ui_theme.fit(schedule, i18n.t('library.subscription.schedule_note'))     # (1.7.0) one line, cut with '…'
-        # Creation strip, two rows: on one row it needs about 890 px and has 712 at 1000x740.
-        strip = ctk.CTkFrame(tab, fg_color=ui_theme.SURFACE_ALT, corner_radius=ui_theme.RADIUS)
-        strip.grid(row=1, column=0, sticky='ew', padx=TAB_PAD, pady=(8, 0))
-        strip.grid_columnconfigure(0, weight=1)
-        self.subscription_strip = strip
-        name = ui_theme.entry(strip, textvariable=self.subscription_name,
-                              placeholder=i18n.t('library.subscription.name_placeholder'),
-                              width=280, fg_color=ui_theme.SURFACE)
-        name.grid(row=0, column=0, sticky='ew', padx=(12, 0), pady=(12, 0))
-        self.subscription_name_entry = name
-        # (1.7.0) The variable keeps the zh label (INTERVALS), the menu shows the label of the seconds.
-        interval_labels = [i18n.label('interval', seconds) for seconds in INTERVALS.values()]
-        interval = ui_theme.option_menu(strip, list(INTERVALS), labels=interval_labels,
-                                        variable=self.subscription_interval,
-                                        width=max(110, ui_theme.menu_width(strip, interval_labels)))
-        interval.grid(row=0, column=1, padx=(8, 0), pady=(12, 0))
-        create = ui_theme.button(strip, i18n.t('library.subscription.create'), self.save_subscription, kind='primary')
-        create.grid(row=0, column=2, padx=(8, 12), pady=(12, 0))
-        self.subscription_create = create
-        flags = ctk.CTkFrame(strip, fg_color='transparent', corner_radius=0)
-        flags.grid(row=1, column=0, columnspan=3, sticky='w', padx=12, pady=(10, 12))
-        media = ui_theme.checkbox(flags, i18n.t('library.subscription.media_only'), variable=self.subscription_media)
-        media.grid(row=0, column=0, sticky='w')
-        first = ui_theme.checkbox(flags, i18n.t('library.subscription.first_new'), variable=self.subscription_first)
-        first.grid(row=0, column=1, sticky='w', padx=(24, 0))
-        self.controls += [name, interval, create, media, first]
-        # Two stacked blocks (side by side the four columns would be clipped at the default width).
-        block = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        block.grid(row=2, column=0, sticky='nsew', padx=TAB_PAD, pady=(ui_theme.GAP, 0))
-        block.grid_columnconfigure(0, weight=1)
-        block.grid_rowconfigure(1, weight=1)
-        actions = ctk.CTkFrame(block, fg_color='transparent', corner_radius=0)
-        actions.grid(row=0, column=0, sticky='ew')
-        buttons = [ui_theme.button(actions, i18n.t('library.subscription.check_now'), self.check_subscription,
-                                   kind='primary'),
-                   ui_theme.button(actions, i18n.t('library.subscription.toggle'), self.toggle_subscription),
-                   ui_theme.button(actions, i18n.t('library.subscription.apply_interval'), self.change_interval)]
-        for column, button in enumerate(buttons):
-            button.grid(row=0, column=column, sticky='w', padx=(0 if column == 0 else 8, 0))
-        # (1.8.1) Apply name / delete: not in self.controls (golden ui-1.6.0.json records that list);
-        # their busy state follows set_busy through history_selection (subscription_tools).
-        self.subscription_rename = ui_theme.button(actions, i18n.t('library.subscription.apply_name'),
-                                                   self.rename_subscription)
-        self.subscription_rename.grid(row=0, column=3, sticky='w', padx=(8, 0))
-        actions.grid_columnconfigure(4, weight=1)
-        self.subscription_delete = ui_theme.button(actions, i18n.t('library.subscription.delete'),
-                                                   self.delete_subscription, kind='danger')
-        self.subscription_delete.grid(row=0, column=5, sticky='e', padx=(8, 0))
-        self.subscription_actions = actions
-        # Two bounded lists leave room for the new-content queue at minimum window size.
-        # (final fix round 1, ENV-4) The Schedule column shows an interval label or 已暂停: as wide as the
-        # widest of them needs (I18N.md 10.1 group-label rule; Chinese keeps its 110 px).
-        schedule_width = cell_width(block, [i18n.label('interval', seconds) for seconds in INTERVALS.values()]
-                                    + [i18n.t('library.state.paused')], 110)
-        self.subscription_tree = ui_theme.table(block, columns(block, [
-            ('name', i18n.t('table.subscription'), 210, True), ('state', i18n.t('table.schedule'), schedule_width, False),
-            ('last', i18n.t('table.last_success'), 115, False), ('pending', i18n.t('table.pending'), 70, False)]),
+        bar = self.subscription_bar = self.toolbar(tab)
+        check = i18n.t('library.subscription.check_now')
+        self.subscription_check = ui_theme.button(bar, check, self.check_subscription, kind='primary',
+                                                  width=ui_theme.fitted_width(bar, check), state='disabled')
+        self.subscription_check.grid(row=0, column=2, sticky='e')
+        self.subscription_menu = ui_theme.menu_button(bar, self.subscription_menu_items)
+        self.subscription_menu.grid(row=0, column=3, sticky='e', padx=(ui_theme.INLINE, 0))
+        # (final fix round 1, ENV-4) The Schedule column shows one schedule word: as wide as the widest of
+        # them needs (I18N.md 10.1 group-label rule).
+        words = [i18n.label('interval', seconds) for seconds in settings.SCHEDULES] + [
+            i18n.t('library.state.paused'), i18n.t('library.state.checking'), i18n.t('library.state.due')]
+        self.subscription_tree = ui_theme.table(tab, columns(tab, [
+            ('name', i18n.t('table.subscription'), 210, True),
+            ('state', i18n.t('table.schedule'), cell_width(tab, words, 96), False),
+            ('last', i18n.t('table.last_success'), 115, False), ('pending', i18n.t('table.pending'), 0, False)]),
                                                 empty=i18n.t('library.subscription.empty'), height=4)
-        self.subscription_tree.container.grid(row=1, column=0, sticky='nsew', pady=(8, 0))
+        self.subscription_tree.container.grid(row=1, column=0, sticky='nsew')
         pin_rows(self.subscription_tree, 4)
         self.subscription_tree.ellipsize()
         self.subscription_tree.bind('<<TreeviewSelect>>', lambda _: self.subscription_selection())
-        pending = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        pending.grid(row=3, column=0, sticky='nsew', padx=TAB_PAD, pady=(ui_theme.GAP, TAB_PAD))
-        pending.grid_columnconfigure(0, weight=1)
-        pending.grid_rowconfigure(1, weight=1)
-        self.subscription_note = ui_theme.label(pending, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
-        self.subscription_note.grid(row=0, column=0, sticky='ew', padx=(0, 12))
-        ui_theme.fit(self.subscription_note, i18n.t('library.subscription.note'))
-        queue = ui_theme.button(pending, i18n.t('collect.add'), self.queue_subscription)
-        queue.grid(row=0, column=1, sticky='e')
-        # (1.8.1) Ignore: kept out of self.controls as apply name / delete (subscription_tools).
-        self.pending_ignore = ui_theme.button(pending, i18n.t('library.pending.ignore'), self.ignore_pending)
-        self.pending_ignore.grid(row=0, column=2, sticky='e', padx=(8, 0))
-        self.pending_actions = pending
-        buttons.append(queue)
-        self.controls += buttons
-        self.pending_tree = ui_theme.table(pending, columns(pending, [('title', i18n.t('table.new_items'), 290, True),
-                                                                      ('url', i18n.t('table.link'), 420, True)]),
-                                           selectmode='extended', height=4,
-                                           empty=i18n.t('library.pending.empty'))
-        self.pending_tree.container.grid(row=1, column=0, columnspan=3, sticky='nsew', pady=(8, 0))
+        ui_theme.bind_menu(self.subscription_tree, self.subscription_menu_items)
+        pending = self.pending_bar = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
+        pending.grid(row=2, column=0, sticky='ew', pady=(ui_theme.SECTION, ui_theme.GAP))
+        pending.grid_columnconfigure(1, weight=1)
+        pending.grid_rowconfigure(0, minsize=ui_theme.CONTROL_H)
+        self.pending_count = ui_theme.label(pending, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        self.pending_count.grid(row=0, column=0, sticky='w')
+        # The reason of the last failed check (DANGER), or why an action did nothing (WARN); one line, fit.
+        self.subscription_note = ui_theme.label(pending, '', role='caption', text_color=ui_theme.DANGER, anchor='w')
+        self.subscription_note.grid(row=0, column=1, sticky='ew', padx=(ui_theme.INLINE, ui_theme.PAD))
+        ui_theme.fit(self.subscription_note, '')
+        # 00-system 2.6: the secondary Ignore, then Add to downloads (N) on the right edge.  The count in that
+        # label changes; the width is that of a three-digit count, so Ignore never moves.
+        ignore = i18n.t('common.ignore')
+        self.pending_ignore = ui_theme.button(pending, ignore, self.ignore_pending, kind='ghost', state='disabled',
+                                              width=ui_theme.fitted_width(pending, ignore))
+        self.pending_ignore.grid(row=0, column=2, sticky='e')
+        self.pending_queue = ui_theme.button(pending, self.add_text(0), self.queue_subscription, state='disabled',
+                                             width=ui_theme.fitted_width(pending, self.add_text(999)))
+        # (final polish) its right edge is that of Check now above it: the '⋯' beside Check now sticks out alone
+        self.pending_queue.grid(row=0, column=3, sticky='e', padx=(ui_theme.INLINE, ui_theme.INLINE + ui_theme.CONTROL_H))
+        self.pending_tree = ui_theme.table(tab, columns(tab, [('title', i18n.t('table.title'), 290, True),
+                                                              ('url', i18n.t('table.link'), 420, True)]),
+                                           selectmode='extended', height=4, empty=i18n.t('library.pending.empty'))
+        self.pending_tree.container.grid(row=3, column=0, sticky='nsew')
         pin_rows(self.pending_tree, 4)
         self.pending_tree.ellipsize(middle=('url',))
+        self.pending_tree.bind('<<TreeviewSelect>>', lambda _: self.subscription_tools())
+        ui_theme.bind_menu(self.pending_tree, self.pending_menu_items)
+        for sequence in ('<Control-a>', '<Control-A>'):      # both: Caps Lock sends the uppercase keysym
+            self.pending_tree.bind(sequence, self.select_all_pending, add='+')
+        # No subscription at all: one short line and the way to make one (the collect page's Subscribe).
+        self.subscription_empty = ui_theme.empty_state(
+            tab, i18n.t('library.subscription.empty'), ui_theme.ICON_LIBRARY,
+            action=(i18n.t('library.subscription.go_collect'), lambda: self.show_page('collect')))
+        self.subscription_empty.grid(row=0, column=0, rowspan=4, sticky='nsew')
+        self.subscription_empty.grid_remove()
 
     def build_archive_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(4, weight=1)
-        switch_row = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        switch_row.grid(row=0, column=0, sticky='ew', padx=TAB_PAD, pady=(TAB_TOP, 0))
-        enabled = ui_theme.checkbox(switch_row, i18n.t('library.archive.enabled'), variable=self.archive_enabled,
-                                    command=self.save_settings)
-        enabled.grid(row=0, column=0, sticky='w')
-        ui_theme.label(switch_row, i18n.t('library.archive.off_note'), role='caption',
-                       text_color=ui_theme.MUTED).grid(row=0, column=1, sticky='w', padx=(16, 0))
-        paths = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        paths.grid(row=1, column=0, sticky='ew', padx=TAB_PAD, pady=(ui_theme.GAP, 0))
-        paths.grid_columnconfigure(0, weight=1)
-        root = ui_theme.entry(paths, textvariable=self.archive_root)
-        root.grid(row=0, column=0, sticky='ew')
-        choose = ui_theme.button(paths, i18n.t('library.archive.choose'), self.choose_archive)
-        choose.grid(row=0, column=1, padx=(8, 0))
-        self.controls += [enabled, root, choose]
-        layout = ui_theme.label(tab, i18n.t('library.archive.layout'),
-                                role='caption', text_color=ui_theme.MUTED, anchor='w', justify='left')
-        layout.grid(row=2, column=0, sticky='ew', padx=TAB_PAD, pady=(8, 0))
-        ui_theme.wrap_to_width(layout)
-        tools = ctk.CTkFrame(tab, fg_color='transparent', corner_radius=0)
-        tools.grid(row=3, column=0, sticky='ew', padx=TAB_PAD, pady=(ui_theme.GAP, 0))
-        tools.grid_columnconfigure(1, weight=1)
-        # (1.7.0, I18N.md 10.1) A safety net for long labels: when the row is short, the search entry
-        # (sticky 'w', it does not grow) gives way down to 160 px before any button is clipped.
-        tools.grid_columnconfigure(0, weight=1, minsize=160)
-        self.archive_search_entry = ui_theme.entry(tools, textvariable=self.archive_search,
-                                                   placeholder=i18n.t('library.archive.search'), width=280)
+        tab.grid_rowconfigure(1, weight=1)
+        bar = self.archive_bar = self.toolbar(tab)
+        self.archive_search_entry = ui_theme.entry(bar, textvariable=self.archive_search,
+                                                   placeholder=i18n.t('common.search'), width=280)
         self.archive_search_entry.grid(row=0, column=0, sticky='w')
-        for column, (title, callback) in enumerate([(i18n.t('library.archive.archive_pages'), self.archive_pages),
-                                                    (i18n.t('library.archive.open'), self.open_archive),
-                                                    (i18n.t('library.archive.attach'), self.attach_transcript),
-                                                    (i18n.t('common.refresh'), self.refresh_library)], 2):
-            button = ui_theme.button(tools, title, callback)
-            button.grid(row=0, column=column, padx=(8, 0))
-            self.controls.append(button)
+        self.archive_count = ui_theme.label(bar, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        self.archive_count.grid(row=0, column=1, sticky='w', padx=(ui_theme.PAD, 0))
+        opened = i18n.t('common.open_folder')
+        self.archive_open = ui_theme.button(bar, opened, self.open_archive, width=ui_theme.fitted_width(bar, opened),
+                                            state='disabled')
+        self.archive_open.grid(row=0, column=2, sticky='e')
+        self.archive_menu = ui_theme.menu_button(bar, self.archive_menu_items)
+        self.archive_menu.grid(row=0, column=3, sticky='e', padx=(ui_theme.INLINE, 0))
         self.archive_tree = ui_theme.table(tab, columns(tab, [
-            ('title', i18n.t('table.title'), 300, True), ('author', i18n.t('table.author'), 100, False),
-            ('files', i18n.t('table.media_transcripts'), 95, False), ('source', i18n.t('table.source'), 210, True)]),
-                                           empty=i18n.t('library.archive.empty'))
-        self.archive_tree.container.grid(row=4, column=0, sticky='nsew', padx=TAB_PAD, pady=(ui_theme.GAP, TAB_PAD))
+            ('title', i18n.t('table.title'), 260, True), ('author', i18n.t('table.author'), 100, False),
+            ('files', i18n.t('table.media_transcripts'), 95, False), ('source', i18n.t('table.source'), 260, True)]),
+                                           empty=i18n.t('common.no_match'))
+        self.archive_tree.container.grid(row=1, column=0, sticky='nsew')
         pin_rows(self.archive_tree, 4)
         self.archive_tree.ellipsize(middle=('source',))
+        self.archive_tree.bind('<<TreeviewSelect>>', lambda _: self.archive_selection())
+        ui_theme.bind_menu(self.archive_tree, self.archive_menu_items)
+        self.table_actions(self.archive_tree, self.open_archive)
         self.archive_search.trace_add('write', lambda *_: self.refresh_archives())
+        # Nothing archived: one short line; while archiving is off, the way to its switch (settings page).
+        self.archive_empty = ui_theme.empty_state(
+            tab, i18n.t('library.archive.empty'), ui_theme.ICON_LIBRARY,
+            action=(i18n.t('library.archive.go_settings'), lambda: self.show_settings('downloads')))
+        self.archive_empty.grid(row=0, column=0, rowspan=2, sticky='nsew')
+        self.archive_empty.grid_remove()
+        self.archive_enabled.trace_add('write', lambda *_: self.show_archive_action())
+        self.show_archive_action()
+
+    def show_archive_action(self):
+        """Go to Settings under the empty archive only while archiving is off (then nothing gets archived)."""
+        button = getattr(getattr(self, 'archive_empty', None), 'action_button', None)
+        if button is None:
+            return
+        try:
+            wanted = not self.archive_enabled.get()
+            if wanted and not button.winfo_manager():
+                button.pack(pady=(ui_theme.GAP, 0))
+            elif not wanted and button.winfo_manager():
+                button.pack_forget()
+        except tk.TclError:
+            pass
 
     def refresh_library(self):
         # robust-6: a locked or broken history must not stop the window (at start-up neither): the
@@ -621,11 +589,9 @@ class LibraryUI:
             search = self.history_search.get().strip()
             jobs = self.library.history(self.history_limit, search=search)
             total = self.library.history_count(search) if len(jobs) >= self.history_limit else len(jobs)
-            for tree, rows, render in [
-                (self.history_tree, jobs, history_row),
-                (self.subscription_tree, self.library.subscriptions(), subscription_row)]:
-                # iids are the record ids; fill() keeps the selection of a row that still exists.
-                tree.fill((row['id'], render(row)) for row in rows)
+            # iids are the record ids; fill() keeps the selection of a row that still exists.
+            self.history_tree.fill((row['id'], history_row(row)) for row in jobs)
+            self.fill_subscriptions(self.library.subscriptions())
             self.show_history_count(len(self.history_tree.get_children()), total, search)
             self.history_selection()
             self.subscription_selection()
@@ -642,23 +608,32 @@ class LibraryUI:
             self.show_library_problem('')
 
     def show_library_problem(self, text):
-        """The warning strip above the tabs: ``text`` (a read error), else the calm busy line while
-        the library is locked (1.7.0 U1), else the warning of open_library."""
+        """The notice bar above the views: ``text`` (a read error, warn) with Refresh; else the calm busy line
+        while the library is locked (1.7.0 U1; idle tone, no button: it goes by itself); else the warning of
+        open_library (a temporary library, a file set aside, PLAN 3-10) with Got it, until it is closed."""
         if text and text != self.library_problem:
             self.append_log(text)       # once per new error, not at every refresh
         self.library_problem = text
-        calm = not text and getattr(self, 'library_waiting', False)
-        shown = text or (i18n.t('library.busy') if calm else '') or messages.show(self.library_warning)
+        notice = getattr(self, 'library_notice', None)
+        if notice is None:
+            return
+        warning = '' if self.library_warning_dismissed else messages.show(self.library_warning)
         try:
-            self.library_warning_bar.configure(fg_color=ui_theme.ACCENT_SOFT if calm else ui_theme.WARN_SOFT)
-            self.library_warning_label.configure(text_color=ui_theme.ACCENT_TEXT if calm else ui_theme.WARN)
-            ui_theme.fit(self.library_warning_label, shown)
-            if shown:
-                self.library_warning_bar.grid()
+            if text:
+                notice.show(text, [(i18n.t('common.refresh'), self.refresh_library)], tone='warn')
+            elif getattr(self, 'library_waiting', False):
+                notice.show(i18n.t('library.busy'), tone='idle')
+            elif warning:
+                notice.show(warning, [(i18n.t('common.got_it'), self.dismiss_library_warning)], tone='warn')
             else:
-                self.library_warning_bar.grid_remove()
+                notice.hide()
         except tk.TclError:
             pass
+
+    def dismiss_library_warning(self):
+        """Got it on the open_library warning: the bar goes for this session (a refresh cannot change it)."""
+        self.library_warning_dismissed = True
+        self.show_library_problem(self.library_problem)
 
     # ------------------------------------------------------------ (1.7.0 U1) a locked library
     def library_busy(self, error=None):
@@ -786,34 +761,41 @@ class LibraryUI:
             self.show_library_problem(i18n.t('library.unreadable', error=messages.error_text(error)))
 
     def show_history_count(self, shown, total, search=''):
+        """The toolbar's count (Total: N, or Found: N for a search) and Load more while more exist; the whole
+        view is the empty state when there is no job and no search."""
         if search:
-            text = i18n.t('library.history.found', total=total) + \
-                (i18n.t('library.history.found_shown', shown=shown) if shown < total else '')
-        elif shown < total:
-            text = i18n.t('library.history.count_shown', total=total, shown=shown)
+            text = i18n.t('library.history.found', total=total)
         else:
             text = i18n.t('library.history.count', total=total) if total else ''
         try:
             self.history_count.configure(text=text)
-            empty = i18n.t('library.history.none_found', term=search[:30]) if search else i18n.t('library.history.empty')
-            if self.history_tree._empty != empty:
-                self.history_tree.set_empty(empty)
-            if shown < total:
-                self.history_more.configure(text=i18n.t('library.history.more_n', count=min(HISTORY_PAGE, total - shown)))
-                self.history_more.grid()
-            else:
-                self.history_more.grid_remove()
+            ui_theme.show(self.history_more, shown < total)
+            empty = not total and not search
+            ui_theme.show(self.history_empty, empty)
+            for widget in (self.history_bar, self.history_footer):
+                ui_theme.show(widget, not empty)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def archive_selection(self):
+        """(2.0.0 S4) Open folder follows the selection of the archive table, never the busy state (it only opens
+        Explorer, as the download page's Open folder).  Called first by history_selection (so on every set_busy)
+        and on every selection change of the table; never raises."""
+        try:
+            ui_theme.set_enabled(self.archive_open, bool(self.archive_tree.selection()))
         except (AttributeError, tk.TclError):
             pass
 
     def history_selection(self):
-        """Note and button states for the selected job; never raises (set_busy calls it).
+        """Details and Continue for the selected job; never raises (set_busy calls it).
 
-        (1.8.1) First of all it sets the busy state of the subscription tools (apply name, delete,
-        ignore; subscription_tools), so no error of the history widgets below can skip it."""
+        (1.8.1) First of all it sets the busy state of the subscription tools (subscription_tools), so no error
+        of the history widgets below can skip it.  (2.0.0 S4) Before that the archive view's own hook,
+        archive_selection.  The record read here is kept for history_menu_items (opening the menu reads nothing)."""
+        self.archive_selection()
         self.subscription_tools()
         selected = self.history_tree.selection()
-        record = None
+        record, note = None, ''
         if selected:
             try:
                 record = self.library.job(selected[0])
@@ -824,32 +806,51 @@ class LibraryUI:
                 else:
                     applog.get('ui').exception('history record could not be read')
                 record, note = None, i18n.t('library.history.unreadable')
-        else:
-            note = i18n.t('library.history.note')
+        self._history_record = (selected[0] if selected else None, record)
         try:
             self.history_note.configure(text=note)
-            usable = record is not None and not self.busy
-            self.history_view.configure(state='normal' if usable else 'disabled')
-            self.history_resume.configure(state='normal' if usable and record['status'] not in ('running', 'completed') else 'disabled')
+            ui_theme.set_enabled(self.history_resume, self.resumable(record) and not self.busy)
         except tk.TclError:
             pass
+
+    @staticmethod
+    def resumable(record):
+        """A job that Continue can take up: read, and neither running nor completed."""
+        return record is not None and record['status'] not in ('running', 'completed')
+
+    def history_record(self):
+        """The record of the selected job as history_selection read it; None when nothing (readable) is selected."""
+        selected = self.history_tree.selection()
+        iid, record = self._history_record
+        return record if selected and selected[0] == iid else None
+
+    def history_menu_items(self):
+        """The history view's ⋯ and the right click of its table (00-system 2.10)."""
+        record = self.history_record()
+        usable = record is not None and not self.busy
+        return [ui_theme.MenuItem(i18n.t('library.view_results'), self.view_history, enabled=usable),
+                ui_theme.MenuItem(i18n.t('library.resume'), self.resume_history,
+                                  enabled=usable and self.resumable(record)),
+                ui_theme.SEPARATOR,
+                ui_theme.MenuItem(i18n.t('common.refresh'), self.refresh_library)]
 
     @staticmethod
     def history_note_text(record):
         """One line about a job: saved pages (collect jobs), successful downloads, the last error.
 
-        A download job's error is the engine's English line; the note shows the short Chinese
-        reason the task row showed (SPEC 3.11; stored next to the line since polish
-        ui-wording-consistency-5), else the reason explain_error finds for it, never the raw line.
-        A download counts once per (link, format) (review-e2e-4).
+        A download job's error is the engine's English line; the note shows the short reason the
+        task row showed (SPEC 3.11; stored with the line, errors[-1]['reason']), else the reason
+        explain_error finds for it, never the raw line.  A download counts once per (link, format)
+        (review-e2e-4); a link counts once however many formats of it finished.
 
-        (1.7.0) The stored error and reason stay canonical Chinese in the record; the note shows
-        them in the running language (I18N.md 9.3), the raw engine line never.  (1.8.0) They are
-        decoded values (messages or raw text), shown with messages.show (MESSAGES.md 6.2).
+        (2.0.0) The stored error and reason are messages or raw text (S2-DESIGN.md 1.2), shown in the
+        running language with messages.show.
         """
         data = record['data']
-        completed = len(data.get('completed') or [])
+        pairs = [pair for pair in data.get('done') or [] if isinstance(pair, list) and len(pair) == 2]
+        completed = len(pairs)
         if record['kind'] != 'collect':
+            completed = len({str(pair[0]) for pair in pairs})
             try:
                 completed = max(completed, sum(1 for entry in job_downloads(data) if entry['done']))
             except Exception:
@@ -861,15 +862,16 @@ class LibraryUI:
             text = done
         errors = data.get('errors') or []
         if errors:
-            error = str(errors[-1])
+            last = errors[-1]
+            error, reason = (last.get('error'), last.get('reason')) if isinstance(last, dict) else (last, None)
+            error = error if isinstance(error, str) else str(error)
             if record['kind'] != 'collect':
-                last = data.get('last_reason')
-                if isinstance(last, dict) and last.get('error') == error and isinstance(last.get('reason'), str) \
-                        and last['reason']:
-                    error = last['reason']
+                if isinstance(reason, str) and messages.zh(reason):
+                    error = reason
                 else:
-                    error = explain_error(error, bot_check=bool(BOT_CHECK_PATTERN.search(error)),
-                                          stale=bool(STALE_PATTERN.search(error)))
+                    plain = messages.zh(error)
+                    error = explain_error(error, bot_check=bool(BOT_CHECK_PATTERN.search(plain)),
+                                          stale=bool(STALE_PATTERN.search(plain)))
             # a collector message, a stored reason or explain_error's result; the 1.7.0 cut of the shown text
             text += i18n.t('library.history.last_error', error=messages.show(error)[:130])
         return text
@@ -886,7 +888,7 @@ class LibraryUI:
         self.collected_pages = record['pages']
         self.collected_links = capped_links(record['pages'])
         self.render_collection_links()
-        self.collect_text.configure(state='normal' if any(p['text'] for p in record['pages']) else 'disabled')
+        self.refresh_collect_actions()
         self.set_collect_status(i18n.t('collect.status.from_history', pages=len(record['pages']),
                                        links=len(self.collected_links))
                                 + (i18n.t('library.cap_note', limit=MAX_LINKS) if len(self.collected_links) >= MAX_LINKS
@@ -1043,13 +1045,15 @@ class LibraryUI:
                                  archive_contexts=self.collection_contexts(urls) if raw.get('archive_root') else {})
 
     def save_subscription(self):
+        """The collect page's Subscribe (its only entry, M6): a subscription of the current collect settings,
+        named after its first page (M5; ⋯ → Rename… names it), with the defaults of the settings page (M4)."""
         if self.busy:
             return
         try:
             options = self.collection_options()
-            name = self.subscription_name.get().strip() or (options.urls[0][:65])
-            values = (name, asdict(options), INTERVALS[self.subscription_interval.get()], self.subscription_media.get(),
-                      self.subscription_first.get())
+            name = options.urls[0][:65]
+            values = (name, asdict(options), self.subscription_interval.get(), self.subscription_media_only.get(),
+                      self.subscription_first_new.get())
             try:
                 key = self.library.subscription(*values)
             except sqlite3.OperationalError as error:
@@ -1063,6 +1067,8 @@ class LibraryUI:
                 return
             self.refresh_library()
             self.subscription_tree.selection_set(key)
+            self.subscription_tree.see(key)
+            self.subscription_selection()
             self.library_tabs.set(TAB_SUBSCRIPTIONS)
             self.show_page('library')
             self.append_log(i18n.t('log.subscription.saved', name=name))
@@ -1075,9 +1081,48 @@ class LibraryUI:
             return None
         return next((r for r in self.library.subscriptions() if r['id'] == selected[0]), None)
 
+    def fill_subscriptions(self, rows):
+        """Fill the subscription table with ``rows`` (Library.subscriptions()); select the first row when none is
+        selected (the view always has a current subscription, subscriptions.md 6.1); with no subscription at all
+        the view is its empty state."""
+        tree = self.subscription_tree
+        tree.fill((row['id'], subscription_row(row, checking=self.subscription_checking(row['id']))) for row in rows)
+        children = tree.get_children()
+        if children and not tree.selection():
+            tree.selection_set(children[0])
+            tree.see(children[0])
+        self.show_subscription_empty(not children)
+
+    def show_subscription_empty(self, empty):
+        """No subscription: only the empty state; else the toolbar, both tables and the new-items row.  The empty state
+        lies over the (empty) subscription table, which stays gridded: studio.focus_page and the view switch give the
+        focus to the table, and a table that is not mapped takes none (it would stay on a hidden page)."""
+        try:
+            ui_theme.show(self.subscription_empty, empty)
+            for widget in (self.subscription_bar, self.pending_bar, self.pending_tree.container):
+                ui_theme.show(widget, not empty)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def refresh_subscription_rows(self):
+        """The schedule words again (Checking, Due) without touching the new items: only when a row changed,
+        so the selection and the new-items table stay as they are.  Never raises."""
+        try:
+            rows = self.library.subscriptions()
+            tree = self.subscription_tree
+            wanted = [(row['id'], tuple(str(cell) for cell in subscription_row(row, self.subscription_checking(row['id']))))
+                      for row in rows]
+            shown = [(iid, tuple(str(cell) for cell in tree.full_values(iid))) for iid in tree.get_children()]
+            if wanted != shown:
+                self.fill_subscriptions(rows)
+                self.subscription_selection()
+        except Exception as error:
+            if not is_busy(error):
+                applog.get('ui').exception('the subscription rows could not be refreshed')
+
     def subscription_action(self, action):
-        """Run a subscription button's action; a locked library (1.7.0 U1) does nothing but the
-        calm notice (the owner clicks again later)."""
+        """Run a subscription action; a locked library (1.7.0 U1) does nothing but the calm notice and the
+        one-line reason (the owner clicks again later)."""
         try:
             action()
         except sqlite3.OperationalError as error:
@@ -1098,28 +1143,29 @@ class LibraryUI:
         row = self.selected_subscription()
         # Positional iids: an old selection would point at other entries.  The entries the owner had
         # picked are picked again by their link, so a refresh (after a background check, a download
-        # or 刷新) does not throw a multi-selection away.
+        # or a refresh) does not throw a multi-selection away.
         previous = getattr(self, 'visible_pending', [])
         picked = {previous[int(n)]['url'] for n in self.pending_tree.selection()
                   if n.isdigit() and int(n) < len(previous)}
         self.visible_pending = self.library.pending(row['id']) if row else []
         self.pending_tree.selection_remove(self.pending_tree.selection())
+        # "Nothing new" speaks of a subscription: no hint while none is selected (subscriptions.md 6.2).
+        self.pending_tree.set_empty(i18n.t('library.pending.empty') if row else '')
         self.pending_tree.fill((str(n), (messages.show(item['title']), item['url']))
                                for n, item in enumerate(self.visible_pending))
         again = [str(n) for n, item in enumerate(self.visible_pending) if item['url'] in picked]
         if again:
             self.pending_tree.selection_set(again)
-        if row:
-            data = row['data']
-            # The stored last_error (a message, also the clauses of collector errors) in the running language.
-            text = i18n.t('library.subscription.status', new=data['last_new'], pending=row['pending']) + \
-                (messages.show(data['last_error']) if data['last_error'] else i18n.t('library.subscription.status_note'))
-        else:
-            text = i18n.t('library.subscription.note')
-        self.subscription_note.configure(text=text, text_color=ui_theme.MUTED)
+        # The new count beside the table it counts; the stored last_error (a message, also the clauses of
+        # collector errors) in the running language: why the new items may be incomplete.
+        count = i18n.t('library.pending.count', count=len(self.visible_pending)) if row else ''
+        error = row['data']['last_error'] if row else None
+        self.pending_count.configure(text=count)
+        self.subscription_note.configure(text=messages.show(error) if error else '', text_color=ui_theme.DANGER)
+        self.subscription_tools()
 
     def subscription_hint(self, text):
-        """Say on the subscription tab why an action did nothing (the note line, until the selection changes)."""
+        """Say on the subscription view why an action did nothing (the note line, until the selection changes)."""
         self.subscription_note.configure(text=text, text_color=ui_theme.WARN)
 
     def check_subscription(self, row=None, automatic=False):
@@ -1135,17 +1181,15 @@ class LibraryUI:
                 self.subscription_hint(i18n.t('library.busy_click'))
                 return
         if not row:
-            if not automatic:
-                self.subscription_hint(self.pick_subscription_text())
-            return
+            return          # nothing selected: the button and the menu item are grey
         try:
             options = CollectOptions(**row['data']['options'])
             options.proxy = self.proxy.get().strip()
             options.validate()
             self.active_subscription = row['id']
-            # (1.8.0, C-F40) The job title is a message with the decoded name; history_title shows it.
-            self.launch_collection(options, title=messages.msg('value.job_title.subscription', name=row['name']),
-                                   background=automatic)
+            # (2.0.0) The job is marked as the subscription's; its title is the subscription's own
+            # name ('' for the untitled one); history_title shows '订阅：<name>'.
+            self.launch_collection(options, title=row['name_text'], background=automatic, via='subscription')
             if automatic:
                 # robust-13: the download page says why it cannot start right now, the collect page
                 # why its controls are disabled.
@@ -1173,6 +1217,7 @@ class LibraryUI:
                                    error=messages.error_text(error)))
             if not automatic:
                 messagebox.showwarning(i18n.t('dialog.subscription.not_started'), messages.error_text(error), parent=self)
+        self.refresh_subscription_rows()        # Checking on the started one (or its stored error)
 
     def subscription_tick(self):
         try:
@@ -1189,86 +1234,116 @@ class LibraryUI:
                 applog.get('ui').exception('subscription tick failed')
         finally:
             if not self.closing:
+                self.refresh_subscription_rows()        # Due and Checking follow the clock
                 try:
                     self.after(15000, self.subscription_tick)
                 except tk.TclError:
                     pass        # the window is gone
 
+    def subscription_menu_items(self):
+        """The subscription view's ⋯ and the right click of its table (subscriptions.md 4.2).  A locked library
+        greys the row actions; Refresh stays."""
+        try:
+            row = self.selected_subscription()
+        except sqlite3.OperationalError as error:
+            if not is_busy(error):
+                raise
+            self.library_busy(error)
+            row = None
+        usable = row is not None and not self.busy
+        paused = row is not None and not row['enabled']
+        schedules = tuple(ui_theme.MenuItem(i18n.label('interval', seconds),
+                                            lambda seconds=seconds: self.set_schedule(seconds), enabled=usable,
+                                            checked=row is not None and row['interval'] == seconds)
+                          for seconds in settings.SCHEDULES)
+        toggle = i18n.t('library.subscription.resume') if paused else i18n.t('library.subscription.pause')
+        return [ui_theme.MenuItem(i18n.t('library.subscription.check_now'), self.check_subscription,
+                                  enabled=usable and not self.closing),
+                ui_theme.MenuItem(toggle, self.toggle_subscription, enabled=usable),
+                ui_theme.MenuItem(i18n.t('table.schedule'), enabled=usable, children=schedules),
+                ui_theme.MenuItem(i18n.t('library.subscription.rename'), self.rename_subscription, enabled=usable),
+                ui_theme.MenuItem(i18n.t('common.refresh'), self.refresh_library),
+                ui_theme.SEPARATOR,
+                ui_theme.MenuItem(i18n.t('library.subscription.delete'), self.delete_subscription, danger=True,
+                                  enabled=usable and not self.subscription_checking(row['id']))]
+
+    def pending_menu_items(self):
+        """The right click of the new-items table: the mirror of its two buttons (select all is Ctrl+A)."""
+        picked = len(self.pending_tree.selection())
+        return [ui_theme.MenuItem(self.add_text(picked), self.queue_subscription,
+                                  enabled=bool(picked) and self.can_add_collected()),
+                ui_theme.MenuItem(i18n.t('common.ignore'), self.ignore_pending,
+                                  enabled=bool(picked) and not self.busy)]
+
+    def select_all_pending(self, _event=None):
+        """Ctrl+A on the new-items table."""
+        self.pending_tree.selection_set(self.pending_tree.get_children())
+        return 'break'
+
     def toggle_subscription(self):
         self.subscription_action(self._toggle_subscription)
-
-    def change_interval(self):
-        self.subscription_action(self._change_interval)
 
     def _toggle_subscription(self):
         row = self.selected_subscription()
         if row and not self.busy:
             self.library.configure_subscription(row['id'], not row['enabled'], row['interval'])
             self.refresh_library()
-        elif not row and not self.busy:
-            self.subscription_hint(self.pick_subscription_text())
 
-    def pick_subscription_text(self):
-        """Why a subscription action did nothing: no row picked, or no subscription at all."""
-        if self.subscription_tree.get_children():
-            return i18n.t('library.pick_subscription')
-        return i18n.t('library.no_subscription')
+    def set_schedule(self, seconds):
+        """⋯ → Schedule ▸ ``seconds`` (one of settings.SCHEDULES) for the selected subscription; its current
+        schedule writes nothing (configure_subscription would set its next check anew)."""
+        self.subscription_action(lambda: self._set_schedule(seconds))
 
-    def _change_interval(self):
+    def _set_schedule(self, seconds):
         row = self.selected_subscription()
-        if row and not self.busy:
-            self.library.configure_subscription(row['id'], row['enabled'], INTERVALS[self.subscription_interval.get()])
+        if row and not self.busy and row['interval'] != seconds:
+            self.library.configure_subscription(row['id'], row['enabled'], seconds)
             self.refresh_library()
-        elif not row and not self.busy:
-            self.subscription_hint(self.pick_subscription_text())
 
     def queue_subscription(self):
-        if self.busy:
+        """Add to downloads: the picked new items go to the download page, also while a download runs
+        (can_add_collected, as the collect page's Add to downloads)."""
+        if not self.can_add_collected():
             return
-        items = [self.visible_pending[int(n)] for n in self.pending_tree.selection()]
-        if not items:
-            # The same line as the other actions of this tab (no dialog for a missing selection).
-            self.pending_hint(i18n.t('library.pick_pending'))
-            return
-        self.queue_collected_items(items)
+        items = [self.visible_pending[int(n)] for n in self.pending_tree.selection()
+                 if n.isdigit() and int(n) < len(self.visible_pending)]
+        if items:
+            self.queue_collected_items(items)
 
     def subscription_tools(self):
-        """(1.8.1) Apply name, delete and ignore follow the busy state like the buttons of self.controls
-        (they are kept out of that list: golden ui-1.6.0.json records it).  set_busy is pinned (H3)
-        and calls history_selection, which calls this.  Never raises."""
-        state = 'disabled' if getattr(self, 'busy', False) else 'normal'
-        for name in ('subscription_rename', 'subscription_delete', 'pending_ignore'):
-            widget = getattr(self, name, None)
-            if widget is not None:
-                try:
-                    widget.configure(state=state)
-                except tk.TclError:
-                    pass
-
-    def pending_hint(self, text):
-        """(1.8.1) Why a pending-list action did nothing: `text` (the action's own "select items
-        first" line) when the list has rows, else no pending items, else no subscription picked.
-        The callers pass i18n.t('...') with a literal key, so i18n_tool.api_calls sees each key."""
-        if self.pending_tree.get_children():
-            self.subscription_hint(text)
-        elif self.subscription_tree.selection():
-            self.subscription_hint(i18n.t('library.no_pending'))
-        else:
-            self.subscription_hint(self.pick_subscription_text())
+        """(2.0.0 S4, subscriptions.md 7.3) Check now, Add to downloads and Ignore, computed here only from the
+        busy state and the selections; the one solid button follows the stage: Add to downloads while the
+        selected subscription has new items, else Check now (with none selected it stays as it was).  set_busy -> history_selection calls this first,
+        so do both tables' selection changes.  Never raises."""
+        try:
+            idle = not self.busy
+            picked = len(self.pending_tree.selection())
+            has_row = bool(self.subscription_tree.selection())
+            has_new = has_row and bool(self.pending_tree.get_children())
+            ui_theme.set_enabled(self.subscription_check, has_row and idle)
+            ui_theme.set_enabled(self.pending_queue, bool(picked) and self.can_add_collected())
+            ui_theme.set_enabled(self.pending_ignore, bool(picked) and idle)
+            text = self.add_text(picked)
+            if self.pending_queue.cget('text') != text:
+                self.pending_queue.configure(text=text)
+            if has_row:     # (final polish) no subscription picked: the solid one stays where it was
+                self.subscription_check.set_kind('soft' if has_new else 'primary')
+                self.pending_queue.set_kind('primary' if has_new else 'soft')
+        except (AttributeError, tk.TclError):
+            pass        # the page is not built yet, or the window is gone
 
     def ignore_pending(self):
         self.subscription_action(self._ignore_pending)
 
     def _ignore_pending(self):
-        """(1.8.1) 忽略所选: the picked new items leave this subscription's pending list (they stay
-        seen, so a later check keeps them out).  One click, no dialog, as 添加到下载列表."""
+        """(1.8.1) Ignore: the picked new items leave this subscription's pending list (they stay seen, so a
+        later check keeps them out).  One click, no dialog, as Add to downloads."""
         if self.busy:
             return
         selected = self.subscription_tree.selection()
         items = [self.visible_pending[int(n)] for n in self.pending_tree.selection()
                  if n.isdigit() and int(n) < len(self.visible_pending)]
         if not items:
-            self.pending_hint(i18n.t('library.pending.pick_ignore'))
             return
         row = self.selected_subscription()
         if not selected or row is None:
@@ -1288,7 +1363,7 @@ class LibraryUI:
         return self.active_subscription == key or bool(pending and pending[3] == key)
 
     def _delete_subscription(self):
-        """(1.8.1) 删除订阅, after a confirmation whose default answer is no.  A subscription whose own
+        """(1.8.1) Delete subscription, after a confirmation whose default answer is no.  A subscription whose own
         check runs (or waits for the library) is never offered for deletion (delete_busy).  The dialog
         runs the event loop, so its check and the busy state are looked at again after it: delete_busy
         only when this subscription is being checked, delete_task_busy when another task (a download,
@@ -1297,10 +1372,7 @@ class LibraryUI:
         if row and self.subscription_checking(row['id']):
             self.subscription_hint(i18n.t('library.subscription.delete_busy'))
             return
-        if self.busy:
-            return
-        if not row:
-            self.subscription_hint(self.pick_subscription_text())
+        if self.busy or not row:
             return
         if not messagebox.askyesno(i18n.t('library.subscription.delete_title'),
                                    i18n.t('library.subscription.delete_text', name=messages.show(row['name']),
@@ -1327,18 +1399,17 @@ class LibraryUI:
         self.subscription_action(self._rename_subscription)
 
     def _rename_subscription(self):
-        """(1.8.1) 应用名称: the name typed in the creation strip becomes the selected subscription's
-        name (as 应用检查间隔 applies the strip's interval).  An empty box only says so: it is the
-        box's resting state, and saving it would silently replace the name."""
+        """⋯ → Rename…: a one-line dialog (ui_theme.ask_text) with the current name.  Cancel or an empty entry
+        writes nothing.  The dialog runs the event loop: a check that started meanwhile does not drop the typed
+        name (rename writes only the name column); a subscription deleted meanwhile says gone."""
         if self.busy:
             return
         row = self.selected_subscription()
         if not row:
-            self.subscription_hint(self.pick_subscription_text())
             return
-        text = self.subscription_name.get().strip()
-        if not text:
-            self.subscription_hint(i18n.t('library.subscription.name_empty'))
+        text = ui_theme.ask_text(self, i18n.t('library.subscription.rename_title'),
+                                 row['name_text'] or messages.show(row['name']))
+        if text is None:
             return
         found = self.library.rename_subscription(row['id'], text)
         self.refresh_library()
@@ -1373,7 +1444,7 @@ class LibraryUI:
             if not self.archive_root.get().strip():
                 raise ValueError(i18n.t('error.archive_root_missing'))
             index = _QueuedIndex(self.library, self.history_writer)       # (1.7.0 U1)
-            archive = Archive(self.archive_root.get(), index)
+            archive = Archive(self.archive_root.get(), index, log=self.append_log)
             for page in self.collected_pages:
                 archive.prepare(page['url'], dict(title=page['title'], source=page['url'], page=page))
             self.append_log(i18n.t('log.archive.pages', count=len(self.collected_pages)))
@@ -1409,31 +1480,48 @@ class LibraryUI:
         for n, row in enumerate(self.visible_archives):
             if row['folder'] == selected_folder:
                 self.archive_tree.selection_set(str(n))
+        count = len(self.visible_archives)
+        self.archive_count.configure(text=i18n.t('library.archive.found', total=count) if term
+                                     else i18n.t('library.archive.count', total=count))
+        self.show_archive_empty(not stored and not term)
+        self.archive_selection()
+
+    def show_archive_empty(self, empty):
+        """Nothing archived (and no search): only the empty state, over the empty table (it stays gridded for the
+        keyboard focus, as in show_subscription_empty); else the toolbar and the table."""
+        try:
+            ui_theme.show(self.archive_empty, empty)
+            ui_theme.show(self.archive_bar, not empty)
+        except (AttributeError, tk.TclError):
+            pass
 
     def selected_archive(self):
         selected = self.archive_tree.selection()
         return self.visible_archives[int(selected[0])] if selected else None
 
     def open_archive(self):
+        """Open folder (the button, a double click or Enter on a row, ⋯): Explorer at the selected item; usable
+        whenever an item is selected, also while a task runs."""
         row = self.selected_archive()
         if row:
             try:
                 os.startfile(row['folder'])
             except OSError as error:
                 messagebox.showerror(i18n.t('dialog.open_failed'), messages.error_text(error), parent=self)
-        else:
-            self.archive_hint()
 
-    def archive_hint(self):
-        """The two actions that need a selected row say so instead of doing nothing."""
-        empty = not self.archive_tree.get_children()
-        messagebox.showinfo(i18n.t('dialog.pick_item'),
-                            i18n.t('library.archive.none') if empty else i18n.t('library.pick_archive'), parent=self)
+    def archive_menu_items(self):
+        """The archive view's ⋯ and the right click of its table (00-system 2.10)."""
+        picked = bool(self.archive_tree.selection())
+        return [ui_theme.MenuItem(i18n.t('common.open_folder'), self.open_archive, enabled=picked),
+                ui_theme.MenuItem(i18n.t('library.archive.attach'), self.attach_transcript,
+                                  enabled=picked and not self.busy),
+                ui_theme.SEPARATOR,
+                ui_theme.MenuItem(i18n.t('common.refresh'), self.refresh_library)]
 
     def attach_transcript(self):
+        """⋯ → Link transcript…: a transcript file is copied into the selected item's folder (the original stays)."""
         row = self.selected_archive()
-        if not row:
-            self.archive_hint()
+        if not row or self.busy:
             return
         source = filedialog.askopenfilename(parent=self, title=i18n.t('dialog.transcript.title'),
                                             filetypes=[(i18n.t('dialog.filetype.transcript'), '*.txt *.srt *.md *.vtt')])

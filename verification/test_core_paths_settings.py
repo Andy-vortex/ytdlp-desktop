@@ -1,3 +1,4 @@
+# quick
 """paths.py, settings.py, applog.py and library.open_library (1.6.0 WP1).
 
 R7: settings.json that is not an object, not JSON, has a BOM or wrong value types;
@@ -32,10 +33,20 @@ from unittest import mock
 
 import applog
 import engine
+import i18n
 import library
 import paths
 import procutil
 import settings
+import unfinished
+
+
+# (2.0.0 S3 W4) the zh text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import zh_t
+
+
+# how the warning of a history kept in memory starts: the zh text of core.library.temporary before its {error}
+TEMPORARY = zh_t('core.library.temporary', error='\0').split('\0')[0]
 
 EVERYONE = '*S-1-1-0'   # the well-known group, by SID: its name differs between Windows languages
 REPLACE_PAUSE = paths.REPLACE_PAUSE   # the real value; the tests run with a shorter one
@@ -175,16 +186,14 @@ class PathsTests(TempCase):
             self.assertEqual(paths.data_dir(), other / 'a' / 'data')
         self.assertEqual(self.names(self.root), [], 'no path function creates a file or folder')
 
-    def test_engine_keeps_the_old_names_as_copies(self):
-        self.assertEqual(engine.RESOURCE_ROOT, paths.RESOURCE_ROOT)
-        self.assertEqual(engine.VENDOR, paths.VENDOR)
-        self.assertEqual(engine.BIN, paths.BIN)
-        self.assertEqual(library.CATALOG.name, 'library.sqlite3')
-        self.assertEqual(library.CATALOG.parent.name, 'data')
-        # Engine code follows paths.STATE_DIR, the copy engine.STATE_DIR is only for importers.
-        engine.store_failed_job(['https://example.invalid/a'], engine.Options(self.root / 'out'))
+    def test_the_state_files_follow_paths(self):
+        # (2.0.0 S2 P4) engine's copies of the paths names (for 1.5.1 importers) are gone: paths is the one place
+        for name in ('RESOURCE_ROOT', 'VENDOR', 'BIN', 'APP_DIR', 'STATE_DIR'):
+            self.assertFalse(hasattr(engine, name), name)
+        # Engine code follows paths.STATE_DIR
+        _sandbox.save_unfinished(['https://example.invalid/a'], engine.Options(self.root / 'out'))
         self.assertEqual(self.names(self.state), ['failed-downloads.json'])
-        self.assertEqual(engine.load_failed_job()['urls'], ['https://example.invalid/a'])
+        self.assertEqual([item['url'] for item in unfinished.load()], ['https://example.invalid/a'])
 
     def test_catalog_path(self):
         data = self.app / 'data'
@@ -389,13 +398,14 @@ class PathsTests(TempCase):
                 thread.join(30)
 
     def test_the_apps_own_readers_use_the_shared_lock(self):
-        """settings.load, engine.load_failed_job and the engine receipt go through paths.read_*."""
+        """settings.load, unfinished.load (2.0.0 S2 P4: in place of engine.load_failed_job, a 1.5.1 wrapper)
+        and the engine receipt go through paths.read_*."""
         paths.atomic_write_text(paths.settings_file(), '{}')
-        engine.store_failed_job(['https://example.invalid/a'], engine.Options(self.root / 'out'))
+        _sandbox.save_unfinished(['https://example.invalid/a'], engine.Options(self.root / 'out'))
         with mock.patch.object(paths, 'read_bytes', wraps=paths.read_bytes) as read_bytes, \
                 mock.patch.object(paths, 'read_text', wraps=paths.read_text) as read_text:
             settings.load()
-            self.assertEqual(engine.load_failed_job()['urls'], ['https://example.invalid/a'])
+            self.assertEqual([item['url'] for item in unfinished.load()], ['https://example.invalid/a'])
         self.assertEqual([Path(call.args[0]) for call in read_bytes.call_args_list], [paths.settings_file()])
         self.assertEqual([Path(call.args[0]) for call in read_text.call_args_list], [paths.failed_file()])
 
@@ -523,7 +533,8 @@ class PathsTests(TempCase):
         return {'tmp': sorted(marker + runs), 'collect': sorted(marker + runs),
                 'work': sorted(marker + ['fresh.part', 'fresh.ytdl', 'new.webm', 'new.part', 'sub',
                                          '标题 [abc].f251.webm.part', 'young.jpg', 'x [a].f137.mp4']),
-                'engines': sorted(marker + ['yt-dlp.exe', 'yt-dlp.json', f'yt-dlp.download.{own}.3.exe',
+                # (2.0.0 S2 P4) 'yt-dlp.download', the fixed name of 1.5.1's updater, is no update file any more
+                'engines': sorted(marker + ['yt-dlp.exe', 'yt-dlp.json', 'yt-dlp.download', f'yt-dlp.download.{own}.3.exe',
                                             'yt-dlp.download-notes.txt', 'yt-dlp.download.backup',
                                             f'yt-dlp.download.{dead}.exe', 'my yt-dlp.download',
                                             'yt-dlp.download.7.7.exe'])}
@@ -612,7 +623,8 @@ class PathsTests(TempCase):
             for name in names.values():
                 (engines / name).write_bytes(b'x')
             purge()
-            self.assertEqual(self.names(engines), sorted(['.ytdlp-desktop', names['mine'], names['other']]))
+            # (2.0.0 S2 P4) the fixed name of 1.5.1's updater is left alone
+            self.assertEqual(self.names(engines), sorted(['.ytdlp-desktop', names['mine'], names['other'], names['legacy']]))
         calls = []
         paths.purge_engine_downloads(lambda pid: calls.append(pid) or True)
         self.assertEqual(sorted(calls), sorted([own, other.pid]), 'alive() is asked with the pid in the file name')
@@ -651,10 +663,12 @@ class SettingsTests(TempCase):
     """R7."""
 
     BOOLEANS = ('batch_safe', 'archive_enabled', 'embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded',
-                'notify_done', 'clipboard_hint', 'check_engine_updates', 'zoomed')
+                'notify_done', 'clipboard_hint', 'check_engine_updates', 'zoomed', 'subscription_media_only',
+                'subscription_first_new')
     STRINGS = ('output', 'mode', 'resolution', 'archive_root', 'cookies', 'naming', 'latest_engine', 'last_clip',
-               'geometry', 'appearance')
+               'geometry', 'appearance', 'language')
     NUMBERS = ('last_engine_check', 'bot_check_at')
+    SCHEDULES = ('subscription_interval',)        # (2.0.0 S4 A1) one of settings.SCHEDULES, an int
 
     def write(self, content):
         self.state.mkdir(parents=True, exist_ok=True)
@@ -667,7 +681,7 @@ class SettingsTests(TempCase):
         return path
 
     def assert_typed(self, values):
-        self.assertEqual(set(values), set(self.BOOLEANS + self.STRINGS + self.NUMBERS) | {'_extra'})
+        self.assertEqual(set(values), set(self.BOOLEANS + self.STRINGS + self.NUMBERS + self.SCHEDULES))
         for key in self.BOOLEANS:
             self.assertIs(type(values[key]), bool, key)
         for key in self.STRINGS:
@@ -675,10 +689,13 @@ class SettingsTests(TempCase):
         for key in self.NUMBERS:
             self.assertIs(type(values[key]), float, key)
             self.assertGreaterEqual(values[key], 0, key)
+        for key in self.SCHEDULES:
+            self.assertIs(type(values[key]), int, key)
+            self.assertIn(values[key], (900, 3600, 86400, 0), key)
         self.assertIn(values['naming'], ('title', 'clean', 'title_id'))
         self.assertIn(values['appearance'], ('light', 'dark', 'system'))
         self.assertTrue(values['output'].strip())
-        self.assertIsInstance(values['_extra'], dict)
+        self.assertIn(values['language'], ('system', 'zh', 'en'))
 
     def defaults(self):
         output = str(self.app / '下载文件')
@@ -687,14 +704,15 @@ class SettingsTests(TempCase):
                 'naming': 'title', 'embed_metadata': True, 'embed_cover': True, 'subtitles': False,
                 'skip_downloaded': True, 'notify_done': True, 'clipboard_hint': True, 'check_engine_updates': True,
                 'last_engine_check': 0.0, 'bot_check_at': 0.0, 'latest_engine': '', 'last_clip': '', 'geometry': '',
-                'zoomed': False, 'appearance': 'light', '_extra': {}}
+                'zoomed': False, 'appearance': 'light', 'language': 'system',
+                'subscription_media_only': True, 'subscription_first_new': True, 'subscription_interval': 3600}
 
     def test_missing_file_gives_the_defaults_and_creates_nothing(self):
         values = settings.load()
         self.assertEqual(values, self.defaults())
         self.assert_typed(values)
         self.assertFalse(self.state.exists())
-        self.assertEqual({**settings.DEFAULTS, '_extra': {}}, self.defaults())
+        self.assertEqual(settings.DEFAULTS, self.defaults())
         self.assertEqual(settings.defaults(), settings.DEFAULTS)
         with mock.patch.object(paths, 'APP_DIR', self.root / 'moved'):
             self.assertEqual(settings.DEFAULTS['output'], str(self.root / 'moved' / '下载文件'))
@@ -749,21 +767,14 @@ class SettingsTests(TempCase):
         self.assertEqual(self.names(self.state), ['settings.json'], 'a readable file is never set aside')
         self.assertTrue(path.read_bytes().startswith(b'\xef\xbb\xbf'), 'loading does not rewrite the file')
 
-    def test_the_file_1_5_1_writes_is_loaded_unchanged(self):
-        stored = {'output': 'D:\\YT-DLP下载器\\下载文件', 'mode': '音频 · WAV 32 位', 'resolution': '最佳',
-                  'batch_safe': True, 'archive_enabled': False, 'archive_root': 'D:\\YT-DLP下载器\\下载文件\\资料归档',
-                  'cookies': ''}
-        self.write(json.dumps(stored, ensure_ascii=False, indent=2))
-        values = settings.load()
-        self.assertEqual({key: values[key] for key in stored}, stored)
-        self.assertEqual(values['_extra'], {})
-
     def test_wrong_types_fall_back_per_key(self):
         wrong = {'output': 5, 'mode': 7, 'resolution': None, 'batch_safe': 'no', 'archive_enabled': 'yes',
                  'archive_root': [], 'cookies': {}, 'naming': 'weird', 'embed_metadata': 1, 'embed_cover': 0,
                  'subtitles': None, 'skip_downloaded': 'true', 'notify_done': [], 'clipboard_hint': {},
                  'check_engine_updates': 'on', 'last_engine_check': 'yesterday', 'bot_check_at': -5,
-                 'latest_engine': 2026, 'last_clip': None, 'geometry': 1120, 'zoomed': 'true', 'appearance': 'blue'}
+                 'latest_engine': 2026, 'last_clip': None, 'geometry': 1120, 'zoomed': 'true', 'appearance': 'blue',
+                 'language': 'fr', 'subscription_media_only': 'yes', 'subscription_first_new': 1,
+                 'subscription_interval': '3600'}
         self.write(wrong)
         values = settings.load()
         self.assertEqual(values, self.defaults())
@@ -779,13 +790,14 @@ class SettingsTests(TempCase):
                          'the default archive root follows the loaded output')
 
     def test_valid_values_of_every_key_are_kept(self):
-        stored = {'output': 'E:\\下载', 'mode': '视频 · MP4 兼容', 'resolution': '720p', 'batch_safe': False,
+        stored = {'output': 'E:\\下载', 'mode': 'video_mp4', 'resolution': '720p', 'batch_safe': False,
                   'archive_enabled': True, 'archive_root': 'E:\\库', 'cookies': 'E:\\c.txt', 'naming': 'title_id',
                   'embed_metadata': False, 'embed_cover': False, 'subtitles': True, 'skip_downloaded': False,
                   'notify_done': False, 'clipboard_hint': False, 'check_engine_updates': False,
                   'last_engine_check': 1794000000.5, 'bot_check_at': 1794000100, 'latest_engine': '2026.11.01',
                   'last_clip': 'da39a3ee5e6b4b0d3255bfef95601890afd80709', 'geometry': '1280x900+10+20',
-                  'zoomed': True, 'appearance': 'system'}
+                  'zoomed': True, 'appearance': 'system', 'language': 'en', 'subscription_media_only': False,
+                  'subscription_first_new': False, 'subscription_interval': 86400}
         self.write(stored)
         values = settings.load()
         self.assertEqual({key: values[key] for key in stored}, {**stored, 'bot_check_at': 1794000100.0})
@@ -804,31 +816,107 @@ class SettingsTests(TempCase):
                 self.assertEqual(values['output'], expected)
                 self.assertEqual(values['archive_root'], str(Path(expected) / '资料归档'))
 
-    def test_unknown_keys_round_trip(self):
-        self.write({'output': 'D:\\Music', 'future_list': [1, {'深': '层'}], 'future_flag': True, 'mode': engine.MODES[2],
-                    '_private_of_another_version': 3})
+    def test_a_settings_file_of_1_8_1_is_read_key_by_key(self):
+        """(2.0.0 S2 Q2, S2-AMEND.md 2.4 item 18) No version mark: the keys are checked one by one as always.
+        (S2 review F2) The Chinese format name and 最佳 are not codes, so they become the defaults (DATA.md
+        section 5; StudioApp's own fallback, test_ui_state.GForeignFileTests, stays); _extra is an unknown key
+        (the language follows the system)."""
+        self.write({'output': 'D:\\Music', 'mode': '音频 · FLAC', 'resolution': '最佳', '_extra': {'language': 'en'},
+                    'embed_cover': False, 'subtitles': True, 'batch_safe': False})
         values = settings.load()
-        self.assertEqual(values['_extra'], {'future_list': [1, {'深': '层'}], 'future_flag': True,
-                                            '_private_of_another_version': 3})
+        self.assert_typed(values)
+        self.assertEqual((values['output'], values['mode'], values['resolution'], values['language']),
+                         ('D:\\Music', engine.MODES[0], engine.RESOLUTIONS[0], 'system'))
+        self.assertEqual((values['embed_cover'], values['subtitles'], values['batch_safe']), (False, True, False))
+        self.assertNotIn('_extra', values)
+        self.assertIs(settings.save(values), True)
+        written = json.loads(paths.settings_file().read_text(encoding='utf-8'))
+        self.assertEqual((written['mode'], written['resolution']), (engine.MODES[0], engine.RESOLUTIONS[0]))
+        for key, codes in (('mode', engine.MODES), ('resolution', engine.RESOLUTIONS)):
+            for code in codes:
+                self.write({key: code})
+                self.assertEqual(settings.load()[key], code)
+            for other in (codes[0].upper(), '', 3, None, ['best']):
+                self.write({key: other})
+                self.assertEqual(settings.load()[key], codes[0], (key, other))
+
+    def test_the_subscription_schedule_is_one_of_the_schedules(self):
+        """(2.0.0 S4 A1, settings.md 3.2) subscription_interval: seconds, one of SCHEDULES in menu order; a whole
+        float is read as its int; True (== 1), other numbers, NaN and other types give the default 3600."""
+        self.assertEqual(settings.SCHEDULES, (900, 3600, 86400, 0))
+        cases = [(900, 900), (3600, 3600), (86400, 86400), (0, 0), (3600.0, 3600), (86400.0, 86400), (True, 3600),
+                 (False, 3600), (7200, 3600), (-900, 3600), (900.5, 3600), ('900', 3600), (None, 3600), ([900], 3600),
+                 ({}, 3600)]
+        for stored, wanted in cases:
+            with self.subTest(stored=stored):
+                self.write({'subscription_interval': stored})
+                value = settings.load()['subscription_interval']
+                self.assertEqual(value, wanted)
+                self.assertIs(type(value), int)
+        self.write('{"subscription_interval": NaN, "subscription_media_only": false, "subscription_first_new": 0}')
+        values = settings.load()
+        self.assertEqual((values['subscription_interval'], values['subscription_media_only'],
+                          values['subscription_first_new']), (3600, False, True))
+        self.assertEqual(self.names(self.state), ['settings.json'], 'a value out of range never makes the file bad')
+        # a file without the three keys (every file written before S4) gets the defaults; nothing is converted
+        self.write({'naming': 'clean'})
+        values = settings.load()
+        self.assertEqual((values['subscription_interval'], values['subscription_media_only'],
+                          values['subscription_first_new']), (3600, True, True))
+        self.assertIs(settings.save({**values, 'subscription_interval': 900}), True)
+        self.assertEqual(json.loads(paths.settings_file().read_text(encoding='utf-8'))['subscription_interval'], 900)
+        self.assertEqual(settings.load()['subscription_interval'], 900)
+
+    def test_the_code_lists_are_the_ones_of_the_engine(self):
+        # settings.py imports paths only, so it writes the codes down; they must be the engine's own.
+        self.assertEqual(settings.MODES, engine.MODES)
+        self.assertEqual(settings.RESOLUTIONS, engine.RESOLUTIONS)
+
+    def test_peek_reads_and_changes_nothing(self):
+        """(S2 review F1) settings.peek (the self-test) types the file like load() and never sets a damaged
+        file aside."""
+        self.assertEqual(settings.peek(), self.defaults())
+        self.assertFalse(self.state.exists())
+        self.write({'output': 'D:/Music', 'language': 'en', 'mode': '最佳'})
+        self.assertEqual(settings.peek(), settings.load())
+        for content in ('{"language": "en", broken', '[]', bytes([255, 254]), ''):
+            path = self.write(content)
+            before = path.read_bytes()
+            self.assertEqual(settings.peek(), self.defaults())
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(sorted(item.name for item in self.state.iterdir()), ['settings.json'])
+
+    def test_language_is_a_known_key_and_unknown_keys_are_not_kept(self):
+        """(2.0.0 S2 P3) 'language' is a key of its own (it was kept in '_extra'); the keys this version does
+        not know are no longer read or written back."""
+        for stored, expected in (('zh', 'zh'), ('en', 'en'), ('system', 'system'), ('fr', 'system'), (7, 'system')):
+            with self.subTest(language=stored):
+                self.write({'output': 'D:\\Music', 'language': stored})
+                self.assertEqual(settings.load()['language'], expected)
+        self.write({'output': 'D:\\Music', 'future_list': [1, {'深': '层'}], 'future_flag': True, 'mode': engine.MODES[2],
+                    '_private_of_another_version': 3, 'language': 'en'})
+        values = settings.load()
+        self.assert_typed(values)
+        self.assertEqual(values['language'], 'en')
+        for key in ('future_list', 'future_flag', '_private_of_another_version', '_extra'):
+            self.assertNotIn(key, values)
         values['batch_safe'] = False
         values['_session_only'] = 'never written'
         self.assertIs(settings.save(values), True)
         written = json.loads(paths.settings_file().read_text(encoding='utf-8'))
-        self.assertEqual(written['future_list'], [1, {'深': '层'}])
-        self.assertIs(written['future_flag'], True)
-        self.assertEqual(written['_private_of_another_version'], 3)
-        self.assertNotIn('_extra', written)
-        self.assertNotIn('_session_only', written)
-        self.assertEqual((written['output'], written['mode'], written['batch_safe']),
-                         ('D:\\Music', engine.MODES[2], False))
+        self.assertEqual(set(written), set(self.BOOLEANS + self.STRINGS + self.NUMBERS + self.SCHEDULES))
+        self.assertEqual((written['output'], written['mode'], written['batch_safe'], written['language']),
+                         ('D:\\Music', engine.MODES[2], False, 'en'))
         again = settings.load()
         values.pop('_session_only')
         self.assertEqual(again, values)
-        # A known key always wins over a stray copy in _extra.
-        settings.save({'output': 'D:\\A', '_extra': {'output': 'D:\\B', 'kept': 1}})
-        self.assertEqual(json.loads(paths.settings_file().read_text(encoding='utf-8')), {'output': 'D:\\A', 'kept': 1})
+        # A stray '_extra' of an older file is an unknown key like any other.
+        self.write({'output': 'D:\\A', '_extra': {'output': 'D:\\B', 'language': 'en', 'kept': 1}})
+        values = settings.load()
+        self.assertEqual((values['output'], values['language']), ('D:\\A', 'system'))
+        self.assertNotIn('_extra', values)
 
-    def test_save_is_atomic_and_readable_by_1_5_1(self):
+    def test_save_is_atomic(self):
         values = settings.load()
         values.update(output='D:\\音乐', cookies='C:\\Users\\某人\\cookies.txt', geometry='1120x810+5+5')
         with mock.patch.object(os, 'fsync', wraps=os.fsync) as fsync, \
@@ -838,16 +926,7 @@ class SettingsTests(TempCase):
         self.assertEqual(self.names(self.state), ['settings.json'], 'no temp file is left')
         raw = paths.settings_file().read_bytes()
         self.assertFalse(raw.startswith(b'\xef\xbb\xbf'))
-        # What studio.py of 1.5.1 does with the file (it shares it as the rollback version).
-        legacy = json.loads(paths.settings_file().read_text(encoding='utf-8'))
-        self.assertIsInstance(legacy, dict)
-        self.assertEqual(list(legacy)[:7], ['output', 'mode', 'resolution', 'batch_safe', 'archive_enabled',
-                                            'archive_root', 'cookies'])
-        self.assertIn(legacy.get('mode', engine.MODES[0]), engine.MODES)
-        self.assertIn(legacy.get('resolution'), engine.RESOLUTIONS)
-        self.assertIs(type(legacy['batch_safe']), bool)
-        self.assertIs(type(legacy['archive_enabled']), bool)
-        self.assertEqual(legacy['cookies'], 'C:\\Users\\某人\\cookies.txt')
+        self.assertIsInstance(json.loads(raw.decode('utf-8')), dict)
         self.assertEqual(settings.load(), values)
 
     def test_failed_save_returns_false_and_keeps_the_old_file(self):
@@ -903,8 +982,9 @@ class SettingsTests(TempCase):
     def test_fuzz_never_raises_and_always_gives_typed_values(self):
         generator = random.Random(160)
         pool = [None, True, False, 0, 1, -1, 2.5, float('nan'), float('inf'), '', ' ', 'x', '"q"', 'title', 'clean',
-                'dark', 'system', engine.MODES[1], '1080p', 'D:\\目录', [], [1], {}, {'a': 1}, 10 ** 30]
-        keys = list(self.BOOLEANS + self.STRINGS + self.NUMBERS) + ['unknown', '_extra', '_x', '']
+                'dark', 'system', engine.MODES[1], '1080p', 'D:\\目录', [], [1], {}, {'a': 1}, 10 ** 30, 900, 3600.0,
+                86400]
+        keys = list(self.BOOLEANS + self.STRINGS + self.NUMBERS + self.SCHEDULES) + ['unknown', '_extra', '_x', '']
         for round_number in range(300):
             data = {key: generator.choice(pool) for key in generator.sample(keys, generator.randint(0, len(keys)))}
             self.write(json.dumps(data, ensure_ascii=False))
@@ -956,7 +1036,7 @@ class HeldSettingsTests(TempCase):
 
     write = SettingsTests.write
     defaults = SettingsTests.defaults
-    OWNER = {'output': 'D:\\owner\\music', 'mode': '音频 · FLAC', 'batch_safe': False, 'cookies': 'C:\\owner\\cookies.txt',
+    OWNER = {'output': 'D:\\owner\\music', 'mode': 'audio_flac', 'batch_safe': False, 'cookies': 'C:\\owner\\cookies.txt',
              'future_key': [1, 2]}
 
     def test_a_file_held_for_a_moment_is_read(self):
@@ -997,8 +1077,8 @@ class HeldSettingsTests(TempCase):
         again = settings.load()
         self.assertEqual((again['output'], again['mode'], again['cookies'], again['naming'], again['batch_safe'],
                           again['subtitles']),
-                         ('D:\\owner\\music', '音频 · FLAC', 'C:\\owner\\cookies.txt', 'title', False, True))
-        self.assertEqual(again['_extra'], {'future_key': [1, 2]})
+                         ('D:\\owner\\music', 'audio_flac', 'C:\\owner\\cookies.txt', 'title', False, True))
+        self.assertNotIn('future_key', again, '(2.0.0) a key this version does not know is not read')
         self.assertEqual(self.names(self.state), ['settings.json'])
 
     def test_a_held_file_that_disappears_gets_the_changed_values_only(self):
@@ -1072,8 +1152,8 @@ class OpenLibraryTests(TempCase):
         folder = self.root / 'a-folder.sqlite3'
         folder.mkdir()
         store, warning = library.open_library(folder)
-        self.assertTrue(warning.startswith('历史记录本次不保存：'), warning)
-        self.assertGreater(len(warning), len('历史记录本次不保存：'))
+        self.assertTrue(warning.startswith(TEMPORARY), warning)
+        self.assertGreater(len(warning), len(TEMPORARY))
         self.assertNotEqual(store.path, folder.resolve())
         self.assertEqual(store.path.name, 'library.sqlite3')
         self.assertTrue(store.path.parent.name.startswith('ytdlp-history-'))
@@ -1082,13 +1162,18 @@ class OpenLibraryTests(TempCase):
         self.assertEqual(store.job(job)['title'], '回退库')
         self.assertEqual(list(folder.iterdir()), [])
 
-    def test_falls_back_when_the_file_is_not_a_database(self):
+    def test_a_file_that_is_not_a_database_is_kept_aside(self):
+        """(2.0.0 S2 Q2, PLAN 3.10, S2-AMEND.md 8 item 5) It was left alone for a throw-away history of
+        every session (1.8.1); now it is renamed in its folder, byte for byte, and a new history starts in
+        its place (all cases: test_library_store.ForeignLibraryTests)."""
         broken = self.root / 'broken.sqlite3'
         broken.write_bytes(b'this is not a database' * 100)
         store, warning = library.open_library(broken)
-        self.assertTrue(warning.startswith('历史记录本次不保存：'), warning)
-        self.assertEqual(store.history(), [])
-        self.assertEqual(broken.read_bytes(), b'this is not a database' * 100, 'the unreadable file is left alone')
+        self.assertEqual((warning.key, warning.params['problem']), ('core.library.kept_aside', 'file is not a database'))
+        self.assertEqual((store.path, store.history()), (broken.resolve(), []))
+        kept = sorted(self.root.glob('broken.bad-*.sqlite3'))
+        self.assertEqual([path.read_bytes() for path in kept], [b'this is not a database' * 100])
+        self.assertEqual(warning.params['target'], kept[0].name)
 
     def history(self, folder):
         """A database with one job, as an earlier session left it: (Library, path, bytes)."""
@@ -1098,8 +1183,8 @@ class OpenLibraryTests(TempCase):
         return store, folder / 'library.sqlite3', (folder / 'library.sqlite3').read_bytes()
 
     def assert_fallback(self, opened, warning, original):
-        self.assertTrue(warning.startswith('历史记录本次不保存：'), warning)
-        self.assertGreater(len(warning), len('历史记录本次不保存：'))
+        self.assertTrue(warning.startswith(TEMPORARY), warning)
+        self.assertGreater(len(warning), len(TEMPORARY))
         self.assertNotEqual(opened.path, original.path)
         self.assertTrue(opened.path.parent.name.startswith('ytdlp-history-'))
         job = opened.create_job('download', '回退库', {'urls': []})   # this session's history works
@@ -1245,11 +1330,13 @@ class AppLogTests(TempCase):
         paths.log_file().unlink()   # the file is closed
         applog.shutdown()           # twice is harmless
 
-    def test_the_1_5_1_window_adds_no_second_handler(self):
+    def test_a_second_setup_adds_no_second_handler(self):
         logger = applog.setup()
-        # studio.py:71-76 of 1.5.1.
         if not logger.handlers:
-            self.fail('the 1.5.1 window would attach its own handler to a second open file')
+            self.fail('a caller that checks for a handler would attach its own to a second open file')
+        handlers = list(logger.handlers)
+        self.assertIs(applog.setup(), logger)
+        self.assertEqual(logger.handlers, handlers, 'a second setup adds no second handler')
         self.assertEqual(logger.level, logging.INFO)
 
     def test_setup_never_raises_and_falls_back_to_a_null_handler(self):

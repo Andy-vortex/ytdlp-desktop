@@ -1,10 +1,10 @@
 {
  "module": "i18n",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
   "；": {
    "category": "token",
-   "reason": "the clause joiner of the message model (MESSAGES.md 2.1, 4.6 L5): i18n.JOIN of join_sentences in zh; allowed only in messages, i18n, i18n_legacy"
+   "reason": "the clause joiner of the message model (MESSAGES.md 2.1, 4.6 L5): i18n.JOIN of join_sentences in zh; allowed only in messages and i18n"
   }
  },
  "raises": {
@@ -20,6 +20,5 @@
    "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
   }
  },
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

@@ -12,11 +12,20 @@ VERIFY_OUT/shots (or --out).  It returns the list of failed assertions (empty = 
 destroys its app before it returns.  A process never holds two live StudioApp instances:
 call run() only after the calling file has destroyed its own app.
 
+(2.0.0 S4 stage C) (15) state 'idle' with a language: the collect page in dynamic mode, the download page with
+only unfinished links (its solid button is 重试未完成 (N)) and the empty library views are captured and checked
+like the pages ((9), (9b), (13) and at most one solid button); the library views of state 'filled' are the
+subscription view with new items, the crowded download page is state 'active' (download-crowded).
+
+(2.0.0 S4 A2) (14) on every checked page the header holds only the title: header.title, header.left and
+header.right are its only children, and no other label sits in it (page-level controls go into header.left /
+header.right, 00-system 2.4).
+
 Assertions (WP4.md section H): (1) at 1000x740 no page asks for more height than the content
 area has; (2) task list viewport >= 300 logical px at 1000x740, >= 380 at 1120x810; (3) a
 60-character title and a 120-character metrics text change neither the composer card, the task
-header nor the viewport (+-1 px); (4) settings cards fit the scroll viewport horizontally, the
-scrollbar is shown and the last card can be scrolled fully into view; (5) every Treeview line is
+header nor the viewport (+-1 px); (4) the settings grid fits the scroll viewport horizontally, the
+scrollbar is shown and the last About row can be scrolled fully into view; (5) every Treeview line is
 at least 0.85 of the body text line; (6) no widget of a checked page keeps the stock colours
 #3B8ED0 / #979DA2; (7) at 2560x1392 the composer card is at most 1081 logical px wide; (8) at
 1000x740 the full bot-check sentence fits the metrics line.
@@ -36,16 +45,18 @@ only (1) to (8) run, exactly as before.
        (text + 16 px); table cells are shown in full or cut by AppTable.ellipsize with '…'.
   (9b) nothing ends outside its card: every mapped button, entry, option menu, checkbox and segmented
        bar ends left of the inner right edge of the nearest card around it (all library tabs).
-  (10) state 'active': the sidebar texts fit the sidebar (navigation, status, badges, never cut) with
-       a running job at item 123 of 456, the waiting status, the YouTube status and the app badge of a
-       newer engine.
-  (11) state 'active', 1000x740: the task title keeps at least 160 px with 4 unfinished rows and the
-       Retry count shown, and again with three-digit counts (122 done, 1 active, 333 waiting, 123
-       unfinished).  (Final fix round 1, ENV-1) Also after a job that ended with the YouTube check (a
-       skipped link, eight on hold), after 清除未完成, and while a web collection or an engine update runs
-       after it: the title keeps 160 px and (9) / (9b) hold for the task header.
-  (12) the subscription strip and the settings cards fit (the WP5 / 1.6.0 checks above, run in the
-       chosen language).
+  (10) state 'active': the sidebar texts fit the sidebar (navigation, status, the 'Update available' link,
+       never cut) with a running job at item 123 of 456, the waiting status, the YouTube status and a newer
+       engine; (2.0.0 S4 A2) the status is one word of 00-system 4.4 (Downloading, Waiting mm:ss, On hold) and
+       the link is shown exactly while a newer engine is offered.
+  (11) state 'active', 1000x740: (2.0.0 S4) the task title has a line of its own, as wide as the task
+       header, and is shown whole when it holds no user data, with 4 unfinished rows and the Retry count
+       shown, and again with three-digit counts (122 done, 1 active, 333 waiting, 123 unfinished).  (Final
+       fix round 1, ENV-1) Also after a job that ended with the YouTube check (a skipped link, eight on hold),
+       after 清除未完成, and while a web collection or an engine update runs after it; (9) / (9b) hold for the
+       task header.
+  (12) the new-items line of the subscription view and the settings grid fit (the WP5 / 1.6.0 checks above,
+       run in the chosen language; 2.0.0 S4: the creation strip and the settings cards are gone).
 
 (1.8.0 WP-6, MESSAGES.md 7.6) In English only:
   (13) no Chinese outside user data: every text of every mapped widget of every captured page, tab and
@@ -75,7 +86,7 @@ from PIL import Image
 PAGES = ('download', 'collect', 'library', 'logs', 'settings')
 CHECKED = ('download', 'settings', 'logs', 'collect', 'library')     # WP4 checked the first three; WP5 added the others
 SIZES = ('1000x740', '1120x810', '2560x1392')
-LIBRARY_TABS = ('任务历史与续采', '增量订阅', '统一资料归档')
+LIBRARY_TABS = ('history', 'subscriptions', 'archive')        # library_ui.TAB_* (the tab ids), in tab order
 STOCK = ('#3b8ed0', '#979da2')
 TITLE_60 = '周杰伦 - 晴天 (Official Music Video) 【高音质 · 动态歌词 Lyrics】「每日推荐」 #63 加长版'[:60]
 METRICS_120 = ('网站限流，暂停整个下载队列 · 剩余 04:59 · 可随时停止 · ' * 4)[:120]
@@ -88,8 +99,7 @@ LIGHT_SURFACES = ('#ffffff', '#f4f7fc', '#f7f9fd')
 LANGUAGES = ('zh', 'en')
 TOLERANCE = 1           # physical px a measured width may exceed the widget (rounding of scaled sizes)
 HEADING_PAD = 16        # logical px a table heading needs beside its text (I18N.md 11.5 (9))
-TITLE_MIN = 160         # logical px the task title keeps in the active scene (I18N.md 10.5, (11))
-SIDEBAR_JOB = (123, 456)    # (10): the item of a long job shown in the sidebar status
+SIDEBAR_JOB = (123, 456)    # (10), (11): a long job (the task header counts it; the sidebar says one word)
 # (13) The user data the scenes feed (media, page and link titles, subscription and uploader names, file
 # names): taken out of a text before it is checked for CJK.  Every entry is a part of a string literal of
 # this file (checked by user_data()), never an app text.
@@ -240,14 +250,15 @@ def bot_scene(app):
 def filled_scene(app):
     """Collect and library pages with content (WP5): collected links with a selection, history jobs
     with an error, a subscription with pending entries, archive rows.  The download page is left alone."""
+    import engine
     from engine import MODES
     source = 'https://www.example.org/podcast/list'
     links = [{'url': f'https://media.example.org/podcast/episode-{number:03d}.m4a',
-              'title': f'第 {number} 期 · 城市夜谈：在凌晨两点仍然醒着的人', 'kind': '媒体地址', 'source': source}
+              'title': f'第 {number} 期 · 城市夜谈：在凌晨两点仍然醒着的人', 'kind': 'media', 'source': source}
              for number in range(1, 15)]
-    links += [{'url': 'https://www.youtube.com/watch?v=OQMcYxMlwGA', 'title': '徐秉龙 - 双子 【Lyrics MV】', 'kind': '视频页面',
+    links += [{'url': 'https://www.youtube.com/watch?v=OQMcYxMlwGA', 'title': '徐秉龙 - 双子 【Lyrics MV】', 'kind': 'video_page',
                'source': source},
-              {'url': 'https://www.example.org/podcast/about', 'title': '关于本节目', 'kind': '网页链接', 'source': source}]
+              {'url': 'https://www.example.org/podcast/about', 'title': '关于本节目', 'kind': 'web', 'source': source}]
     page = {'url': source, 'title': '城市夜谈 · 节目列表', 'text': '节目简介', 'markdown': '# 节目简介', 'links': links}
     app.collect_urls.insert('1.0', source + '\nhttps://www.example.org/podcast/list?page=2')
     app.handle('collect_page', page)
@@ -258,20 +269,22 @@ def filled_scene(app):
             ('徐秉龙 - 双子 【Lyrics MV】「每日歌曲推荐 #63」 等 3 条', 'download', 'partial',
              ['ERROR: [youtube] OQMcYxMlwGA: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies '
               'for the authentication.']),
-            ('订阅：城市夜谈', 'collect', 'completed', []),
+            ('城市夜谈', 'collect', 'completed', []),
             ('李翊君 雨蝶 歌詞版', 'download', 'completed', []),
-            (source, 'collect', 'interrupted', ['网站返回HTTP 503，可尝试动态模式或稍后重试。']),
+            (source, 'collect', 'interrupted', [engine.msg('core.collect.http_status', status=503)]),
             ('周杰伦 - 晴天 (Official MV)', 'download', 'interrupted', [])]:
         multi = title.endswith(' 等 3 条')
-        # (final fix round 2, CR2-2) The multi-link job as a run writes it: three links, the placeholder
-        # title, then the first media title (library.download_event: '{title} 等 3 条', data['titled']).
+        # (final fix round 2, CR2-2) The multi-link job as a run writes it: three links, no title, then the
+        # first media title (library.download_event; 2.0.0: the title and title_links 3).  (2.0.0 S2 P2) The
+        # subscription check's job is via='subscription' with the subscription's name.
         urls = ['https://www.youtube.com/watch?v=OQMcYxMlwGA', 'https://youtu.be/dQw4w9WgXcQ',
                 'https://www.bilibili.com/video/BV1xx411c7mD'] if multi else [source]
-        job = store.create_job(kind, f'3 条 · {MODES[0]}' if multi else title,
-                               {'urls': urls, 'output': str(_sandbox.out('snapshot-output')), 'mode': MODES[0]})
+        job = store.create_job(kind, '' if multi else title,
+                               {'urls': urls, 'output': str(_sandbox.out('snapshot-output')), 'mode': MODES[0]},
+                               via='subscription' if title == '城市夜谈' else None)
         if multi:
             store.download_event(job, 'title', title[:-len(' 等 3 条')])
-        store.change_job(job, status=status, errors=errors)
+        store.change_job(job, status=status, errors=[{'error': error, 'reason': None} for error in errors])
     subscription = store.subscription('城市夜谈 · 每周更新', {'urls': [source], 'dynamic': False, 'scrolls': 0,
                                                           'selector': '', 'max_pages': 1}, 3600, True, True)
     store.finish_subscription(subscription, [page], True)
@@ -490,19 +503,36 @@ def _table_failures(table):
 
 def _is_card(widget):
     import ui_theme
-    if isinstance(widget, ui_theme.Tabs):
-        return True
     if not isinstance(widget, ctk.CTkFrame) or isinstance(widget, ctk.CTkSegmentedButton):
         return False
     try:
-        return widget.cget('border_width') >= 1 and widget.cget('corner_radius') >= ui_theme.RADIUS_CARD
+        # (2.0.0 S4) no cards any more: a bordered, rounded frame (the link box) bounds what sits in it
+        return widget.cget('border_width') >= 1 and widget.cget('corner_radius') >= ui_theme.RADIUS
     except (ValueError, tk.TclError):
         return False
 
 
+def header_failures(app, page):
+    """(14) The header of page ``page`` holds only its title (2.0.0 S4, 00-system 2.4): its children are
+    header.title, header.left and header.right, and the title is the only label in it."""
+    import ui_theme
+    header = getattr(app.pages[page], 'header', None)
+    if header is None:
+        return [f'(14) {page}: the page has no header']
+    failures = []
+    children = [child for child in header.winfo_children() if isinstance(child, ctk.CTkBaseClass)]
+    if set(children) != {header.title, header.left, header.right} or len(children) != 3:
+        failures.append(f'(14) {page}: the header holds {[str(child) for child in children]}')
+    labels = [widget for widget in widgets_below(header) if isinstance(widget, ctk.CTkLabel)]
+    if labels != [header.title]:
+        failures.append(f'(14) {page}: labels in the header: {[ui_theme.full_text(label) for label in labels]}')
+    return failures
+
+
 def user_data(app=None):
     """(13) USER_DATA, after checking that every entry is part of a string literal of this file (the
-    scenes' fixture data) and is not an app text the legacy reader or G2 would recognise; with ``app``
+    scenes' fixture data) and is not a text of the zh catalog, a template's placeholders matching anything
+    (2.0.0 S2 P2: in place of the legacy reader's G2 recognition); with ``app``
     also the fixture's own folders (its save folder and archive folder, the default 资料归档 of D10
     included)."""
     folders = []
@@ -511,7 +541,12 @@ def user_data(app=None):
             folders.append(str(getattr(app, name).get()))
         except (AttributeError, tk.TclError):
             pass
-    import i18n_legacy
+    import i18n
+    catalog = []
+    for text in i18n.CATALOG['zh'].values():
+        parts = re.split(r'\{[A-Za-z_][A-Za-z_0-9]*\}', text)
+        if re.search(r'[一-鿿]', ''.join(parts)):          # a template with Chinese words of its own
+            catalog.append(re.compile('.+'.join(re.escape(part) for part in parts), re.S))
     tree = ast.parse(Path(__file__).read_text(encoding='utf-8'))
     literals = [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
     literals += [part.value for node in ast.walk(tree) if isinstance(node, ast.JoinedStr)
@@ -519,7 +554,7 @@ def user_data(app=None):
     for entry in USER_DATA:
         if not any(entry in literal for literal in literals if literal is not USER_DATA):
             raise AssertionError(f'(13) USER_DATA entry {entry!r} is no fixture text of snapshot_ui')
-        if i18n_legacy.recognise(entry):
+        if any(pattern.fullmatch(entry) for pattern in catalog):
             raise AssertionError(f'(13) USER_DATA entry {entry!r} is an app text')
     return sorted([entry for entry in USER_DATA + tuple(folders) if entry], key=len, reverse=True)
 
@@ -552,6 +587,8 @@ def shown_texts(widgets):
                 found.append(('empty', getattr(widget, '_empty', '') or ''))
             elif isinstance(widget, ctk.CTkLabel):
                 found.append(('label', ui_theme.full_text(widget)))
+            elif isinstance(widget, ui_theme.PathButton) and widget.path:
+                continue                    # (2.0.0 S4) a folder or file path is user data
             elif isinstance(widget, (ctk.CTkButton, ctk.CTkCheckBox, ctk.CTkSwitch, ctk.CTkRadioButton)):
                 found.append((type(widget).__name__, widget.cget('text')))
             elif isinstance(widget, ctk.CTkOptionMenu):
@@ -607,6 +644,30 @@ def card_failures(app, widgets, page):
     return failures
 
 
+def title_failures(app, label):
+    """(11, 2.0.0 S4) The task title has the first line of the task header to itself: it is as wide as the header,
+    and a title without user data (the item name beyond the row cap) is shown whole.  (S4 visual fix) Without a
+    metrics line the task buttons share the title's line (place_task_actions): the title then fills the line up
+    to the first shown button, less that button's own gap (at most PAD)."""
+    import ui_theme
+    found = []
+    title, header = app.current_title, app.task_header
+    buttons = [widget for widget in (app.retry_button, app.task_menu, app.stop_button) if widget.winfo_manager()]
+    if header.winfo_manager() and getattr(app, 'actions_inline', False) and buttons:
+        gap = min(widget.winfo_x() for widget in buttons) - (title.winfo_x() + title.winfo_width())
+        if not 0 <= gap <= round(ui_theme.PAD * _scale_of(app)) + TOLERANCE:
+            found.append(f'1000x740 (11) {label}: the task title ends {gap} px before the buttons on its line')
+        if any(widget.grid_info().get('row') != 0 for widget in buttons):
+            found.append(f'1000x740 (11) {label}: a task button is not on the title line')
+    elif header.winfo_manager() and abs(title.winfo_width() - header.winfo_width()) > TOLERANCE:
+        found.append(f'1000x740 (11) {label}: the task title is {title.winfo_width()} px in a '
+                     f'{header.winfo_width()} px header')
+    full = ui_theme.full_text(title)
+    if ' · ' not in full and title.cget('text') != full:
+        found.append(f'1000x740 (11) {label}: the task title {full!r} is cut')
+    return found
+
+
 def _unfinished_entries(count, offset=0):
     """Stored unfinished entries (the shape unfinished.py keeps) for the task list's tail."""
     entries = []
@@ -635,14 +696,15 @@ def _job_scene(app, done, waiting, unfinished):
     app.show_unfinished_tail()
     app._rows_changed(0)
     app.refresh_failed_button()
-    app.refresh_stats()
     app.refresh_shell()
 
 
 def scene_failures(app, appearance, language, shots, folder):
     """(10) and (11): the sidebar texts and the task title of the active scene, at 1000x740."""
     import engine
+    import i18n
     import ui_theme
+    from ui_download import time_text
     failures = []
     app.geometry('1000x740+0+0')
     app.show_page('download')
@@ -660,48 +722,67 @@ def scene_failures(app, appearance, language, shots, folder):
     def title_room(label):
         settle(app)
         pause(app, 0.1)
-        room = app.current_title.winfo_width() / scale
-        if room < TITLE_MIN:
-            return [f'1000x740 (11) {label}: the task title keeps {room:.0f} px < {TITLE_MIN} '
-                    f'(stats {ui_theme.full_text(app.queue_stats)!r}, retry {app.retry_button.cget("text")!r})']
-        return []
+        return title_failures(app, label)
 
     # (11) 4 unfinished rows and "Retry unfinished (4)"
     _job_scene(app, 2, 5, 4)
     failures += title_room('4 unfinished')
+    def status(label, key, **values):
+        # (2.0.0 S4 A2) one word (00-system 4.4), the same colour as its dot
+        text = app.side_status.cget('text')
+        wanted = i18n.t(key, **values)
+        found = [] if text == wanted else [f'1000x740 sidebar ({label}): status {text!r}, expected {wanted!r}']
+        if app.side_dot.cget('text_color') != app.side_status.cget('text_color'):
+            found.append(f'1000x740 sidebar ({label}): the dot and the word differ in colour')
+        return found
+
+    def notice(label, shown):
+        if bool(app.engine_notice.winfo_manager()) != shown:
+            return [f"1000x740 sidebar ({label}): the 'Update available' link is {'not ' if shown else ''}shown"]
+        return []
+
     # (10) + (11) a long job: item 123 of 456, three-digit counts
     index, total = SIDEBAR_JOB
     _job_scene(app, index - 1, total - index, 123)
     failures += title_room('three-digit counts')
     failures += sidebar(f'item {index} / {total}')
+    failures += status(f'item {index} / {total}', 'shell.status.downloading')
+    failures += notice(f'item {index} / {total}', False)
     if shots:
         grab(app, folder / shot_name('download-crowded-1000x740.png', appearance, language))
     # (10) the waiting status
     app.handle('waiting', {'kind': 'interval', 'reason': engine.msg('core.wait.pace'), 'seconds': 299})
     failures += sidebar('waiting')
+    failures += status('waiting', 'shell.status.waiting', time=time_text(app.wait_seconds))
     app.clear_wait()
-    # (10) awaiting YouTube and the app badge of a newer engine
-    app.set_busy(False)
-    app.bot_retry = {'round': 1, 'deadline': None}
+    # (10) awaiting YouTube and a newer engine: (S4 visual fix) the job ends normally with the YouTube check, so
+    # the countdown is armed the way it is in use, and the sidebar and the page's notice bar show it together
+    _finished_bot_job(app, keep_retry=True)
     app.handle('engine_check', {'latest': '2099.12.31', 'current': '2026.10.21', 'newer': True})
     app.refresh_shell()
-    failures += sidebar('YouTube status, new engine badge')
+    failures += sidebar('YouTube status, newer engine')
+    failures += status('YouTube status, newer engine', 'shell.status.bot_wait')
+    failures += notice('YouTube status, newer engine', True)
+    settle(app)
+    if app.notice_kind != 'bot' or not app.notice_bar.shown:
+        failures.append(f'1000x740 sidebar (YouTube status): the countdown notice is not shown '
+                        f'(notice {app.notice_kind!r})')
     if shots:
         grab(app, folder / shot_name('sidebar-1000x740.png', appearance, language))
-    app.bot_retry = None
-    app.refresh_shell()
+    app.cancel_bot_retry()
     failures += finished_scene_failures(app, appearance, language, shots, folder)
     return failures
 
 
-def _finished_bot_job(app):
+def _finished_bot_job(app, keep_retry=False):
     """(final fix round 1, ENV-1) Twelve links that ended with the YouTube check: 3 done, 1 skipped
-    (downloaded before), 8 on hold, the countdown cancelled.  The finished job's stats are the long form
-    '3 succeeded / 8 unfinished / 12 total / 1 skipped'."""
+    (downloaded before), 8 on hold, the countdown cancelled (``keep_retry``: left running).  The finished job's
+    stats are the long form '3 succeeded / 8 unfinished / 12 total / 1 skipped'."""
     links = [f'https://www.youtube.com/watch?v=bot{number:08d}' for number in range(12)]
     app.unfinished = []
     app.populate_queue(links)
     app.operation = 'download'
+    app.job_ran = True          # (S4 visual fix) as launch() sets it: the progress bar keeps the job's value
     app.set_busy(True)
     for number, url in enumerate(links, 1):
         app.handle('item', {'index': number, 'total': 12, 'url': url})
@@ -720,15 +801,14 @@ def _finished_bot_job(app):
                        'title': '', 'error': '', 'time': number, 'options': {}} for number, url in enumerate(links[4:])]
     app.show_unfinished_tail()
     app.refresh_failed_button()
-    app.refresh_stats(final=app.final_stats())
-    app.cancel_bot_retry()
+    if not keep_retry:
+        app.cancel_bot_retry()
 
 
 def finished_scene_failures(app, appearance, language, shots, folder):
-    """(11, final fix round 1 ENV-1) At 1000x740 the task title keeps TITLE_MIN px, and nothing of the task
-    header ends outside its card, after a job that ended with the YouTube check (a skipped link, eight on
-    hold), after 清除未完成 (the stats gain their 已移出 part), and while a web collection and an engine
-    update run after it (the stop button shows the longer foreign label)."""
+    """(11, final fix round 1 ENV-1) At 1000x740 the task title fills its line (title_failures), and nothing of
+    the task header ends outside the page, after a job that ended with the YouTube check (a skipped link, eight on
+    hold), after 清除未完成, and while a web collection and an engine update run after it."""
     from tkinter import messagebox
     failures = []
     scale = _scale_of(app)
@@ -739,11 +819,7 @@ def finished_scene_failures(app, appearance, language, shots, folder):
         settle(app)
         pause(app, 0.1)
         settle(app)
-        room = app.current_title.winfo_width() / scale
-        found = []
-        if room < TITLE_MIN:
-            found.append(f'1000x740 (11) {label}: the task title keeps {room:.0f} px < {TITLE_MIN} '
-                         f'(stats {app.queue_stats.cget("text")!r}, stop {app.stop_button.cget("text")!r})')
+        found = title_failures(app, label)
         widgets = list(checked_widgets(app, 'download'))
         found += [f'1000x740 (11) {label}: {failure}' for failure in card_failures(app, widgets, 'download')]
         found += [f'1000x740 (11) {label}: {failure}' for failure in text_failures(widgets)]
@@ -769,6 +845,71 @@ def finished_scene_failures(app, appearance, language, shots, folder):
         app.set_busy(False)
     app.operation = None
     app.refresh_shell()
+    return failures
+
+
+def stage_scene_failures(app, size, appearance, language, shots, folder):
+    """(15, 2.0.0 S4 stage C) The states a page has between empty and busy, in state 'idle': the collect page in
+    dynamic mode (the option row with the scrolls menu and the privacy line), the download page with only
+    unfinished links (重试未完成 (N) is the solid button), and the empty states of the three library views.
+    Each is captured and checked like a page ((9), (9b), (13), one solid button per view)."""
+    import ui_theme
+    from collection_ui import MODE_DYNAMIC, MODE_STATIC
+    failures = []
+
+    def check(page, label, name):
+        settle(app)
+        pause(app, 0.1)
+        widgets = list(checked_widgets(app, page))
+        found = [f'{size} {label}: {failure}' for failure in text_failures(widgets)]
+        found += [f'{size} {label}: {failure}' for failure in card_failures(app, widgets, page)]
+        if language == 'en':
+            found += [f'{size} {label}: {failure}' for failure in cjk_failures(widgets, app)]
+        solid = [widget for widget in widgets if isinstance(widget, ui_theme.AppButton) and widget.kind == 'primary']
+        if len(solid) > 1:
+            found.append(f'{size} {label}: {len(solid)} solid buttons')
+        if shots:
+            grab(app, folder / shot_name(f'{name}-{size}.png', appearance, language))
+        return found, solid
+
+    app.show_page('collect')
+    app.collect_mode.set(MODE_DYNAMIC)
+    found, _solid = check('collect', 'collect (dynamic)', 'collect-dynamic')
+    failures += found
+    if not app.collect_scrolls_menu.winfo_ismapped() or not app.collect_note.winfo_ismapped():
+        failures.append(f'{size} collect (dynamic): the scrolls menu and the privacy line are not shown')
+    app.collect_mode.set(MODE_STATIC)
+    app.show_page('download')
+    saved = list(app.unfinished)
+    app.unfinished = _unfinished_entries(3)
+    app.show_unfinished_tail()
+    app.refresh_failed_button()
+    found, solid = check('download', 'download (unfinished only)', 'download-unfinished')
+    failures += found
+    if solid != [app.retry_button]:
+        failures.append(f'{size} download (unfinished only): the solid button is not 重试未完成 (N)')
+    app.unfinished = saved
+    app.populate_queue([])
+    app.refresh_failed_button()
+    app.show_page('library')
+    for number, tab in enumerate(LIBRARY_TABS, 1):
+        app.library_tabs.set(tab)
+        settle_tab(app, tab)
+        found, _solid = check('library', f'library/{tab} (empty)', f'library-{number}-empty')
+        failures += found
+    # (S4 visual fix) The log page on Errors while the log holds no error or warn line: "No errors" in the middle
+    # of the text, on the text's own fill (SURFACE_ALT), not on a lighter patch.
+    app.show_page('logs')
+    app.set_errors_only(True)
+    found, _solid = check('logs', 'logs (errors only)', 'logs-errors-only')
+    failures += found
+    inner = app.logs._textbox
+    if not (inner.tag_ranges('error') or inner.tag_ranges('warn')):
+        if not app.log_empty.winfo_ismapped():
+            failures.append(f'{size} logs (errors only): "No errors" is not shown')
+        if app.log_empty.cget('fg_color') != ui_theme.SURFACE_ALT:
+            failures.append(f'{size} logs (errors only): "No errors" is not on SURFACE_ALT')
+    app.set_errors_only(False)
     return failures
 
 
@@ -856,7 +997,7 @@ def run(pages=None, sizes=SIZES, shots=True, out=None, state='idle', appearance=
 
 def _run(pages, sizes, shots, out, state, appearance, language):
     import engine
-    import ui_download
+    import formats
     import ui_theme
     from studio import StudioApp
     extended = language is not None
@@ -878,7 +1019,7 @@ def _run(pages, sizes, shots, out, state, appearance, language):
         app.attributes('-alpha', 0.0)
         app.overrideredirect(True)
         app.urls.delete('1.0', 'end')
-        app.format.set(ui_download.FORMATS[0])
+        app.mode.set(formats.PRESETS[0].id)
         app.on_format()
         app.links_changed()
         scale = ctk.ScalingTracker.get_widget_scaling(app)
@@ -921,13 +1062,16 @@ def _run(pages, sizes, shots, out, state, appearance, language):
                         if language == 'en':        # (1.8.0) (13) no Chinese outside user data
                             failures += [f'{where}: {failure}'
                                          for failure in cjk_failures(widgets + list(sidebar_widgets(app)), app)]
-                    # (WP5) nothing in the subscription tab's creation strip is cut off at its right edge
-                    if tab == LIBRARY_TABS[1] and hasattr(app, 'subscription_strip'):
-                        strip = app.subscription_strip
-                        for child in strip.winfo_children():
-                            if child.winfo_ismapped() and child.winfo_x() + child.winfo_width() > strip.winfo_width():
-                                failures.append(f'{size}: {child} ends {logical(child.winfo_x() + child.winfo_width() - strip.winfo_width()):.0f} px '
-                                                f'right of the subscription strip')
+                    # (12, 2.0.0 S4) nothing of the new-items line (count, 加入下载, 忽略) is cut off at its right edge
+                    if tab == LIBRARY_TABS[1]:
+                        line = app.pending_bar
+                        for child in line.winfo_children():
+                            if child.winfo_ismapped() and child.winfo_x() + child.winfo_width() > line.winfo_width() + TOLERANCE:
+                                failures.append(f'{size}: {child} ends {logical(child.winfo_x() + child.winfo_width() - line.winfo_width()):.0f} px '
+                                                f'right of the new-items line')
+                # (14) the header holds only the title
+                if page in checked and tab in (None, LIBRARY_TABS[0]):
+                    failures += [f'{size}: {failure}' for failure in header_failures(app, page)]
                 # (1) the page fits the content area at the minimum size
                 if (width, height) == (1000, 740) and page in checked:
                     request, room = app.pages[page].winfo_reqheight(), app.content.winfo_height()
@@ -937,14 +1081,18 @@ def _run(pages, sizes, shots, out, state, appearance, language):
             if 'download' in pages:
                 app.show_page('download')
                 settle(app)
+                listed = bool(app.row_model)
                 viewport = logical(app.task_list.canvas.winfo_height())
                 limit = {(1000, 740): 300, (1120, 810): 380}.get((width, height))
-                # (2) the task list viewport
-                if limit is not None and viewport < limit and state != 'active':
+                # (2) the task list viewport; (2.0.0 S4) no rows: the empty state instead of the list and its header
+                if not listed:
+                    if not app.empty.winfo_manager() or app.task_header.winfo_manager():
+                        failures.append(f'{size}: no rows, but the empty state is not shown in place of the list')
+                elif limit is not None and viewport < limit and state != 'active':
                     failures.append(f'{size}: task list viewport {viewport:.0f} px < {limit}')
-                # (3) long texts do not move anything
+                # (3) long texts do not move anything (the list is compared when it was shown already)
                 before = (app.composer.winfo_height(), app.task_header.winfo_height(),
-                          app.task_list.canvas.winfo_height())
+                          app.task_list.canvas.winfo_height() if listed else 0)
                 saved = (list(app.row_model), app.active_index, app.operation, ui_theme.full_text(app.metrics))
                 app.append_rows(['https://example.invalid/long-title'])
                 app.operation, app.active_index = 'download', len(app.row_model) - 1
@@ -952,14 +1100,16 @@ def _run(pages, sizes, shots, out, state, appearance, language):
                 app.metrics.configure(text=METRICS_120)
                 settle(app)
                 after = (app.composer.winfo_height(), app.task_header.winfo_height(),
-                         app.task_list.canvas.winfo_height())
+                         app.task_list.canvas.winfo_height() if listed else 0)
+                if not listed:
+                    before = (before[0],) + after[1:]       # the header and the list appear with the first row
                 if any(abs(a - b) > scale for a, b in zip(before, after)):
                     failures.append(f'{size}: long title/metrics changed heights {before} -> {after}')
                 app.populate_queue([model['url'] for model in saved[0]])
                 for number, model in enumerate(saved[0]):
                     app.update_row(number, **{k: v for k, v in model.items() if k != 'index'})
                 app.active_index, app.operation = saved[1], saved[2]
-                app.refresh_stats()
+                app.refresh_task_view()
                 app.metrics.configure(text=saved[3])
                 # (7) the page cap
                 if (width, height) == (2560, 1392):
@@ -969,34 +1119,39 @@ def _run(pages, sizes, shots, out, state, appearance, language):
                 # (8) the bot-check sentence fits the metrics line at the minimum size
                 if (width, height) == (1000, 740):
                     keep = (ui_theme.full_text(app.metrics), app.current_title.cget('text'))
-                    # (1.7.0) the sentence of the running language (zh: ui_download.BOT_TEXT itself)
-                    bot_text = ui_download.BOT_TEXT
-                    if extended:
-                        import i18n
-                        bot_text = i18n.t('download.metrics.bot')
+                    # (1.7.0) the sentence of the running language
+                    import i18n
+                    bot_text = i18n.t('download.metrics.bot')
                     app.metrics.configure(text=bot_text)
                     settle(app)
                     if app.metrics.cget('text') != ui_theme.full_text(app.metrics):
                         failures.append(f'{size}: bot-check sentence cut to {app.metrics.cget("text")!r}')
                     app.metrics.configure(text=keep[0])
+            # (15) the in-between states of the pages (the idle window has no history: the library views are empty)
+            if extended and state == 'idle' and {'download', 'collect', 'library'} <= set(pages):
+                failures += stage_scene_failures(app, size, appearance, language, shots, folder)
             if 'settings' in pages and (width, height) in ((1000, 740), (1120, 810)):
                 app.show_page('settings')
                 settle(app)
                 area = app.settings_area
                 room = area.canvas.winfo_width()
-                for card in app.settings_cards:
-                    if card.winfo_reqwidth() > room + 1:
-                        failures.append(f'{size}: settings card asks {logical(card.winfo_reqwidth()):.0f} px, '
-                                        f'viewport {logical(room):.0f} px')
+                if area.winfo_reqwidth() > room + 1:
+                    failures.append(f'{size}: the settings grid asks {logical(area.winfo_reqwidth()):.0f} px, '
+                                    f'viewport {logical(room):.0f} px')
+                edge = area.canvas.winfo_rootx() + room
+                for child in area.winfo_children():
+                    if child.winfo_ismapped() and child.winfo_rootx() + child.winfo_width() > edge + TOLERANCE:
+                        failures.append(f'{size}: settings row {_shown(child)} ends '
+                                        f'{logical(child.winfo_rootx() + child.winfo_width() - edge):.0f} px right of the viewport')
                 if not area.bar_visible:
                     failures.append(f'{size}: settings scrollbar is not shown')
                 area.canvas.yview_moveto(1.0)
                 settle(app)
-                last = app.settings_cards[-1]
+                last = app.about_rows[-1][1]
                 bottom = last.winfo_rooty() + last.winfo_height()
                 view_bottom = area.canvas.winfo_rooty() + area.canvas.winfo_height()
                 if bottom > view_bottom + 1:
-                    failures.append(f'{size}: last settings card ends {logical(bottom - view_bottom):.0f} px below the viewport')
+                    failures.append(f'{size}: the last About row ends {logical(bottom - view_bottom):.0f} px below the viewport')
                 if shots:
                     grab(app, folder / shot_name(f'settings-end-{size}.png', appearance, language))
                 if extended:

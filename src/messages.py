@@ -2,23 +2,28 @@
 
 A core text is a Message: a str whose value is byte for byte the 1.7.0 Chinese text and which
 carries its catalog key and parameters, so the UI can show it in the running language.  Raw marks
-text the producer knows is not app text (titles from the source, engine output); Value a stored
-enum value nested in a message.  A plain str means "provenance unknown".
+text the producer knows is not app text (titles from the source, engine output).  A plain str means
+"provenance unknown".
 
     msg(key, **params)              a live message (value: the zh catalog text with zh params)
-    value(group, stored) / raw(text) / clauses(parts)
+    raw(text) / clauses(parts)
     cut / masked / stripped         derived texts that keep the type (and the key)
     message_of(error)               the Message an exception carries, else str(error)
     show(value) / error_text(error) the text in the running language (never raises)
     zh(value) / template(key)       the plain zh text / the zh catalog template
-    decode / decode_columns / encode   the store codec (MESSAGES.md 4.3-4.5; library and
-                                    unfinished only, G1d)
-    wire / unwire                   the collector IPC form (2.8)
-    guarded(emit, producer) / exempt(reason)   the G2 test hooks (7.3)
+    to_json / from_json / read_slots / write_slots   the format-2 store (2.0.0, S2-DESIGN.md 1.1;
+                                    library and unfinished only)
+    wire / unwire                   the collector IPC form (2.8; 2.0.0: {"$m": {"k", "p"}})
+    exempt(reason)                  the G2 test hook (7.3)
+
+(2.0.0, S2 P4) The 1.8.x store codec (decode / decode_columns / encode), Value and a message's
+origin / entry are gone: 2.0.0 does not read the stores of older versions.
 
 When YTDLP_DESKTOP_MSG_GUARD is set (tests only), importing this module installs the G2 hooks:
-the strict-mode tripwires of 2.9, the checked i18n.t wrapper and the landing checks; without
-the variable nothing is installed and every method is the plain str one.
+the strict-mode tripwires of 2.9 (on Message) and the checked i18n.t wrapper (R-param); without the variable
+nothing is installed and every method is the plain str one.  (2.0.0, S2 P2) The text recognition
+of G2 (R-text: plain strings that read like an app text, found by the reverse reading of old texts)
+is gone with the reverse reading's place in the runtime; S2-DESIGN.md section 5 says what covers it.
 """
 from __future__ import annotations
 
@@ -38,9 +43,6 @@ CLAUSES = 'common.clauses'            # structural key: zh '；'.join(parts), en
 JOIN = '；'
 GUARD_ENV = 'YTDLP_DESKTOP_MSG_GUARD'
 GUARD = bool(os.environ.get(GUARD_ENV))
-ENTRY_LIMIT = 2048                    # characters of one sidecar entry as compact JSON (E5)
-KEY_LIMIT = 200                       # characters of a well-formed entry's key (4.4 step 3)
-ORIGINS = ('live', 'stored', 'legacy', 'foreign')
 
 _log = logging.getLogger('YtDlpDesktop.messages')
 _lock = threading.RLock()
@@ -62,16 +64,14 @@ def _plain(text) -> str:
 
 
 class Message(str):
-    """An app text: the 1.7.0 zh text as its value, plus key, params and origin (2.1)."""
+    """An app text: the 1.7.0 zh text as its value, plus key and params (2.1)."""
 
-    __slots__ = ('key', '_params', 'origin', 'entry')
+    __slots__ = ('key', '_params')
 
-    def __new__(cls, value, key=None, params=None, origin='live', entry=None):
+    def __new__(cls, value, key=None, params=None):
         self = str.__new__(cls, value)
         object.__setattr__(self, 'key', key)
         object.__setattr__(self, '_params', types.MappingProxyType(dict(params or {})))
-        object.__setattr__(self, 'origin', origin if origin in ORIGINS else 'live')
-        object.__setattr__(self, 'entry', entry)
         return self
 
     @property
@@ -97,39 +97,7 @@ class Message(str):
         return self
 
     def __reduce__(self):
-        return _message, (_plain(self), self.key, dict(self._params), self.origin, self.entry)
-
-
-class Value(str):
-    """A stored enum value nested in a message (shown through i18n.label(group, value))."""
-
-    __slots__ = ('group',)
-
-    def __new__(cls, group, stored):
-        self = str.__new__(cls, stored)
-        object.__setattr__(self, 'group', group)
-        return self
-
-    def __setattr__(self, name, value):
-        raise AttributeError('Value is immutable')
-
-    def __delattr__(self, name):
-        raise AttributeError('Value is immutable')
-
-    def __str__(self):
-        return self
-
-    def __format__(self, spec):
-        return self if not spec else format(_plain(self), spec)
-
-    def __copy__(self):
-        return self
-
-    def __deepcopy__(self, memo):
-        return self
-
-    def __reduce__(self):
-        return Value, (self.group, _plain(self))
+        return _message, (_plain(self), self.key, dict(self._params))
 
 
 class Raw(str):
@@ -153,12 +121,12 @@ class Raw(str):
         return Raw, (_plain(self),)
 
 
-def _message(value, key, params, origin, entry):
-    return Message(value, key, params, origin, entry)
+def _message(value, key, params):
+    return Message(value, key, params)
 
 
 class MessageFlattened(RuntimeError):
-    """(tests only) A guarded src module turned a Message or Value into plain text (2.9)."""
+    """(tests only) A guarded src module turned a Message into plain text (2.9)."""
 
 
 # ------------------------------------------------------------------------------- constructors
@@ -173,7 +141,7 @@ def zh(value) -> str:
 
 
 def template(key) -> str:
-    """The zh catalog template of ``key`` (plain), for H4 template constants (updater.MSG_*)."""
+    """The zh catalog template of ``key`` (plain).  No src module uses it now; the guard tools still know it."""
     return _plain(i18n.CATALOG['zh'].get(key, key))
 
 
@@ -200,18 +168,11 @@ def msg(key, **params) -> Message:
     except Exception as error:
         _warn_once(('msg', key), 'messages: %s cannot be rendered: %s', key, error)
         text = str(key)
-    return Message(text, key, params, 'live')
-
-
-def value(group, stored):
-    """A Value when ``stored`` is a str, else the object unchanged."""
-    if isinstance(stored, str) and not isinstance(stored, Value):
-        return Value(group, _plain(stored))
-    return stored
+    return Message(text, key, params)
 
 
 def raw(text):
-    """A Raw text ('' stays '': an empty text never gets a sidecar)."""
+    """A Raw text ('' stays '')."""
     if not isinstance(text, str) or isinstance(text, Raw):
         return text
     text = _plain(text)
@@ -226,18 +187,18 @@ def clauses(parts):
     if len(parts) == 1:
         return parts[0]
     parts = tuple(parts)
-    return Message(JOIN.join(zh(part) for part in parts), CLAUSES, {'parts': parts}, 'live')
+    return Message(JOIN.join(zh(part) for part in parts), CLAUSES, {'parts': parts})
 
 
 def cut(value, n):
-    """value[:n] keeping the type: a Message keeps key / params / origin (en shows it whole, D12)."""
+    """value[:n] keeping the type: a Message keeps key / params (en shows it whole, D12)."""
     if not isinstance(value, str):
         return value
     text = _plain(value)
     if len(text) <= n:
         return value
     if isinstance(value, Message):
-        return Message(text[:n], value.key, value._params, value.origin, value.entry)
+        return Message(text[:n], value.key, value._params)
     if isinstance(value, Raw):
         return raw(text[:n])
     return text[:n]
@@ -250,7 +211,7 @@ def _replace(text, pairs):
 
 
 def _mask_param(item, pairs):
-    if isinstance(item, (Message, Raw)) or (isinstance(item, str) and not isinstance(item, Value)):
+    if isinstance(item, str):
         return masked(item, pairs)
     if isinstance(item, (list, tuple)):
         return tuple(_mask_param(part, pairs) for part in item)
@@ -263,7 +224,7 @@ def masked(value, pairs):
     skipped."""
     pairs = [(_plain(secret), _plain(replacement)) for secret, replacement in (pairs or ())
              if isinstance(secret, str) and secret]
-    if not pairs or not isinstance(value, str) or isinstance(value, Value):
+    if not pairs or not isinstance(value, str):
         return value
     text = _plain(value)
     shown = _replace(text, pairs)
@@ -271,7 +232,7 @@ def masked(value, pairs):
         params = {name: _mask_param(item, pairs) for name, item in value._params.items()}
         if shown == text and all(params[name] is item for name, item in value._params.items()):
             return value
-        return Message(shown, value.key, params, value.origin, value.entry)
+        return Message(shown, value.key, params)
     if shown == text:
         return value
     if isinstance(value, Raw):
@@ -280,8 +241,8 @@ def masked(value, pairs):
 
 
 def stripped(value):
-    """Message / Value as they are; any other text .strip()ped with its type kept."""
-    if isinstance(value, (Message, Value)) or not isinstance(value, str):
+    """A Message as it is; any other text .strip()ped with its type kept."""
+    if isinstance(value, Message) or not isinstance(value, str):
         return value
     text = _plain(value).strip()
     return raw(text) if isinstance(value, Raw) else text
@@ -320,8 +281,6 @@ def _render(value, language) -> str:
             if value.key == CLAUSES:
                 return i18n._join_sentences(language, [_render(part, language) for part in params.get('parts', ())])
             return _t(value.key, **{name: _render(item, language) for name, item in params.items()})
-        if isinstance(value, Value):
-            return i18n.label(value.group, _plain(value))
         text = _plain(value)
         return text.replace(PROXY_TOKEN, _t('core.proxy_mask')) if PROXY_TOKEN in text else text
     if isinstance(value, (list, tuple)):
@@ -332,8 +291,6 @@ def _render(value, language) -> str:
 def show(value) -> str:
     """``value`` as plain text in the running language; None -> ''; never raises (on an internal
     error: the zh text, one WARNING per process)."""
-    if GUARD:
-        _check_shown(value, 'show', sys._getframe(1))
     try:
         return _render(value, i18n.language())
     except Exception as error:
@@ -344,8 +301,6 @@ def show(value) -> str:
 def error_text(error) -> str:
     """show(message_of(error))."""
     shown = message_of(error)
-    if GUARD:
-        _check_shown(shown, 'error_text', sys._getframe(1))
     try:
         return _render(shown, i18n.language())
     except Exception as failure:
@@ -353,336 +308,184 @@ def error_text(error) -> str:
         return zh(shown)
 
 
-# ------------------------------------------------------------------------------- store codec
-
-# (MESSAGES.md 4.3) record kind -> its text fields.  A field is (path, field kind); '*' walks the
-# items of a list or the values of a dict (I-1 amendment A2).  The 'reason' of last_reason is paired with its sibling 'error' (L4).  job_options holds
-# the lift-only context titles of a download job's options (no sidecar inside options).
-SCHEMA = {
-    'job': ((('errors', '*'), 'error'), (('last_reason', 'error'), 'error'), (('last_reason', 'reason'), 'reason')),
-    'subscription': ((('last_error',), 'clauses'),),
-    'page': ((('title',), 'title'), (('links', '*', 'title'), 'title')),
-    'entry': ((('title',), 'title'), (('page_title',), 'title')),
-    'archive': ((('title',), 'title'), (('page_title',), 'title')),
-    'failed_entry': ((('error',), 'error'),),
-    'job_options': ((('archive_contexts', '*', 'title'), 'context_title'),),
-}
-COLUMNS = {'job': {'title': 'job_title'}, 'subscription': {'name': 'name'}}
-NO_SIDECAR = frozenset({'job_options'})
+# ------------------------------------------------------------------------------- format-2 store
+#
+# (2.0.0, S2-DESIGN.md 1.1) The JSON form of a text in a format-2 record: a program text is
+# {"k": key, "p": {name: param}} ("p" left out when empty), any other text a plain string ('' for
+# none).  A param is an int, a float, a plain string or such a message; the parts of common.clauses
+# are a list.  Only the known text positions of a record ("slots") are read this way: a dict
+# anywhere else is never taken for a message.  The library (library.SLOTS) and the unfinished list
+# (unfinished.SLOTS) read and write their records this way.
 
 
-def _walk(node, path, at=()):
-    """(path to the value, value) of every value under ``path``."""
-    if not path:
-        yield at, node
-        return
-    head, rest = path[0], path[1:]
-    if head == '*':
-        if isinstance(node, list):
-            for index, item in enumerate(node):
-                yield from _walk(item, rest, at + (index,))
-        elif isinstance(node, dict):                     # archive_contexts maps link -> context
-            for name, item in node.items():
-                yield from _walk(item, rest, at + (name,))
-    elif isinstance(node, dict) and head in node:
-        yield from _walk(node[head], rest, at + (head,))
-
-
-def _job_context(record, columns):
-    options = record.get('options') if isinstance(record, dict) else None
-    urls = options.get('urls') if isinstance(options, dict) else None
-    links = len([url for url in urls if isinstance(url, str) and url]) if isinstance(urls, list) else 0
-    return {'kind': (columns or {}).get('kind'), 'titled': bool(record.get('titled')), 'links': links}
-
-
-def _fields(kind, record):
-    """(path, field kind, value, context) of every text field of a record of ``kind``."""
-    for path, field_kind in SCHEMA.get(kind, ()):
-        for at, item in _walk(record, path):
-            context = None
-            if field_kind == 'reason' and at[:1] == ('last_reason',):
-                sibling = record['last_reason'].get('error') if isinstance(record.get('last_reason'), dict) else None
-                context = {'error': _plain(sibling) if isinstance(sibling, str) else None}
-            yield at, field_kind, item, context
-
-
-def _column_fields(kind, record, columns):
-    for name, field_kind in COLUMNS.get(kind, {}).items():
-        if isinstance(columns, dict) and name in columns:
-            context = _job_context(record, columns) if field_kind == 'job_title' else None
-            yield name, field_kind, columns[name], context
-
-
-def _placeholders(key):
-    return {field for _literal, field, _spec, _conv in i18n._FORMATTER.parse(i18n.CATALOG['zh'][key])
-            if field is not None}
-
-
-class _Invalid(Exception):
+class _Unstorable(Exception):
     pass
 
 
-def _known(key) -> bool:
-    return key == CLAUSES or (key in i18n.CATALOG['zh'] and key in i18n.CATALOG['en'])
-
-
-def _decode_param(item):
-    if isinstance(item, bool) or item is None:
-        raise _Invalid
-    if isinstance(item, (int, float)):
-        return item
-    if isinstance(item, str):
-        return raw(item)
-    if isinstance(item, dict):
-        if set(item) == {'g', 'v'}:
-            import i18n_maps
-            if item['g'] not in i18n_maps.GROUPS or not isinstance(item['v'], (str, int)) or isinstance(item['v'], bool):
-                raise _Invalid
-            return value(item['g'], item['v'])
-        return _decode_entry(item, None)
-    raise _Invalid
-
-
-def _decode_entry(entry, text):
-    """The Message of a valid entry (value ``text``, or for a nested one the zh rendering); _Invalid else."""
-    if not isinstance(entry, dict) or not isinstance(entry.get('k'), str) or set(entry) - {'k', 'p'}:
-        raise _Invalid
-    key = entry['k']
-    params = entry.get('p', {})
-    if not isinstance(params, dict) or not _known(key):
-        raise _Invalid
-    if key == CLAUSES:
-        parts = params.get('parts')
-        if set(params) != {'parts'} or not isinstance(parts, list) or len(parts) < 2:
-            raise _Invalid
-        decoded = {'parts': tuple(_decode_param(part) for part in parts)}
-    else:
-        if set(params) != _placeholders(key):
-            raise _Invalid
-        decoded = {name: _decode_param(item) for name, item in params.items()}
-    if text is None:
-        text = _render_zh(key, decoded)
-    return Message(text, key, decoded, 'stored')
-
-
-def _compact(entry) -> str:
-    return json.dumps(entry, ensure_ascii=False, separators=(',', ':'))
-
-
-def _well_formed(entry) -> bool:
-    if not isinstance(entry, dict) or not isinstance(entry.get('k'), str) or not entry['k']:
-        return False
-    if len(entry['k']) > KEY_LIMIT or ('p' in entry and not isinstance(entry['p'], dict)):
-        return False
-    try:
-        return len(_compact(entry)) <= ENTRY_LIMIT
-    except (TypeError, ValueError):
-        return False
-
-
-def _legacy_param(item):
-    import i18n_legacy
-    if isinstance(item, i18n_legacy.Lifted):
-        return Message(item.text, item.key, _legacy_params(item.params), 'legacy')
-    if isinstance(item, i18n_legacy.Enum):
-        return value(item.group, item.value)
-    if isinstance(item, (list, tuple)):
-        return tuple(_legacy_param(part) for part in item)
-    return item
-
-
-def _legacy_params(params):
-    return {name: _legacy_param(item) for name, item in (params or {}).items()}
-
-
-def _lift(field_kind, text, context):
-    import i18n_legacy
-    return i18n_legacy.lift(field_kind, text, context)
-
-
-def _decode_text(text, field_kind, context, sidecar):
-    if not isinstance(text, str) or not text or isinstance(text, (Message, Raw, Value)):
-        return text
-    if text in sidecar:
-        entry = sidecar[text]
-        if entry is None:
-            return Raw(text)                                                 # step 4
-        try:
-            return _decode_entry(entry, text)                                # step 2
-        except _Invalid:
-            pass
-        except RecursionError:
-            pass
-        if _well_formed(entry):                                              # step 3: foreign
-            found = _lift(field_kind, text, context)
-            key, params = found if found else (None, {})
-            return Message(text, key, _legacy_params(params), 'foreign', _compact(entry))
-    found = _lift(field_kind, text, context)                                 # step 5
-    if found is None:
-        return text
-    return Message(text, found[0], _legacy_params(found[1]), 'legacy')
-
-
-def _sidecar(record):
-    sidecar = record.get('msgs') if isinstance(record, dict) else None
-    return sidecar if isinstance(sidecar, dict) else {}
-
-
-def _set(copy, at, item, copied):
-    """Set copy[at...] = item, copying each container on the way once."""
-    node = copy
-    for index, step in enumerate(at[:-1]):
-        child = node[step]
-        if id(child) not in copied:
-            child = list(child) if isinstance(child, list) else dict(child)
-            copied.add(id(child))
-            node[step] = child
-        node = child
-    node[at[-1]] = item
-
-
-def decode(record, kind) -> dict:
-    """A shallow copy of ``record`` with the text fields of ``kind`` decoded (4.4) and ``msgs``
-    removed; every other value is the very same object (never ``options``).  Never raises."""
-    if not isinstance(record, dict):
-        return record
-    copy = dict(record)
-    copy.pop('msgs', None)
-    try:
-        sidecar = _sidecar(record)
-        copied = set()
-        for at, field_kind, item, context in list(_fields(kind, record)):
-            decoded = _decode_text(item, field_kind, context, sidecar)
-            if decoded is not item:
-                _set(copy, at, decoded, copied)
-    except Exception as error:
-        _warn_once(('decode', type(error).__name__), 'messages: decode failed: %s', error)
-    return copy
-
-
-def decode_columns(record, kind, columns) -> dict:
-    """The column texts (a job's {'title', 'kind'}, a subscription's {'name'}) decoded with the
-    sidecar of the undecoded ``record``; other column values unchanged.  Never raises."""
-    result = dict(columns or {})
-    try:
-        sidecar = _sidecar(record)
-        for name, field_kind, item, context in _column_fields(kind, record if isinstance(record, dict) else {},
-                                                              columns):
-            result[name] = _decode_text(item, field_kind, context, sidecar)
-    except Exception as error:
-        _warn_once(('decode', type(error).__name__), 'messages: decode failed: %s', error)
-    return result
-
-
-def _persistable(message) -> bool:
-    if not isinstance(message, Message) or message.origin not in ('live', 'stored') or message.key is None:
-        return False
-    for item in message._params.values():
-        for part in (item if isinstance(item, (list, tuple)) else (item,)):
-            if isinstance(part, Message) and part.origin != 'foreign' and not _persistable(part):
-                return False
-    return True
-
-
-def _encode_param(item):
+def _json_param(item):
     if isinstance(item, Message):
-        if item.origin == 'foreign' and item.entry:
-            return json.loads(item.entry)
-        return _entry_of(item)
-    if isinstance(item, Value):
-        return {'g': item.group, 'v': _plain(item)}
+        return _json_message(item)
     if isinstance(item, str):
         return _plain(item)
     if isinstance(item, bool) or item is None:
-        raise _Invalid
+        raise _Unstorable
     if isinstance(item, (int, float)):
         return item
-    raise _Invalid
+    if isinstance(item, dict):
+        return item                  # a param from_json kept as it was (an entry of a later version)
+    raise _Unstorable
 
 
-def _entry_of(message) -> dict:
-    if not _persistable(message):
-        raise _Invalid
+def _json_message(message) -> dict | str:
+    if message.key is None:
+        return _plain(message)
     params = {}
     for name, item in message._params.items():
-        if message.key == CLAUSES and name == 'parts':
-            params[name] = [_encode_param(part) for part in item]
+        if message.key == CLAUSES and name == 'parts' and isinstance(item, (list, tuple)):
+            params[name] = [_json_param(part) for part in item]
         else:
-            params[name] = _encode_param(item)
-    entry = {'k': message.key}
+            params[name] = _json_param(item)
+    form = {'k': message.key}
     if params:
-        entry['p'] = params
-    return entry
+        form['p'] = params
+    return form
 
 
-def _add_entry(entries, item, field_kind, context) -> None:
-    if not isinstance(item, str) or not item:
-        return
-    text = _plain(item)
-    try:
-        text.encode('utf-8')
-    except UnicodeEncodeError:
-        return                                                               # E5: lone surrogates
-    if isinstance(item, Message):
+def to_json(value):
+    """The format-2 JSON form of a slot value: a Message with a key -> {"k", "p"}; any other text ->
+    its plain text; None and a dict (already a JSON form) unchanged.  Never raises: a message with a
+    param that cannot be stored (True, None, an object) is stored as its zh text (one WARNING)."""
+    if isinstance(value, Message):
         try:
-            if item.origin == 'foreign' and item.entry:
-                entry = json.loads(item.entry)                               # E1b
-            else:
-                entry = _entry_of(item)                                      # E1
-            compact = _compact(entry)
-            compact.encode('utf-8')
-        except (_Invalid, ValueError, TypeError, UnicodeEncodeError, RecursionError):
-            return
-        if len(compact) > ENTRY_LIMIT:
-            return
-        if entries.get(text) is None:                                        # a message entry wins over null
-            entries[text] = entry
-    elif isinstance(item, Raw):
-        if text not in entries and _lift(field_kind, text, context) is not None:
-            entries[text] = None                                             # E2
+            form = _json_message(value)
+            json.dumps(form, ensure_ascii=False)
+            return form
+        except Exception as error:
+            _warn_once(('to_json', value.key), 'messages: %s cannot be stored as a message (%s); stored as text',
+                       value.key, type(error).__name__)
+            return _plain(value)
+    if isinstance(value, str):
+        return _plain(value)
+    return value
 
 
-def encode(record, kind, columns=None) -> dict:
-    """A shallow copy of ``record`` whose ``msgs`` describes the typed values of its text fields of
-    ``kind`` (and ``columns``) (4.5); no ``msgs`` key when there is nothing to describe.  Never raises."""
-    if not isinstance(record, dict):
-        return record
-    copy = dict(record)
-    copy.pop('msgs', None)
+def _from_param(item):
+    if isinstance(item, bool) or item is None:
+        return item
+    if isinstance(item, (int, float)):
+        return item
+    if isinstance(item, str):
+        return Raw(item)
+    if isinstance(item, dict):
+        found = from_json(item)
+        return found
+    return item
+
+
+def _is_param(item) -> bool:
+    """P := int | float | str | M (DATA.md section 1); True, False and None are not params."""
+    if isinstance(item, bool):
+        return False
+    return isinstance(item, (int, float, str)) or _is_form(item)
+
+
+def _is_form(value) -> bool:
+    """M := {"k": non-empty str, "p"?: {name: P}}; only common.clauses has a list ('parts') of P."""
+    if not (isinstance(value, dict) and isinstance(value.get('k'), str) and value['k']
+            and not set(value) - {'k', 'p'} and isinstance(value.get('p', {}), dict)):
+        return False
+    for name, item in value.get('p', {}).items():
+        if value['k'] == CLAUSES and name == 'parts':
+            if not (isinstance(item, list) and all(_is_param(part) for part in item)):
+                return False
+        elif not _is_param(item):
+            return False
+    return True
+
+
+def from_json(value):
+    """The typed value of a slot's JSON form: a string -> Raw ('' stays ''); a well-formed
+    {"k": str, "p"?: dict} (_is_form) -> a Message (value: the zh rendering; an unknown key shows the key
+    itself, its params are kept); anything else, also a {"k", "p"} whose params break the grammar,
+    unchanged (so to_json writes it back as it was).  Never raises."""
+    if isinstance(value, str):
+        return Raw(value) if value else ''
     try:
-        fields = list(_fields(kind, record)) + list(_column_fields(kind, record, columns))
-        if GUARD:
-            _check_stored(fields)
-        if kind in NO_SIDECAR:
-            return copy
-        entries = {}
-        for _at, field_kind, item, context in fields:
-            _add_entry(entries, item, field_kind, context)
-        if entries:
-            copy['msgs'] = entries
+        well_formed = _is_form(value)
+    except RecursionError:
+        well_formed = False
+    if not well_formed:
+        return value
+    try:
+        key, params = value['k'], {}
+        for name, item in value.get('p', {}).items():
+            if key == CLAUSES and name == 'parts' and isinstance(item, list):
+                params[name] = tuple(_from_param(part) for part in item)
+            else:
+                params[name] = _from_param(item)
+        try:
+            text = _render_zh(key, params)
+        except Exception:
+            text = key
+        return Message(text, key, params)
     except Exception as error:
-        _warn_once(('encode', type(error).__name__), 'messages: encode failed: %s', error)
-        copy.pop('msgs', None)
-    return copy
+        _warn_once(('from_json', type(error).__name__), 'messages: from_json failed: %s', error)
+        return value
+
+
+def _slot_walk(node, path, change):
+    """A copy of ``node`` with change(value) at every place ``path`` reaches ('*': every item of a list
+    or value of a dict); containers off the path are the very same objects."""
+    if not path:
+        return change(node)
+    head, rest = path[0], path[1:]
+    if head == '*':
+        if isinstance(node, list):
+            return [_slot_walk(item, rest, change) for item in node]
+        if isinstance(node, dict):
+            return {name: _slot_walk(item, rest, change) for name, item in node.items()}
+        return node
+    if isinstance(node, dict) and head in node:
+        copy = dict(node)
+        copy[head] = _slot_walk(node[head], rest, change)
+        return copy
+    return node
+
+
+def _slots(record, slots, change):
+    try:
+        for path in slots:
+            record = _slot_walk(record, tuple(path), change)
+    except Exception as error:
+        _warn_once(('slots', type(error).__name__), 'messages: slot walk failed: %s', error)
+    return record
+
+
+def read_slots(record, slots):
+    """A copy of a format-2 record with every slot value through from_json (``slots``: paths such as
+    ('errors', '*', 'error')).  The record itself is not changed.  Never raises."""
+    return _slots(record, slots, from_json)
+
+
+def write_slots(record, slots):
+    """A copy of a record with every slot value through to_json, ready for json.dumps.  Never raises."""
+    return _slots(record, slots, to_json)
 
 
 # ------------------------------------------------------------------------------- collector IPC
 
-def _wire_params(params):
-    return {name: wire(item) for name, item in params.items()}
-
-
 def wire(value):
-    """The JSON form of a value for the collector's request.events (2.8)."""
-    if isinstance(value, Message):
-        form = [_plain(value), value.key, _wire_params(value._params), value.origin]
-        if value.entry:
-            form.append(value.entry)
+    """The JSON form of a value for the collector's request.events (2.8; 2.0.0, S2-DESIGN.md 1.6): a
+    Message with a key is {"$m": {"k": key, "p": {name: wire(param)}}} ("p" left out when empty);
+    dicts, lists and tuples are walked; any other value (a Raw or other text: its plain text) as it is."""
+    if isinstance(value, Message) and value.key is not None:
+        form = {'k': value.key}
+        params = {name: wire(item) for name, item in value._params.items()}
+        if params:
+            form['p'] = params
         return {'$m': form}
-    if isinstance(value, Value):
-        return {'$v': [value.group, _plain(value)]}
-    if isinstance(value, Raw):
-        return {'$r': _plain(value)}
+    if isinstance(value, str):
+        return _plain(value)
     if isinstance(value, dict):
         return {name: wire(item) for name, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -691,31 +494,26 @@ def wire(value):
 
 
 def unwire(obj):
-    """The reverse of wire(); ValueError for a malformed marker object."""
+    """The reverse of wire(): {"$m": {"k", "p"?}} -> a Message (a list param -> a tuple, the parts of
+    common.clauses); ValueError for a malformed marker object."""
     if isinstance(obj, list):
         return [unwire(item) for item in obj]
     if not isinstance(obj, dict):
         return obj
-    if len(obj) == 1 and next(iter(obj)) in ('$m', '$v', '$r'):
-        (marker, form), = obj.items()
-        if marker == '$r':
-            if not isinstance(form, str):
-                raise ValueError('malformed $r')
-            return raw(form)
-        if marker == '$v':
-            if not (isinstance(form, list) and len(form) == 2 and isinstance(form[0], str)
-                    and isinstance(form[1], str)):
-                raise ValueError('malformed $v')
-            return Value(form[0], form[1])
-        if not (isinstance(form, list) and len(form) in (4, 5) and isinstance(form[0], str)
-                and (form[1] is None or isinstance(form[1], str)) and isinstance(form[2], dict)
-                and form[3] in ORIGINS and (len(form) == 4 or isinstance(form[4], str))):
+    if len(obj) == 1 and next(iter(obj)) == '$m':
+        form = obj['$m']
+        if not (isinstance(form, dict) and isinstance(form.get('k'), str) and form['k']
+                and not set(form) - {'k', 'p'} and isinstance(form.get('p', {}), dict)):
             raise ValueError('malformed $m')
-        params = {}
-        for name, item in form[2].items():
+        key, params = form['k'], {}
+        for name, item in form.get('p', {}).items():
             item = unwire(item)
             params[name] = tuple(item) if isinstance(item, list) else item
-        return Message(form[0], form[1], params, form[3], form[4] if len(form) == 5 else None)
+        try:
+            text = _render_zh(key, params)
+        except Exception:
+            text = key
+        return Message(text, key, params)
     return {name: unwire(item) for name, item in obj.items()}
 
 
@@ -724,16 +522,14 @@ def unwire(obj):
 # (MESSAGES.md 7.8, 2.9) Every src module outside TRANSIT is guarded: a runtime check records a
 # violation when its producer frame is any such module.  TRANSIT modules pass texts through without
 # deciding what is shown and are skipped when the producer frame is looked for; ui_theme is not one
-# of them: it is the display boundary, so a text operation of ui_theme on a Message or Value (a value
-# that reached a widget without show()) is charged to ui_theme itself.
-TRANSIT = frozenset({'messages', 'i18n_legacy', 'i18n'})
+# of them: it is the display boundary, so a text operation of ui_theme on a Message (a value
+# that reached a widget without show()) is charged to ui_theme itself.  (2.0.0 S2 P4) The tripwires are
+# on Message only (Value is gone).
+TRANSIT = frozenset({'messages', 'i18n'})
 TRIPWIRES = ('__getitem__', '__add__', '__radd__', '__mul__', '__rmul__', '__mod__', '__rmod__', 'strip', 'lstrip',
              'rstrip', 'replace', 'split', 'rsplit', 'splitlines', 'partition', 'rpartition', 'format', 'format_map',
              'ljust', 'rjust', 'center', 'lower', 'upper', 'casefold', 'title', 'capitalize', 'swapcase', 'translate',
              'expandtabs', 'zfill', 'removeprefix', 'removesuffix')
-EVENT_FIELDS = {'log': (None,), 'waiting': ('reason',), 'item_done': ('reason', 'error'), 'collect_status': (None,),
-                'collect_error': (None,), 'update_status': (None,), 'update_error': (None,), 'collect_page': ('title',)}
-STORE_MODULES = frozenset({'library', 'unfinished'})
 SRC_DIR = Path(__file__).resolve().parent
 VERIFICATION_DIR = SRC_DIR.parent / 'verification'
 
@@ -839,92 +635,6 @@ def _record(rule, where, found, key, text) -> bool:
     return True
 
 
-def _recognise(text, display=False, english=False):
-    import i18n_legacy
-    return i18n_legacy.recognise(_plain(text), display, english)
-
-
-def _plain_texts(item, raw_too, depth=0):
-    """The plain (and, when raw_too, Raw) texts in a value and its nested message params."""
-    if depth > 6:
-        return
-    if isinstance(item, Message):
-        for param in item._params.values():
-            yield from _plain_texts(param, raw_too, depth + 1)
-    elif isinstance(item, Value):
-        return
-    elif isinstance(item, Raw):
-        if raw_too:
-            yield item
-    elif isinstance(item, str):
-        yield item
-    elif isinstance(item, (list, tuple)):
-        for part in item:
-            yield from _plain_texts(part, raw_too, depth + 1)
-
-
-def _check_texts(values, where, frame, display, raw_too, skip=frozenset(), english=False):
-    if _busy() or _exempt:
-        return
-    with _Busy():
-        try:
-            hits = []
-            for item in values:
-                for text in _plain_texts(item, raw_too):
-                    key = _recognise(text, display, english)
-                    if key:
-                        hits.append((key, text))
-            if hits:
-                found = _producer(frame, skip)
-                for key, text in hits:
-                    _record('R-text', where, found, key, text)
-        except Exception as error:
-            _warn_once(('guard', type(error).__name__), 'messages: guard check failed: %s', error)
-
-
-def _check_shown(value, where, frame):
-    # (converge round, A15.5) shown in English, the zh text of a UI key is out of place as well: the
-    # display exclusion is for zh, where t() gives Chinese UI lines that pass through show()
-    _check_texts([value], where, frame, display=True, raw_too=False, english=i18n.language() != 'zh')
-
-
-def _check_stored(fields):
-    if _busy() or _exempt:
-        return
-    _check_texts([item for _at, _kind, item, _context in fields], 'encode', sys._getframe(2), display=False,
-                 raw_too=True, skip=STORE_MODULES)
-
-
-def _check_event(kind, payload, frame):
-    names = EVENT_FIELDS.get(kind)
-    if names is None:
-        return
-    values = []
-    for name in names:
-        if name is None:
-            values.append(payload)
-        elif isinstance(payload, dict):
-            values.append(payload.get(name))
-    if kind == 'collect_page' and isinstance(payload, dict) and isinstance(payload.get('links'), list):
-        values += [link.get('title') for link in payload['links'] if isinstance(link, dict)]
-    _check_texts(values, f'emit {kind}', frame, display=False, raw_too=True)
-
-
-def guarded(emit, producer):
-    """``emit`` with the G2 emit hook (7.3); ``emit`` itself when the guard is off."""
-    if not GUARD:
-        return emit
-
-    def checked(*args, **kwargs):
-        if args:
-            _check_event(args[0], args[1] if len(args) > 1 else kwargs.get('value'), sys._getframe(1))
-        return emit(*args, **kwargs)
-
-    checked.__wrapped__ = emit
-    checked.producer = producer
-    return checked
-
-
 @contextlib.contextmanager
 def exempt(reason):
     """G2 / tripwire exemption for test fixtures (7.3); counted in the per-file report."""
@@ -955,20 +665,14 @@ def guard_capture():
 
 
 def _checked_t(key, **values):
-    """i18n.t with the G2 parameter rules: R-param (a Message / Value / Raw / exception param) and,
-    in en, R-text on plain params, where the zh text of a UI key counts too (A15.5)."""
+    """i18n.t with the G2 parameter rule R-param (a Message / Raw / exception param)."""
     if values and not _busy() and not _exempt:
         with _Busy():
             try:
                 hits = []
-                english = i18n.language() != 'zh'
                 for name, item in values.items():
-                    if isinstance(item, (Message, Value, Raw, BaseException)):
+                    if isinstance(item, (Message, Raw, BaseException)):
                         hits.append(('R-param', name, type(item).__name__, item))
-                    elif english and isinstance(item, str):
-                        found = _recognise(item, True, True)
-                        if found:
-                            hits.append(('R-text', name, found, item))
                 if hits:
                     producer = _producer(sys._getframe(1))
                     for rule, name, found, item in hits:
@@ -983,8 +687,7 @@ def _flattened(obj, method, frame):
         return
     with _Busy():
         found = _producer(frame)
-        written = _record('tripwire', f'{type(obj).__name__}.{method}', found, getattr(obj, 'key', None)
-                          or getattr(obj, 'group', None), obj)
+        written = _record('tripwire', f'{type(obj).__name__}.{method}', found, getattr(obj, 'key', None), obj)
     if written:
         raise MessageFlattened(f'{type(obj).__name__}.{method} on {zh(obj)[:40]!r} in {found[0]}.py:{found[1].f_lineno}')
 
@@ -1023,9 +726,8 @@ def _tripwire(name):
 
 
 def _install() -> None:
-    for cls in (Message, Value):
-        for name in TRIPWIRES:
-            setattr(cls, name, _tripwire(name))
+    for name in TRIPWIRES:
+        setattr(Message, name, _tripwire(name))
     if getattr(i18n.t, '__name__', '') != '_checked_t':
         i18n.t = _checked_t
 

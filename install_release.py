@@ -539,12 +539,6 @@ def finish(target: Path, data: dict) -> list:
     return left
 
 
-def run_journal(target: Path, operation: str, steps: list, files: dict | None = None, temporaries=(),
-                trash=()) -> list:
-    """run_steps(), then finish(): returns the trash entries that could not be deleted afterwards."""
-    return finish(target, run_steps(target, operation, steps, files, temporaries, trash))
-
-
 def run_steps(target: Path, operation: str, steps: list, files: dict | None = None, temporaries=(),
               trash=()) -> dict:
     """Do the renames under a journal.  On any failure (or Ctrl+C) the renames done so far are undone and

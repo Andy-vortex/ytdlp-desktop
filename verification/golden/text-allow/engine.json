@@ -1,6 +1,6 @@
 {
  "module": "engine",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
   "YT-DLP下载器": {
    "category": "file",
@@ -12,11 +12,7 @@
   },
   "媒体": {
    "category": "file",
-   "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
-  },
-  "最佳": {
-   "category": "stored",
-   "reason": "stored / compared enum value (value.resolution.best); shown through i18n.label or a value.* message, never as text (P7)"
+   "reason": "name of the archive's media subfolder on disk (I18N.md D10), never translated (P7); the same word as value.link_kind.media, the one exception i18n_tool.FILE_SAME_AS_KEY lists: renaming the folder would lose the existing archives"
   }
  },
  "raises": {
@@ -37,7 +33,7 @@
   },
   "str(row.get('title') or '')": {
    "line_hint": 1864,
-   "reason": "Runner.download: the title of an earlier download read back from the downloads table (a media title, user data; that table has no sidecar, MESSAGES.md 4.3), kept as the skipped item's title exactly as 1.7.0 (str() of the stored value) and emitted in item_done; an object text field since A16.4"
+   "reason": "Runner.download: the title of an earlier download read back from the downloads table (a media title, user data; that table holds no message, MESSAGES.md 4.3), kept as the skipped item's title exactly as 1.7.0 (str() of the stored value) and emitted in item_done; an object text field since A16.4"
   },
   "raw.rstrip('\\r\\n')": {
    "line_hint": 1389,
@@ -48,6 +44,5 @@
    "reason": "_sentence for an error that carries no Message (the OS error subprocess.Popen raises): the 1.7.0 text without its closing stop (A11.5), plain OS text in the Windows language (D-H-5), the error param of core.engine.cannot_start_engine (S4); an error with a Message keeps its key through cut() above; a str method is a G1f composition since A16.4"
   }
  },
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

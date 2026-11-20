@@ -12,7 +12,7 @@ final-e2e-ui-1           the log keeps following the end after the window got sm
 final-e2e-ui-2           加入队列 updates the task header, the window title and the sidebar at once
 final-e2e-ui-3           a percent-encoded link is shown decoded in its row (display only)
 final-architecture-2     a collection whose history record cannot be written does not start, and says so
-final-architecture-3     StudioApp.failed_job is gone; engine.load_failed_job stays
+final-architecture-3     StudioApp.failed_job is gone (2.0.0 S2 P4: engine.load_failed_job, a 1.5.1 wrapper, too)
 final-privacy-security-1 a collected link holding a second link reaches the download box whole
 final-merge              an over-long link is failed alone by the Runner, not refused with the whole job;
                          a held settings.json is named once in the task log (final-fix-core requests 1, 2)
@@ -36,6 +36,7 @@ import customtkinter as ctk
 import collection_ui
 import engine
 import formats
+import i18n
 import library_ui
 import ui_download
 import ui_theme
@@ -47,12 +48,7 @@ from engine import MODES, Options
 from studio import StudioApp
 
 
-def no_network(*_args, **_kwargs):
-    raise AssertionError('updater.check_latest must not be called in this test')
-
-
-def no_clipboard(self, *_args, **_kwargs):
-    raise tk.TclError('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
+from _sandbox import no_clipboard, no_network, pump, zh_t
 
 
 class FakeRunner:
@@ -84,16 +80,6 @@ class FakeRunner:
     def cancel(self):
         self.cancelled.set()
         self.release.set()
-
-
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.01)
-    return condition is None
 
 
 def focus_ok(widget):
@@ -227,23 +213,20 @@ class B_ClearTests(Base):
                                  'pending_urls': [broken], 'failed_path': None, 'archive_errors': [],
                                  'bot_check': False})
         self.run_job(app, script, lambda: app.launch([broken, fine], self.options()))
-        self.assertEqual(app.queue_stats.cget('text'), '成功 1  /  未完成 1  /  共 2')
-        self.assertEqual(app.retry_button.cget('text'), '重试未完成 (1)')
-        self.assertEqual(ui_theme.full_text(app.metrics), ui_download.FINISHED_UNFINISHED)
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 1 条成功，1 条未完成')
+        self.assertEqual(app.retry_button.cget('text'), zh_t('download.retry_unfinished_n', count=1))
+        self.assertEqual(ui_theme.full_text(app.metrics), i18n.t('download.metrics.finished_unfinished'))
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.finished_n', success=1))
         with mock.patch.object(ui_download.messagebox, 'askyesno', return_value=True):
             app.clear_unfinished()
         self.assertEqual(app.unfinished, [])
-        self.assertEqual(app.queue_stats.cget('text'), '成功 1  /  未完成 0  /  共 2  /  已移出 1')
-        # (final fix round 1, rv-findings-1-1) The header no longer names the unfinished link.
-        # (1.7.0 U5) Shorter, so that it fits at 1000x740; the metrics line says 未完成记录已清除.
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 1 条成功')
-        self.assertEqual((app.retry_button.cget('text'), app.retry_button.cget('state')), ('重试未完成', 'disabled'))
-        self.assertEqual(ui_theme.full_text(app.metrics), ui_download.CLEARED_METRICS)
+        # (2.0.0 S4) The title names no unfinished link, so 清除未完成 leaves it as it is; the links-kept line goes.
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.finished_n', success=1))
+        self.assertEqual(ui_theme.full_text(app.metrics), '')
+        self.assertEqual((app.retry_button.winfo_manager(), app.task_menu.winfo_manager()), ('', ''))
         model = app.row_model[0]
         self.assertTrue(model['cleared'])
-        self.assertEqual(app.rows[0]['badge'].cget('text'), ui_download.CLEARED_CHIP)
-        self.assertEqual(model['detail'], f'{ui_download.CLEARED_DETAIL} · 链接不存在（404）')
+        self.assertEqual(app.rows[0]['badge'].cget('text'), i18n.t('download.chip.cleared'))
+        self.assertEqual(model['detail'], f"{i18n.t('download.detail.cleared')} · {zh_t('core.reason.http_404')}")
         # Its reason and 重试此条 stay available (the state is still 'failed').
         self.assertIn(model['state'], ui_download.REASON_STATES)
         self.assertIn(model['state'], ui_download.RETRYABLE)
@@ -286,7 +269,7 @@ class C_FocusTests(Base):
         """polish-function-3 / polish-visual-2, in the window; the focus moves to the new tab's table."""
         app = self.make_app()
         app.show_page('library')
-        names = {'任务历史与续采': app.history_tree, '增量订阅': app.subscription_tree, '统一资料归档': app.archive_tree}
+        names = {library_ui.TAB_HISTORY: app.history_tree, library_ui.TAB_SUBSCRIPTIONS: app.subscription_tree, library_ui.TAB_ARCHIVE: app.archive_tree}
         for name, table in names.items():
             app.library_tabs.set(name)
             pump(app, timeout=0.05)
@@ -294,9 +277,9 @@ class C_FocusTests(Base):
             stops = tab_walk(table)
             self.assertTrue(stops)
             self.assertFalse([stop for stop in stops for path in hidden if stop.startswith(path + '.')], name)
-        app.library_tabs.set('任务历史与续采')
+        app.library_tabs.set(library_ui.TAB_HISTORY)
         app.history_tree.focus_set()
-        app.library_tabs._clicked('统一资料归档')          # a click on the tab bar
+        app.library_tabs._clicked(i18n.label('library_tab', library_ui.TAB_ARCHIVE))          # a click on the tab bar
         self.assertEqual(str(app.tk.call('focus', '-lastfor', app._w)), str(app.archive_tree))
 
     def test_pages_stay_gridded_and_covered_pages_take_no_tab_focus(self):
@@ -327,20 +310,20 @@ class D_FooterAndHeaderTests(Base):
         app.set_busy(True)
         self.assertTrue(self.build_all(app))
         hidden = 300 - len(app.rows)
-        self.assertEqual(ui_theme.full_text(app.row_footer), f'还有 {hidden} 条未显示，会照常下载')
+        self.assertEqual(ui_theme.full_text(app.row_footer), zh_t('download.footer.hidden', hidden=hidden))
         stored = [{'url': url, 'key': urls.link_key(url, False), 'format': 'audio_mp3', 'reason': 'stopped',
                    'options': {}} for url in links[3:]]
         with mock.patch.object(engine, 'load_unfinished', return_value=stored):
             app.handle('done', {'success': 3, 'failed': 0, 'files': [], 'cancelled': True, 'failed_urls': [],
                                 'pending_urls': links[3:]})
         self.assertTrue(self.build_all(app))
-        self.assertEqual(ui_theme.full_text(app.row_footer), f'还有 {hidden} 条未显示，可点“重试未完成”')
+        self.assertEqual(ui_theme.full_text(app.row_footer), zh_t('download.footer.hidden', hidden=hidden))
         app.unfinished = []
         app._update_footer()
-        self.assertEqual(ui_theme.full_text(app.row_footer), f'还有 {hidden} 条未显示')
+        self.assertEqual(ui_theme.full_text(app.row_footer), zh_t('download.footer.hidden', hidden=hidden))
 
-    def test_the_active_item_beyond_the_cap_is_in_the_metrics_line(self):
-        """polish-visual-3."""
+    def test_the_active_item_beyond_the_cap_is_in_the_title(self):
+        """polish-visual-3; (2.0.0 S4) the title has a line of its own, so the item is named there."""
         app = self.make_app()
         links = [f'https://example.org/long/{n}' for n in range(120)]
         app.populate_queue(links)
@@ -348,15 +331,18 @@ class D_FooterAndHeaderTests(Base):
         app.operation = 'download'
         app.set_busy(True)
         app.handle('item', {'index': 2, 'total': 120, 'url': links[1]})
-        self.assertEqual(ui_theme.full_text(app.metrics), '正在连接网站…')          # a row with widgets
+        self.assertEqual(ui_theme.full_text(app.metrics), zh_t('download.metrics.connecting'))          # a row with widgets
         app.handle('item', {'index': 100, 'total': 120, 'url': links[99]})
-        self.assertEqual(ui_theme.full_text(app.metrics), '正在连接网站…   ·   当前：example.org/long/99')
+        running = zh_t('download.title.downloading_n', index=100, total=120)
+        self.assertEqual(ui_theme.full_text(app.current_title), running + ' · example.org/long/99')
+        self.assertEqual(ui_theme.full_text(app.metrics), zh_t('download.metrics.connecting'))
         app.handle('title', '第一百首')
-        self.assertEqual(ui_theme.full_text(app.metrics), '正在连接网站…   ·   当前：第一百首')
+        self.assertEqual(ui_theme.full_text(app.current_title), running + ' · 第一百首')
+        self.assertEqual(ui_theme.full_text(app.metrics), zh_t('download.metrics.connecting'))
         app.handle('progress', {'fraction': 0.5, 'downloaded': 50, 'total': 100, 'speed': 10.0, 'eta': 5,
                                 'status': 'downloading'})
-        self.assertTrue(ui_theme.full_text(app.metrics).startswith('50.0%'))
-        self.assertTrue(ui_theme.full_text(app.metrics).endswith('当前：第一百首'))
+        self.assertTrue(ui_theme.full_text(app.metrics).startswith('50%'))
+        self.assertEqual(ui_theme.full_text(app.current_title), running + ' · 第一百首')
         app.set_busy(False)
 
     def test_enqueue_updates_the_totals_at_once(self):
@@ -374,14 +360,15 @@ class D_FooterAndHeaderTests(Base):
             app.urls.insert('1.0', 'https://example.org/media/s5.mp4\nhttps://example.org/media/s6.mp4')
             app.start()                                      # 加入队列
             self.assertEqual(len(app.row_model), 6)
-            self.assertEqual(ui_theme.full_text(app.current_title), '正在下载 2 / 6')
-            self.assertEqual(app.side_status.cget('text'), '正在下载 2 / 6')
+            self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.downloading_n', index=2, total=6))
+            # (2.0.0 S4 A2) the sidebar says one word; the item count is only in the task header and the window title
+            self.assertEqual(app.side_status.cget('text'), zh_t('shell.status.downloading'))
             self.assertTrue(app.title().startswith('2/6'))
             # The engine's own 'queued' event changes nothing more.
             app.handle('queued', {'urls': ['https://example.org/media/s5.mp4', 'https://example.org/media/s6.mp4'],
                                   'first_index': 5, 'total': 6})
             self.assertEqual(len(app.row_model), 6)
-            self.assertEqual(ui_theme.full_text(app.current_title), '正在下载 2 / 6')
+            self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.downloading_n', index=2, total=6))
         finally:
             app.runner = None
             app.set_busy(False)
@@ -466,11 +453,11 @@ class E_KeysAndLogTests(Base):
         self.assertTrue(app.log_follow)
         burst()
         self.assertGreaterEqual(app.logs.yview()[1], 0.999)
-        # 只看错误 keeps a following reader at the end.
-        app.toggle_errors()
+        # Errors keeps a following reader at the end.
+        app.set_errors_only(True)
         pump(app, timeout=0.05)
         self.assertGreaterEqual(app.logs.yview()[1], 0.999)
-        app.toggle_errors()
+        app.set_errors_only(False)
 
 
 class F_LinkTests(Base):
@@ -505,14 +492,14 @@ class F_LinkTests(Base):
     def test_a_link_that_cannot_stay_whole_is_left_out(self):
         """final-privacy-security-1: never queued in pieces."""
         app = self.make_app()
-        items = [{'url': 'https://site.example/a.mp4', 'title': 'a', 'kind': '媒体地址', 'source': 'https://site.example/'},
-                 {'url': 'https://site.example/b.mp4', 'title': 'b', 'kind': '媒体地址', 'source': 'https://site.example/'}]
+        items = [{'url': 'https://site.example/a.mp4', 'title': 'a', 'kind': 'media', 'source': 'https://site.example/'},
+                 {'url': 'https://site.example/b.mp4', 'title': 'b', 'kind': 'media', 'source': 'https://site.example/'}]
         split = {'https://site.example/b.mp4': 'https://site.example/b.mp4|https://other.example/c.mp4'}
         with mock.patch.object(collection_ui, 'queueable_url', lambda url: split.get(url, url)):
             app.queue_collected_items(items)
         self.assertEqual(urls.extract_urls(app.box_text()), ['https://site.example/a.mp4'])
         logged = '\n'.join(app.log_buffer) + app.logs.get('1.0', 'end-1c')
-        self.assertIn('这条采集链接无法完整放入下载列表，已跳过：https://site.example/b.mp4', logged)
+        self.assertIn(zh_t('log.collect.link_skipped', url='https://site.example/b.mp4'), logged)
 
 
 class G_HistoryTests(Base):
@@ -535,11 +522,11 @@ class G_HistoryTests(Base):
         app = self.make_app(smoke=False, visible=False, output=str(_sandbox.out('downloads')))
         detail, note = self.run_failure(app, 'http://127.0.0.1:9')
         self.assertEqual(detail, ui_download.PROXY_REASON)
-        self.assertTrue(note.endswith(f'最近错误：{ui_download.PROXY_REASON}'), note)
+        self.assertTrue(note.endswith(zh_t('library.history.last_error', error=ui_download.PROXY_REASON)), note)
         self.assertNotIn('127.0.0.1:9', str(app.library.job(app.download_job)['data']))     # the proxy is never stored
         detail, note = self.run_failure(app, '')
         self.assertEqual(detail, engine.NETWORK_REASON)
-        self.assertTrue(note.endswith(f'最近错误：{engine.NETWORK_REASON}'), note)
+        self.assertTrue(note.endswith(zh_t('library.history.last_error', error=engine.NETWORK_REASON)), note)
 
     def test_history_value_is_a_copy(self):
         value = {'index': 1, 'reason': engine.NETWORK_REASON}
@@ -554,7 +541,7 @@ class H_CollectionStartTests(Base):
         """final-architecture-2."""
         app = self.make_app(smoke=False, visible=False)
         app.collected_links['https://old.example/x.mp4'] = {'url': 'https://old.example/x.mp4', 'title': 'old',
-                                                             'kind': '媒体地址', 'source': 'https://old.example/'}
+                                                             'kind': 'media', 'source': 'https://old.example/'}
         app.collect_urls.insert('1.0', 'https://example.invalid/page')
         errors, boxes = [], []
         app.report_callback_exception = lambda *exc: errors.append(exc[1])
@@ -567,11 +554,11 @@ class H_CollectionStartTests(Base):
             app.tk.call(app.register(app.collect_start.invoke))     # through a Tcl command, as a click runs it
             app.update()
         self.assertEqual(errors, [])
-        self.assertEqual(boxes, ['采集未开始'])
+        self.assertEqual(boxes, [zh_t('dialog.collect.not_started.title')])
         self.assertFalse(app.busy)
         self.assertIsNone(app.operation)
         self.assertIn('https://old.example/x.mp4', app.collected_links)       # the results on screen stay
-        self.assertTrue(ui_theme.full_text(app.collect_status).startswith('采集未开始'))
+        self.assertEqual(ui_theme.full_text(app.collect_status), zh_t('collect.status.not_started'))
         # A resume (change_job) fails the same way; a background check re-raises for its back-off.
         options = CollectOptions(['https://example.org/list']).validate()
         with mock.patch.object(app.library, 'change_job', side_effect=locked), \
@@ -590,7 +577,7 @@ class I_DeadStateTests(Base):
         app = self.make_app(smoke=False, visible=False)
         self.assertFalse(hasattr(app, 'failed_job'))
         self.assertFalse(hasattr(ui_download, 'load_failed_job'))
-        self.assertTrue(callable(engine.load_failed_job))       # the public 1.5.1 wrapper stays
+        self.assertFalse(hasattr(engine, 'load_failed_job'))     # (2.0.0 S2 P4) the 1.5.1 wrapper is gone
 
 
 class J_FinalMergeRequestTests(Base):
@@ -615,7 +602,7 @@ class J_FinalMergeRequestTests(Base):
                 mock.patch.object(ui_download.messagebox, 'showwarning') as warning:
             self.assertFalse(app.launch([self.LONG], self.options()))
         warning.assert_called_once()
-        self.assertIn('链接过长', warning.call_args[0][1])
+        self.assertIn(zh_t('core.links.too_long', length=len(self.LONG), url=urls.display(self.LONG)), warning.call_args[0][1])
         self.assertFalse(app.busy)
         self.assertEqual(FakeRunner.instances, [])
 
@@ -628,7 +615,7 @@ class J_FinalMergeRequestTests(Base):
                 mock.patch.object(ui_download.messagebox, 'showwarning') as warning:
             self.assertFalse(app.launch(links, options))
         warning.assert_called_once()
-        self.assertNotIn('链接过长', warning.call_args[0][1])
+        self.assertNotIn(zh_t('core.links.too_long', length=len(self.LONG), url=urls.display(self.LONG)), warning.call_args[0][1])
         self.assertEqual(FakeRunner.instances, [])
 
     def test_held_settings_are_named_in_the_task_log(self):
@@ -644,11 +631,11 @@ class J_FinalMergeRequestTests(Base):
             app = self.make_app(smoke=False, visible=False)
         app.flush_log()
         text = app.logs.get('1.0', 'end')
-        self.assertEqual(text.count('设置文件暂时无法读取'), 1, text)
+        self.assertEqual(text.count(zh_t('log.settings_held')), 1, text)
         self.close(app)
         plain = self.make_app(smoke=False, visible=False)
         plain.flush_log()
-        self.assertNotIn('设置文件暂时无法读取', plain.logs.get('1.0', 'end'))
+        self.assertNotIn(zh_t('log.settings_held'), plain.logs.get('1.0', 'end'))
 
 
 class K_FixRound1Tests(Base):
@@ -661,7 +648,7 @@ class K_FixRound1Tests(Base):
         audio = next(preset for preset in formats.PRESETS if preset.kind == 'audio')
         for preset in (video, audio):
             with self.subTest(kind=preset.kind):
-                app.format.set(preset.label)
+                app.mode.set(preset.id)
                 app.on_format()
                 pump(app, timeout=0.1)
                 calls = []
@@ -688,7 +675,7 @@ class K_FixRound1Tests(Base):
                 expected = 'normal' if preset.kind == 'video' else 'disabled'
                 self.assertEqual((app.quality_menu.cget('state'), app.subtitle_check.cget('state')), (expected, expected))
                 self.assertEqual(bool(app.quality_menu.winfo_manager()), preset.kind == 'video')
-                self.assertEqual(app.mode.get(), preset.mode)
+                self.assertEqual(app.mode.get(), preset.id)
 
     def test_a_late_build_step_lets_the_window_through_first(self):
         app = self.make_app()
@@ -711,13 +698,13 @@ class K_FixRound1Tests(Base):
         self.assertTrue(self.build_all(app))
         self.assertEqual(len(app.rows), 30)
 
-    def test_clear_rewrites_only_the_header_that_names_unfinished_links(self):
+    def test_clear_changes_no_title(self):
         app = self.make_app(smoke=False, visible=False, output=str(_sandbox.out('downloads')))
         entry = {'url': 'https://example.org/x', 'key': 'example.org/x', 'format': 'audio_mp3', 'reason': 'failed',
                  'options': {}, 'time': 1}
-        for title, expected in (('任务结束 · 3 条成功，2 条未完成', '任务结束 · 3 条成功'),       # (1.7.0 U5)
-                                ('任务已停止', '任务已停止'), ('YouTube 暂时拒绝了当前网络', 'YouTube 暂时拒绝了当前网络'),
-                                ('下载完成 · 2 条成功', '下载完成 · 2 条成功')):
+        stopped, bot, done = zh_t('download.title.stopped'), zh_t('download.title.bot'), zh_t('download.title.done', success=2)
+        for title, expected in ((zh_t('download.title.finished_n', success=3), zh_t('download.title.finished_n', success=3)),
+                                (stopped, stopped), (bot, bot), (done, done)):
             with self.subTest(title=title):
                 app.unfinished = [entry]
                 app.current_title.configure(text=title)

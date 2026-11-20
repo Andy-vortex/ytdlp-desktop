@@ -1,3 +1,4 @@
+# serial: measures frame intervals (about 17 ms) on the wall clock
 import _sandbox
 import json
 from pathlib import Path

@@ -14,12 +14,18 @@ check and cannot pass on stale evidence:
   3. download smoke through the packaged exe against an in-process fixture server (with archive);
   4. GUI smoke: visible window titled "... YT-DLP 下载器" (or, 1.7.0, "... YT-DLP Downloader") within 10 s, WM_CLOSE, exit code 0 within 10 s; the
      program's own log must not report that icons could not be drawn;
-  5. build\\verify\\report.json of a full run (no -k) with the tiers all and exe, every result passed or skipped,
-     app_version APP_VERSION, source_sha256 = the sources now, exe sha256 = the staged exe; build\\package-<version>\\build.json
-     ties the staged exe to the same sources; (1.8.0, MESSAGES.md 10.3 WP-6) the message-key evidence: the report's
-     msg_guard ran on test files and recorded no violation, no verification\\golden\\text-allow file holds a
-     pending_keys entry or a literal of category pending, and every file of verification\\release-sources is the one
-     verification\\golden\\release-sources.json pins (nothing changed, missing or added);
+  5. (2.0.0) the pair of test reports run_tests.py writes for a release (build.py makes both):
+     build\\verify\\report-source.json, a serial run without -k / --quick / --exe / --only-tier of the tiers default
+     and all, that lists every test file of those tiers that exists now; build\\verify\\report-exe.json, a serial run
+     without -k / --quick with --exe = the staged exe, that lists every test file of the tier exe, each one passed
+     (not skipped).  In both: every result passed or skipped, app_version APP_VERSION, source_sha256 = the sources
+     now, msg_guard checked test files and found no violation; the exe report's exe sha256 = the staged exe.  (Before
+     2.0.0 one report.json had to hold a run of every tier against the exe; only the exe tier reads VERIFY_EXE, so
+     the other files ran twice on the same sources.)  build\\package-<version>\\build.json
+     ties the staged exe to the same sources; (1.8.0, MESSAGES.md 10.3 WP-6) the message-key evidence: the
+     reports' msg_guard (above), and no verification\\golden\\text-allow file holds a
+     pending_keys entry or a literal of category pending ((2.0.0) the pins of the frozen released sources went
+     with those sources);
   6. the stage must still match the list of step 1 file by file (the program's runs did not change it);
   7. writes build\\verify\\release-<version>.json with that list under "file_list" ({count, size, sha256 of the list,
      files}) and prints it without the per-file entries.  install_release.py checks the stage and its copy against
@@ -50,8 +56,6 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
 # (1.8.0) the message-key evidence of step 5 (MESSAGES.md 10.3 WP-6)
 ALLOW_DIR = ROOT / 'verification' / 'golden' / 'text-allow'
-RELEASE_SOURCES = ROOT / 'verification' / 'release-sources'
-RELEASE_PINS = ROOT / 'verification' / 'golden' / 'release-sources.json'
 
 
 def _app_version() -> str:
@@ -71,7 +75,9 @@ TITLE_SUFFIX = 'YT-DLP 下载器'
 TITLE_SUFFIXES = (TITLE_SUFFIX, 'YT-DLP Downloader')
 DEFAULT_STAGE = BUILD / f'package-{VERSION}' / APP_NAME
 BUILD_RECORD = BUILD / f'package-{VERSION}' / 'build.json'
-REPORT = BUILD / 'verify' / 'report.json'
+# (2.0.0) the two reports of step 5, written by run_tests.py beside build\verify\report.json
+SOURCE_REPORT = BUILD / 'verify' / 'report-source.json'
+EXE_REPORT = BUILD / 'verify' / 'report-exe.json'
 RELEASE = BUILD / 'verify' / f'release-{VERSION}.json'
 FIXTURE = Path(__file__).resolve().parent / 'fixture'
 # The vendor/bin file list comes from vendor/manifest.json (written by prepare_vendor.py); these are always required.
@@ -408,35 +414,77 @@ def check_layout(stage: Path, source_manifest=ROOT / 'vendor' / 'manifest.json')
     return {'yt-dlp': entry.get('version'), 'yt-dlp_sha256': engine_hash, 'vendor_bin': expected_bin}
 
 
-def check_evidence(stage: Path, run_tests) -> dict:
-    """Step 5: the test report and build.json belong to these sources and this exe."""
-    sources = run_tests.source_sha256()
-    exe_hash = file_sha256(stage / EXE_NAME)
-    check(REPORT.is_file(), f'missing {REPORT}; run build.py (or run_tests.py --all --exe <staged exe>)')
-    report = json.loads(REPORT.read_text(encoding='utf-8'))
-    check(report.get('filter') is None, f'report.json is a partial run (-k {report.get("filter")!r})')
+def _read_report(path: Path, command: str) -> dict:
+    check(path.is_file(), f'missing {path}; run build.py (or {command})')
+    try:
+        report = json.loads(path.read_text(encoding='utf-8'))
+    except ValueError as error:
+        raise GateError(f'{path.name} cannot be read: {error}')
+    check(isinstance(report, dict), f'{path.name} is not a report')
+    return report
+
+
+def _check_report(report: dict, name: str, sources: str, tiers_needed, expected_files, tests=None) -> list:
+    """The checks both reports share; returns the results.  ``tests``: run_tests.tests_sha256() now."""
+    check(report.get('filter') is None, f'{name} is a partial run (-k {report.get("filter")!r})')
+    check(not report.get('quick'), f'{name} is a --quick run')
+    check(report.get('jobs') == 1, f'{name} is a parallel run (-j {report.get("jobs")!r}); the gate takes serial runs')
     tiers = report.get('tiers') or []
-    check('all' in tiers and 'exe' in tiers, f'report.json tiers are {tiers}; the gate needs a run with all and exe')
-    check(report.get('app_version') == VERSION, f'report.json app_version is {report.get("app_version")!r}')
+    absent = [tier for tier in tiers_needed if tier not in tiers]
+    check(not absent, f'{name} tiers are {tiers}; the gate needs a run with {" and ".join(tiers_needed)}')
+    check(report.get('app_version') == VERSION, f'{name} app_version is {report.get("app_version")!r}')
     check(report.get('source_sha256') == sources,
-          'report.json was produced from other sources (source_sha256 differs from src/*.py + app.spec now)')
-    check((report.get('exe') or {}).get('sha256') == exe_hash, 'report.json was produced with another exe '
-                                                               '(exe.sha256 differs from the staged exe)')
+          f'{name} was produced from other sources (source_sha256 differs from src/*.py + app.spec now)')
+    # (2.0.0, S1 review fix) A green report of older tests (an assertion edited since, a golden or fixture file
+    # changed, another vendor manifest) is not evidence for the tests of this tree: build.py --skip-tests runs no
+    # test of the tiers default and all itself.
+    check(tests is not None and report.get('tests_sha256') == tests,
+          f'{name} was produced with other tests or vendor files (tests_sha256 differs from verification/ and '
+          'vendor/manifest.json now); run the tests again')
     results = report.get('results') or []
-    check(results, 'report.json has no results')
+    check(results, f'{name} has no results')
     bad = [f'{item.get("file")} ({item.get("status")})' for item in results
            if item.get('status') not in ('passed', 'skipped')]
-    check(not bad, 'report.json has results that did not pass: ' + ', '.join(bad))
-    exe_skipped = [item['file'] for item in results if item.get('tier') == 'exe' and item.get('status') != 'passed']
-    check(not exe_skipped, 'tier exe was not really exercised: ' + ', '.join(exe_skipped))
-    expected = {path.name for path, tier in run_tests.discover() if tier != 'net'}
-    missing = sorted(expected - {item.get('file') for item in results})
-    check(not missing, 'report.json lacks test files that exist now: ' + ', '.join(missing))
-    check(BUILD_RECORD.is_file(), f'missing {BUILD_RECORD}; the staged folder was not made by build.py')
-    record = json.loads(BUILD_RECORD.read_text(encoding='utf-8'))
+    check(not bad, f'{name} has results that did not pass: ' + ', '.join(bad))
+    missing = sorted(set(expected_files) - {item.get('file') for item in results})
+    check(not missing, f'{name} lacks test files that exist now: ' + ', '.join(missing))
+    guard = report.get('msg_guard')
+    check(isinstance(guard, dict), f'{name} has no msg_guard (the 1.8.0 run_tests.py writes it)')
+    check((guard.get('files_checked') or 0) > 0, f'{name} msg_guard checked no test file')
+    check(guard.get('violations') == 0, f'{name} msg_guard.violations is {guard.get("violations")!r}, must be 0')
+    return results
+
+
+def check_evidence(stage: Path, run_tests, source_report=None, exe_report=None, build_record=None) -> dict:
+    """Step 5: the source report, the exe report and build.json belong to these sources and this exe.
+
+    Together the two reports cover what the single 1.8.x report covered: every test file except the tier net,
+    the tier exe really exercised against the staged exe."""
+    source_report = Path(source_report) if source_report is not None else SOURCE_REPORT
+    exe_report = Path(exe_report) if exe_report is not None else EXE_REPORT
+    build_record = Path(build_record) if build_record is not None else BUILD_RECORD
+    sources = run_tests.source_sha256()
+    tests_digest = run_tests.tests_sha256()
+    exe_hash = file_sha256(stage / EXE_NAME)
+    tests = run_tests.discover()
+    source = _read_report(source_report, 'run_tests.py --all')
+    check(source.get('exe') is None and not source.get('only_tier'),
+          f'{source_report.name} must be a run of the sources (no --exe, no --only-tier)')
+    _check_report(source, source_report.name, sources, ('default', 'all'),
+                  [path.name for path, tier in tests if tier in ('default', 'all')], tests_digest)
+    exe = _read_report(exe_report, 'run_tests.py --only-tier exe --exe <staged exe>')
+    exe_results = _check_report(exe, exe_report.name, sources, ('exe',),
+                                [path.name for path, tier in tests if tier == 'exe'], tests_digest)
+    check((exe.get('exe') or {}).get('sha256') == exe_hash, f'{exe_report.name} was produced with another exe '
+                                                            '(exe.sha256 differs from the staged exe)')
+    exe_skipped = [item.get('file') for item in exe_results
+                   if item.get('tier') == 'exe' and item.get('status') != 'passed']
+    check(not exe_skipped, 'tier exe was not really exercised: ' + ', '.join(map(str, exe_skipped)))
+    check(build_record.is_file(), f'missing {build_record}; the staged folder was not made by build.py')
+    record = json.loads(build_record.read_text(encoding='utf-8'))
     check(record.get('source_sha256') == sources, 'build.json: the staged exe was built from other sources')
     check(record.get('exe_sha256') == exe_hash, 'build.json: the staged exe is not the one build.py staged')
-    return {'report': report, 'record': record, 'sources': sources, 'exe_hash': exe_hash}
+    return {'report': source, 'exe_report': exe, 'record': record, 'sources': sources, 'exe_hash': exe_hash}
 
 
 def pending_keys(allow_dir=ALLOW_DIR) -> list:
@@ -451,42 +499,17 @@ def pending_keys(allow_dir=ALLOW_DIR) -> list:
     return found
 
 
-def release_sources(folder=RELEASE_SOURCES, pins=RELEASE_PINS) -> dict:
-    """{version: {'files', 'sha256', 'changed', 'missing', 'added'}} of the frozen released sources against
-    their pins (MESSAGES.md D11); 'sha256' binds the version's list of (name, SHA-256)."""
-    pinned = json.loads(Path(pins).read_text(encoding='utf-8'))['releases']
-    result = {}
-    for version, pin in pinned.items():
-        tree = Path(folder) / version / 'src'
-        actual = {path.name: file_sha256(path) for path in sorted(tree.glob('*.py'))} if tree.is_dir() else {}
-        others = sorted(path.name for path in tree.iterdir() if path.suffix != '.py') if tree.is_dir() else []
-        expected = pin.get('files') or {}
-        listing = json.dumps(sorted(actual.items()), separators=(',', ':')).encode()
-        result[version] = {'files': len(actual), 'sha256': hashlib.sha256(listing).hexdigest(),
-                           'changed': sorted(name for name in actual if name in expected and actual[name] != expected[name]),
-                           'missing': sorted(set(expected) - set(actual)),
-                           'added': sorted((set(actual) - set(expected)) | (set(others) - set(pin.get('other_files') or [])))}
-    return result
-
-
-def check_message_evidence(report, allow_dir=ALLOW_DIR, folder=RELEASE_SOURCES, pins=RELEASE_PINS) -> dict:
+def check_message_evidence(report, allow_dir=ALLOW_DIR) -> dict:
     """(1.8.0, step 5) The run's G2 guard checked test files and recorded no violation; no pending key is
-    left; the frozen release sources are the pinned ones."""
+    left."""
     guard = report.get('msg_guard')
-    check(isinstance(guard, dict), 'report.json has no msg_guard (the 1.8.0 run_tests.py writes it)')
-    check((guard.get('files_checked') or 0) > 0, 'report.json msg_guard checked no test file')
-    check(guard.get('violations') == 0, f'report.json msg_guard.violations is {guard.get("violations")!r}, must be 0')
+    check(isinstance(guard, dict), 'report-source.json has no msg_guard (the 1.8.0 run_tests.py writes it)')
+    check((guard.get('files_checked') or 0) > 0, 'report-source.json msg_guard checked no test file')
+    check(guard.get('violations') == 0, f'report-source.json msg_guard.violations is {guard.get("violations")!r}, must be 0')
     pending = pending_keys(allow_dir)
     check(not pending, 'pending_keys are left in the allow files: ' + '; '.join(pending[:10]))
-    sources = release_sources(folder, pins)
-    check(sources, f'no release-sources pins in {pins}')
-    bad = [f'{version} {kind} {", ".join(names)}' for version, item in sources.items()
-           for kind in ('changed', 'missing', 'added') if item[kind] for names in [item[kind]]]
-    check(not bad, 'verification\\release-sources differs from its pins: ' + '; '.join(bad))
     return {'msg_guard': {name: guard.get(name) for name in ('files_checked', 'violations', 'exemptions', 'not_guarded')},
-            'pending_keys': pending,
-            'release_sources': {version: {'files': item['files'], 'sha256': item['sha256']}
-                                for version, item in sources.items()}}
+            'pending_keys': pending}
 
 
 def load_run_tests():
@@ -546,9 +569,9 @@ def main(argv=None) -> int:
 
         evidence = check_evidence(stage, run_tests)
         messages_evidence = check_message_evidence(evidence['report'])
-        say('5 evidence ok (report.json and build.json belong to these sources and this exe; msg_guard '
-            f'{messages_evidence["msg_guard"]["files_checked"]} files, 0 violations; no pending_keys; '
-            f'release-sources as pinned: {", ".join(messages_evidence["release_sources"])})')
+        say('5 evidence ok (report-source.json, report-exe.json and build.json belong to these sources and this exe; '
+            'msg_guard '
+            f'{messages_evidence["msg_guard"]["files_checked"]} files, 0 violations; no pending_keys)')
 
         # The record lists the stage as it was before the program ran; it must not have changed since.
         changes = file_list_differences(files, stage_file_list(stage))
@@ -557,8 +580,10 @@ def main(argv=None) -> int:
         say('6 the stage is unchanged since step 1 (every file, SHA-256)')
         count, size = folder_stats(stage)
         check((count, size) == (len(files), sum(item['size'] for item in files)), 'file count/size changed')
-        report = evidence['report']
-        skipped = [item['file'] for item in report['results'] if item.get('status') == 'skipped']
+        report, exe_report = evidence['report'], evidence['exe_report']
+        results = report['results'] + [item for item in exe_report['results']
+                                       if item.get('file') not in {entry.get('file') for entry in report['results']}]
+        skipped = [item['file'] for item in results if item.get('status') == 'skipped']
         components = {name: ' '.join(sandboxed['components'][name].get('version') or []) for name in COMPONENTS}
         release = {
             'status': 'passed', 'version': VERSION,
@@ -568,13 +593,15 @@ def main(argv=None) -> int:
             'components': components, 'yt-dlp_bundled_sha256': layout['yt-dlp_sha256'],
             'time_to_window': gui['time_to_window'], 'self_test_seconds': sandboxed['_seconds'],
             'download_smoke': smoke,
-            'tests': [{'file': item['file'], 'tier': item['tier'], 'status': item['status']}
-                      for item in report['results']],
-            'skipped': skipped, 'tiers': report['tiers'],
+            'tests': [{'file': item['file'], 'tier': item['tier'], 'status': item['status']} for item in results],
+            'skipped': skipped,
+            'tiers': [tier for tier in ('default', 'all', 'exe', 'net')
+                      if tier in report['tiers'] or tier in exe_report['tiers']],
             'report': {'started': report.get('started'), 'finished': report.get('finished')},
+            # (2.0.0) the exe pass is its own report
+            'exe_report': {'started': exe_report.get('started'), 'finished': exe_report.get('finished')},
             # (1.8.0) the message-key evidence of step 5
             'msg_guard': messages_evidence['msg_guard'], 'pending_keys': messages_evidence['pending_keys'],
-            'release_sources': messages_evidence['release_sources'],
             'timestamp': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
             # Every file of the stage; install_release.py checks the stage and its copy against this list.
             'file_list': {'count': len(files), 'size': sum(item['size'] for item in files),

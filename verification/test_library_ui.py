@@ -11,7 +11,9 @@ import uuid
 
 from collector import CollectOptions
 from engine import Options
+from library import job_downloads
 from studio import StudioApp
+import ui_theme
 import customtkinter as ctk
 
 OUT = _sandbox.out('library-ui')
@@ -24,7 +26,7 @@ try:
     app.collect_pages_limit.set('2')
     options = app.collection_options()
     job = app.library.create_job('collect', '历史列表', asdict(options))
-    page = dict(url=url, title='历史完整正文', text='归档正文', markdown='# 归档正文', links=[dict(url='https://example.org/video.mp4', title='视频甲', source=url, kind='媒体地址')], next=None)
+    page = dict(url=url, title='历史完整正文', text='归档正文', markdown='# 归档正文', links=[dict(url='https://example.org/video.mp4', title='视频甲', source=url, kind='media')], next=None)
     checkpoint = dict(visited=[url], todo=[dict(url=url+'/next', depth=1)])
     app.library.collection_event(job, 'collect_page', dict(page, _checkpoint=checkpoint))
     app.library.change_job(job, status='interrupted')
@@ -38,11 +40,11 @@ try:
         app.resume_history()
         launch.assert_called_once()
         assert launch.call_args.args[0].resume == checkpoint
-    app.subscription_name.set('测试更新订阅')
-    app.subscription_interval.set('仅手动')
+    app.subscription_interval.set(0)        # 0 s: manual only (the default of a new subscription, settings page)
     app.save_subscription()
     subscription = app.library.subscriptions()[0]
     assert subscription['interval'] == 0 and subscription['data']['options']['max_pages'] == 2
+    assert subscription['name'] == url, 'named after its first page'
     app.library.finish_subscription(subscription['id'], [page], True)
     app.refresh_library()
     app.subscription_tree.selection_set(subscription['id'])
@@ -51,8 +53,7 @@ try:
     app.queue_subscription()
     assert app.urls.get('1.0','end-1c').count('https://example.org/video.mp4') == 1
     assert len(app.library.pending(subscription['id'])) == 1
-    app.subscription_interval.set('每天')
-    app.change_interval()
+    app.set_schedule(86400)                 # ⋯ → Schedule ▸ daily
     assert app.library.subscriptions()[0]['interval'] == 86400
     app.toggle_subscription()
     assert not app.library.subscriptions()[0]['enabled']
@@ -85,18 +86,20 @@ try:
     app.archive_search.set('历史完整')
     assert len(app.archive_tree.get_children()) == 1
     app.archive_enabled.set(True)
-    assert app.destination_label.cget('text') == '资料库'
-    assert app.output_entry.get() == app.archive_root.get()
+    assert app.output_button.path == app.archive_root.get()
+    assert app.output_button._icon_code == ui_theme.ICON_ARCHIVE
     with patch('studio.os.startfile') as opened:
         app.open_folder()
         opened.assert_called_once_with(Path(app.archive_root.get()))
     app.archive_enabled.set(False)
-    assert app.destination_label.cget('text') == '保存到'
-    assert app.output_entry.get() == app.output.get()
+    assert app.output_button.path == app.output.get()
+    assert app.output_button._icon_code == ui_theme.ICON_FOLDER
     raw = asdict(Options(OUT))
     raw.update(output=str(OUT), urls=['https://example.org/one', 'https://example.org/two'])
     download = app.library.create_job('download', '恢复下载', raw)
-    app.library.change_job(download, status='interrupted', completed=['https://example.org/one'])
+    # (2.0.0 S2 P2) a finished download is a (link, format) pair in 'done'
+    first = job_downloads(app.library.job(download)['data'])[0]
+    app.library.change_job(download, status='interrupted', done=[[first['url'], first['format']]])
     app.refresh_library()
     app.history_tree.selection_set(download)
     box = app.urls.get('1.0', 'end-1c')
@@ -105,7 +108,7 @@ try:
         launch.assert_called_once()
         assert launch.call_args.args[0] == ['https://example.org/two']
         assert app.urls.get('1.0', 'end-1c') == box
-    for tab in ('任务历史与续采', '增量订阅', '统一资料归档'):
+    for tab in ('history', 'subscriptions', 'archive'):        # library_ui.TAB_*
         app.show_page('library')
         app.library_tabs.set(tab)
         app.update_idletasks()

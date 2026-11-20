@@ -73,8 +73,8 @@ def web_url(value, base=''):
 
 def link_kind(url, media=False):
     if media or MEDIA_EXT.search(urlsplit(url).path):
-        return '媒体地址'
-    return '视频页面' if VIDEO_PAGE.search(url) else '网页链接'
+        return 'media'
+    return 'video_page' if VIDEO_PAGE.search(url) else 'web'
 
 
 def browser_available():
@@ -145,7 +145,7 @@ def parse_page(response, requested_url, selector='', captured=()):
                 else raw(re.sub(r'\s+', ' ', label).strip()[:200]) or title,
                 'kind': kind, 'source': base}
         # Prefer the media classification when a URL appears as both link and source.
-        if url not in links or kind == '媒体地址':
+        if url not in links or kind == 'media':
             links[url] = item
 
     for node in roots:
@@ -207,7 +207,7 @@ def collect(options, emit):
                 if MEDIA_EXT.search(urlsplit(url).path):
                     visited.add(url)
                     emit('collect_page', {'url': url, 'title': msg('value.link_kind.direct'), 'text': '', 'markdown': '',
-                        'links': [{'url': url, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': url}],
+                        'links': [{'url': url, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': url}],
                         'next': None,
                         '_checkpoint': dict(visited=sorted(visited), todo=todo + deferred)})
                     continue
@@ -271,7 +271,6 @@ def worker_main(job):
                 store.collection_event(options.job_id, kind, value)
             output.write(json.dumps([kind, messages.wire(value)], ensure_ascii=False) + '\n')
             output.flush()
-        emit = messages.guarded(emit, 'collector')
         options = None
         try:
             options = CollectOptions(**json.loads(job.read_text(encoding='utf-8')))
@@ -307,7 +306,7 @@ def remove_tree(path, attempts=10):
 
 class CollectionRunner:
     def __init__(self, emit):
-        self.emit = messages.guarded(emit, 'collector')
+        self.emit = emit
         self.cancelled = threading.Event()
         self.process = None
         self.lock = threading.Lock()

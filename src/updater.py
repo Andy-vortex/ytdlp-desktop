@@ -19,7 +19,6 @@ import threading
 import time
 
 import applog
-import messages
 from messages import message_of, msg, raw
 import paths
 import procutil
@@ -34,27 +33,12 @@ NETWORK_TIMEOUT = 25
 PROBE_TIMEOUT = 60
 PROBE_GRACE = 10               # after a probe was killed: how long its output pipes may take to close
 
-# (1.8.0, MESSAGES.md 3.3 C-F45) The update errors are raised as msg(key, ...); these template
-# constants keep their names and zh values for the tests that .format() them (H4, P3).
-MSG_NETWORK = messages.template('core.update.no_github')
-MSG_RELEASE = messages.template('core.update.bad_release')
-MSG_NO_ASSET = messages.template('core.update.no_exe')
-MSG_ORIGIN = messages.template('core.update.bad_host')
-MSG_NO_DIGEST = messages.template('core.update.no_sha')
-MSG_SIZE = messages.template('core.update.bad_size')
-MSG_MISMATCH = messages.template('core.update.bad_hash')
-MSG_PROBE = messages.template('core.update.incompatible')
-MSG_INSTALL = messages.template('core.update.write_failed')
-MSG_SAVE = messages.template('core.update.save_failed')
 INSTALL_RETRY = 3.0            # seconds os.replace is repeated while another program holds a file
 INSTALL_PAUSE = 0.1
-MSG_RECEIPT = messages.template('core.update.record_failed')
 # (1.7.0, c5-updater a) The new engine must first run normally: "--version" ends with exit code 0 and
 # prints its version (yt-dlp's 2026.10.21 or a nightly's 2026.10.21.123456) as the first line.
-MSG_START = messages.template('core.update.start_failed')
 VERSION_LINE = re.compile(r'^\d{4}\.\d{1,2}\.\d{1,2}(?:\.\d+)?$')
 # (1.7.0, c5-updater c) 恢复内置引擎 when the updated engine is still the one in use afterwards.
-MSG_RESTORE = messages.template('core.update.restore_failed')
 RESTORE_RETRY = 1.0            # seconds a delete is repeated while another program holds the file
 
 _cache = None                  # (key, path): the last engine_path() answer for an updated engine
@@ -181,7 +165,7 @@ def check_latest(timeout=NETWORK_TIMEOUT) -> dict:
 def cleanup() -> None:
     """Remove download leftovers of earlier runs from the engines folder; never raises.
 
-    'yt-dlp.download' (1.5.1) and 'yt-dlp.download.<pid>.<n>.exe' of a process that is gone;
+    'yt-dlp.download.<pid>.<n>.exe' of a process that is gone;
     the file of an update that is running now is left alone (paths.purge_engine_downloads).
     """
     paths.purge_engine_downloads(procutil.alive)
@@ -250,7 +234,7 @@ def restore_bundled() -> bool:
 
     Returns True when the bundled engine is really the one in use afterwards (an exe that cannot be
     deleted now is out of use once its receipt is gone).  When both stay (held by another program,
-    read-only and not changeable), the updated engine is still used: UpdateError(MSG_RESTORE), so
+    read-only and not changeable), the updated engine is still used: UpdateError(core.update.restore_failed), so
     that the caller never reports a restore that did not happen (c5-updater c)."""
     if not _remove_updated():
         raise UpdateError(msg('core.update.restore_failed'))
@@ -312,31 +296,22 @@ class EngineUpdater:
 
     emit(kind, value): 'update_status' (str), 'update_progress' ({fraction, downloaded,
     total}), 'updated' ({version, unchanged}), 'update_error' (str), 'update_done'
-    ({cancelled}; always last).  With legacy_events the first two are sent the 1.5.1 way:
-    'title' once and 'progress' with status 'updating'.
+    ({cancelled}; always last).
     cancelled: a threading.Event; once it is set nothing is installed.
     probe_args: the yt-dlp options the app uses (no exe, no URL); the new exe must accept
     them all, or it is refused.
     """
 
-    def __init__(self, emit, cancelled, probe_args=None, legacy_events=False):
-        self.emit = messages.guarded(emit, 'updater')
+    def __init__(self, emit, cancelled, probe_args=None):
+        self.emit = emit
         self.cancelled = cancelled
         self.probe_args = [str(word) for word in probe_args] if probe_args else None
-        self.legacy_events = legacy_events
 
-    def _status(self, text, legacy=False):
-        if not self.legacy_events:
-            self.emit('update_status', text)
-        elif legacy:
-            self.emit('title', text)
+    def _status(self, text):
+        self.emit('update_status', text)
 
     def _progress(self, received, total):
-        if self.legacy_events:
-            self.emit('progress', {'fraction': received / total, 'downloaded': received,
-                                   'total': total, 'speed': None, 'eta': None, 'status': 'updating'})
-        else:
-            self.emit('update_progress', {'fraction': received / total, 'downloaded': received, 'total': total})
+        self.emit('update_progress', {'fraction': received / total, 'downloaded': received, 'total': total})
 
     def _probe(self, exe):
         """Refuse an engine that does not run normally (_check_start), then one that does not know
@@ -358,7 +333,7 @@ class EngineUpdater:
     def _check_start(self, exe):
         """(1.7.0, c5-updater a) "--version" must end with exit code 0 and print a version as its
         first line; an engine that starts and ends with an error (a damaged or blocked unpacking,
-        a crash) is refused with MSG_START before the option check, which cannot tell such an
+        a crash) is refused with core.update.start_failed before the option check, which cannot tell such an
         engine from a good one (both end without the "no such option" text)."""
         log = applog.get('updater')
         try:
@@ -403,7 +378,7 @@ class EngineUpdater:
         import urllib.request
         temporary = None
         try:
-            self._status(msg('core.update.checking'), legacy=True)
+            self._status(msg('core.update.checking'))
             release = check_latest()
             version = release['tag']
             if version == engine_version():

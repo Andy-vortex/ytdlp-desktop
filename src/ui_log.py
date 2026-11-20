@@ -5,14 +5,11 @@ most 200 lines per tick into the tagged text box.  Never import studio here at m
 """
 from __future__ import annotations
 
-import functools
 import os
 import re
-import string
 import tkinter as tk
 from tkinter import messagebox
 
-import customtkinter as ctk
 import i18n
 import messages
 import paths
@@ -24,83 +21,50 @@ FLUSH_LIMIT = 200
 TAGS = {'error': ui_theme.DANGER, 'warn': ui_theme.WARN, 'ok': ui_theme.OK, 'dim': ui_theme.MUTED, 'app': ui_theme.INK}
 _ENGINE_PREFIX = re.compile(r'^\[[\w:]+\]')
 _SLEEPING = re.compile(r'^\[[\w:]+\] Sleeping [\d.]+ seconds')
-_ERROR_STARTS = ('此链接未完成', '此链接无法开始', '更新失败', '网页采集未完成', '订阅检查失败', '界面错误', '设置未保存',
-                 '错误：', '无法启动下载引擎')
-_OK_STARTS = ('文件已保存', '下载完成')
-# (1.7.0, I18N.md 8.6) The header of a job that left links unfinished shares its start with the
-# header after 清除未完成 ('任务结束 · 1 条成功'): zh keeps the 1.6.0 rule of classify, the other
-# languages look for the template's longest literal part after its start (en 'Unfinished:').
-_FINISHED_UNFINISHED = 'download.title.finished_unfinished'
-
-
-def _literals(text):
-    try:
-        return [literal for literal, _field, _spec, _conversion in string.Formatter().parse(text)]
-    except ValueError:
-        return [text]
-
-
-@functools.lru_cache(maxsize=1)
-def _starts():
-    """(error starts, ok starts, ((start, part), ...) of the unfinished header in the other
-    languages): the 1.6.0 Chinese starts extended with i18n.prefixes() of the tagged keys."""
-    headers = i18n.all_values(_FINISHED_UNFINISHED)
-    shared = {_literals(text)[0] for text in headers}
-    errors = _ERROR_STARTS + tuple(start for start in i18n.prefixes('error') if start not in shared)
-    oks = _OK_STARTS + tuple(i18n.prefixes('ok'))
-    special = []
-    for text in headers[1:]:
-        parts = [part for part in _literals(text) if part]
-        if len(parts) > 1:
-            special.append((parts[0], max(parts[1:], key=len).strip()))
-    return errors, oks, tuple(special)
 
 
 def classify(line):
-    """Tag of one log line: error, warn, dim, ok or app (WP4.md section G, in this order)."""
+    """Tag of one log line: error, warn, dim, ok or app (WP4.md section G, in this order).  The engine's own
+    lines by their start; the app's lines by the key whose text they are (i18n.TAGS, matched in every language by
+    i18n.log_tag: 2.0.0 S4 names no key and holds no text here)."""
     if line.startswith('ERROR'):
         return 'error'
     if line.startswith('WARNING'):
         return 'warn'
     if _ENGINE_PREFIX.match(line) or 'Deleting original file' in line:
         return 'dim'
-    errors, oks, special = _starts()
-    if line.startswith(errors) or (line.startswith('任务结束') and '未完成' in line):
-        return 'error'
-    if any(line.startswith(start) and part in line[len(start):] for start, part in special):
-        return 'error'
-    if line.startswith(oks):
-        return 'ok'
-    return 'app'
+    return i18n.log_tag(line) or 'app'
 
 
 class LogUI:
     def build_log_page(self):
-        page = self.page('logs', i18n.t('nav.logs'), i18n.t('log.subtitle'))
+        """Page header: [All | Errors]  Copy  ⋯ on the right (log.md 2); below it the log text fills the page."""
+        page = self.page('logs', i18n.t('nav.logs'))
         page.grid_rowconfigure(1, weight=1)
-        card = self.card(page)
-        card.grid(row=1, column=0, sticky='nsew')
-        card.grid_columnconfigure(0, weight=1)
-        card.grid_rowconfigure(1, weight=1)
-        header = ctk.CTkFrame(card, fg_color='transparent', corner_radius=0)
-        header.grid(row=0, column=0, sticky='ew', padx=ui_theme.CARD_PAD, pady=(12, 8))
-        header.grid_columnconfigure(0, weight=1)
-        ui_theme.label(header, i18n.t('log.heading'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
+        right = page.header.right
         self.errors_only = False
-        # (1.7.0, I18N.md 10.1, 10.4) A button is as wide as its label needs (never below the 72 px
-        # of 1.6.0); the errors button fits both of its labels, so it keeps its width when it toggles.
-        errors_width = max(ui_theme.fitted_width(header, i18n.t('log.errors_only'), 'sm'),
-                           ui_theme.fitted_width(header, i18n.t('log.show_all'), 'sm'))
-        self.errors_button = ui_theme.button(header, i18n.t('log.errors_only'), self.toggle_errors, kind='ghost',
-                                             size='sm', width=errors_width)
-        self.errors_button.grid(row=0, column=1, padx=(4, 0))
-        for column, (text, command) in enumerate(((i18n.t('log.copy_all'), self.copy_log),
-                                                  (i18n.t('log.open_file'), self.open_log_file),
-                                                  (i18n.t('log.clear_view'), self.clear_log_view)), 2):
-            ui_theme.button(header, text, command, kind='ghost', size='sm',
-                            width=ui_theme.fitted_width(header, text, 'sm')).grid(row=0, column=column, padx=(4, 0))
-        self.logs = ui_theme.textbox(card, state='disabled', wrap='word', font=ui_theme.font('caption'))
-        self.logs.grid(row=1, column=0, sticky='nsew', padx=ui_theme.CARD_PAD, pady=(0, ui_theme.CARD_PAD))
+        self.log_menu = ui_theme.menu_button(right, self.log_menu_items, size='sm')
+        self.log_menu.pack(side='right')
+        copy = i18n.t('log.copy_all')
+        self.log_copy_button = ui_theme.button(right, copy, self.copy_log, kind='ghost', size='sm',
+                                               width=ui_theme.fitted_width(right, copy, 'sm', ghost=True,
+                                                                           inset=ui_theme.INLINE))
+        # (final polish) the gaps a reader sees run from ink to ink: Copy carries INLINE on each side of its word
+        # and the 16 px icon of '⋯' sits 6 inside its 28 px box, so Copy touches '⋯' (8 + 6 = 14 between the
+        # word and the icon) and the filter keeps SECTION (24 + 8 = 32): "look" and "do" read as two groups
+        self.log_copy_button.pack(side='right')
+        self.log_filter = ui_theme.segmented(right, ('all', 'errors'),
+                                             {'all': i18n.t('log.filter.all'), 'errors': i18n.t('log.filter.errors')},
+                                             command=lambda value: self.set_errors_only(value == 'errors'),
+                                             height=ui_theme.CONTROL_H_SM)
+        self.log_filter.set('all')
+        self.log_filter.pack(side='right', padx=(0, ui_theme.SECTION))
+        self.logs = ui_theme.textbox(page, state='disabled', wrap='word', font=ui_theme.font('caption'))
+        self.logs.grid(row=1, column=0, sticky='nsew')
+        self.log_empty = ui_theme.label(self.logs, i18n.t('log.no_errors'), role='caption',
+                                        text_color=ui_theme.MUTED, fg_color=ui_theme.SURFACE_ALT)
+        for widget in (self.logs, self.log_empty):        # right click: the mirror of ⋯
+            ui_theme.bind_menu(widget, self.log_menu_items)
         self.refresh_log_colors()
         ui_theme.on_appearance(self.refresh_log_colors)
         # (final-fix-ui, final-e2e-ui-1) Whether the view follows new lines is the owner's choice,
@@ -175,17 +139,39 @@ class LogUI:
             self.logs.configure(state='disabled')
         if follow:
             self.logs.see('end')
+        if self.errors_only:
+            self.refresh_log_empty()
 
-    def toggle_errors(self):
+    def set_errors_only(self, on):
+        """Errors (True: only error and warn lines) or All (False); the same call twice changes nothing."""
         follow = getattr(self, 'log_follow', True)      # a reader at the end stays at the end
-        self.errors_only = not self.errors_only
+        self.errors_only = bool(on)
         for name in ('dim', 'app', 'ok'):
             self.logs.tag_config(name, elide=self.errors_only)
-        self.errors_button.configure(text=i18n.t('log.show_all') if self.errors_only else i18n.t('log.errors_only'))
+        self.log_filter.set('errors' if self.errors_only else 'all')     # set() runs no command
+        self.refresh_log_empty()
         if follow:
             self.logs.see('end')
 
+    def refresh_log_empty(self):
+        """'No errors' in the middle of the text while Errors is chosen and there is no error or warn line."""
+        inner = self.logs._textbox
+        empty = self.errors_only and not (inner.tag_ranges('error') or inner.tag_ranges('warn'))
+        if empty:
+            self.log_empty.place(relx=.5, rely=.5, anchor='center')
+        else:
+            self.log_empty.place_forget()
+
+    def log_menu_items(self):
+        """The '⋯' of the page header and the right-click menu of the text (00-system 2.10)."""
+        return [ui_theme.MenuItem(i18n.t('log.copy_all'), self.copy_log),
+                ui_theme.MenuItem(i18n.t('log.open_file'), self.open_log_file),
+                ui_theme.SEPARATOR,
+                ui_theme.MenuItem(i18n.t('log.clear_view'), self.clear_log_view,
+                                  enabled=bool(self.logs.get('1.0', 'end-1c')))]
+
     def copy_log(self):
+        """All the lines, also the ones Errors hides."""
         self.clipboard_clear()
         self.clipboard_append(self.logs.get('1.0', 'end-1c'))
 
@@ -200,3 +186,4 @@ class LogUI:
         self.logs.delete('1.0', 'end')
         self.logs.configure(state='disabled')
         self.log_follow = True
+        self.refresh_log_empty()

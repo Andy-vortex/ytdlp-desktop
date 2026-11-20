@@ -1,9 +1,9 @@
 """Page collection workspace for the existing desktop downloader (mixin CollectionUI; 1.6.0 WP5).
 
-Layout (WP5.md section B): page header, input card (start pages, the three options and the
-CSS scope, actions in the card header), results card (count, filter and search in its header,
-a one-line status, the table, the footer with the primary action at the far right).
-Every colour, font and widget comes from ui_theme.  Never import studio here at module level.
+Layout (2.0.0 S4, docs/2.0.0/handoff/S4/collect.md): no cards.  The link box, one row of options whose
+values say what they are, Subscribe and Start (Stop in the same cell while collecting); the results
+toolbar (search, filter, count, Add to downloads, '⋯') above the table, or the empty state; one status
+line below.  Every colour, font and widget comes from ui_theme.  Never import studio here at module level.
 
 (1.7.0) Every shown text through i18n (I18N.md 8); the Tk variables keep their 1.6.0 values
 (collect mode and filter), the link kinds and the stored subscription errors stay canonical Chinese.
@@ -26,17 +26,15 @@ import applog
 import i18n
 import messages
 import ui_theme
+from ui_theme import SEPARATOR, MenuItem
 import urls as links
-from collector import CollectOptions, CollectionRunner, MAX_LINKS, browser_available
+from collector import CollectOptions, CollectionRunner, MAX_LINKS
 from engine import parse_urls
 from library import is_busy, ui_wait
-from library_ui import LIBRARY_RETRY_MS, cell_width, columns, pin_rows, text_button_width
+from library_ui import LIBRARY_RETRY_MS, cell_width, columns, pin_rows
 
 # (1.7.0 U1) A collection start that met a library locked by another program waits for it.
 COLLECT_WAIT = 120          # s: then the start is given up (status line and log)
-COLLECT_WAITING = '资料库正被其他程序占用，可以写入后自动开始采集…'
-COLLECT_GAVE_UP = '采集未开始：资料库仍被其他程序占用，请稍后再试。'
-COLLECT_DROPPED = '采集未开始：等待资料库期间开始了其他任务。'
 
 
 def subscription_result(record, cancelled):
@@ -44,26 +42,31 @@ def subscription_result(record, cancelled):
     the collection job's record."""
     successful = not cancelled and record['status'] == 'completed'
     # (1.8.0, C-F39) The last two errors as one clauses message (stored: the 1.7.0 '；' join of the
-    # zh texts), else why the check ended; the library page shows it with messages.show.
-    error = messages.clauses(record['data']['errors'][-2:]) or \
+    # zh texts), else why the check ended; the library page shows it with messages.show.  (2.0.0) A
+    # stored error is {'error', 'reason'} (S2-DESIGN.md 1.2).
+    errors = [item.get('error') if isinstance(item, dict) else item for item in record['data']['errors'][-2:]]
+    error = messages.clauses(errors) or \
         messages.msg('value.subscription.stopped' if cancelled else 'value.subscription.unfinished')
     return record['pages'], successful, error
 
-MODE_STATIC = '普通网页'
-MODE_DYNAMIC = '动态网页（Chrome）'
-FILTERS = ('媒体候选', '全部链接')
-STATUS_IDLE = '支持普通页面和动态页面；采集结果供你选择，不会自动下载。'
-NOTE_PAGES = '翻页只跟随同站的 rel=next 链接。'
-NOTE_DYNAMIC = '动态模式使用独立的临时 Chrome，不读取现有浏览器的登录状态。'
-# (1.7.0) The stored link kind the media filter leaves out (collector.py; library.sqlite3); a
-# compared stored value, not a message (MESSAGES.md 6.3).
-WEB_LINK = i18n.all_values('value.link_kind.web')[0]
-# Polish ui-daily-flow-5: the links go into the download page's link box (nothing starts or joins
-# a running queue), so the button says so; 加入队列 is the download page's word for a running job.
-ADD_TEXT = '添加到下载列表'
-SUBTITLE = '从网页发现音视频链接，筛选后添加到下载列表；也可保存网页正文。'
-NARROW_OPTIONS = 700        # logical px: below this the CSS entry gets a row of its own
-BACKGROUND_NOTE = '正在后台检查订阅“{name}”，结果会保存到资料管理 → 增量订阅；完成后可继续采集。'
+
+def scrolls_label(count):
+    """The scrolls menu's label of ``count`` (the value carries its unit, so the menu needs no label)."""
+    return i18n.t('collect.value.scrolls_one') if count == 1 else i18n.t('collect.value.scrolls', count=count)
+
+
+def pages_label(count):
+    """The pages menu's label of ``count``."""
+    return i18n.t('collect.value.pages_one') if count == 1 else i18n.t('collect.value.pages', count=count)
+
+
+# Codes, never shown: the menus show i18n.label('collect_mode' / 'collect_filter', code).
+MODE_STATIC = 'static'
+MODE_DYNAMIC = 'dynamic'
+FILTERS = ('media', 'all')
+# The stored link kind (a code since 2.0.0: collector.link_kind; library.sqlite3) the media filter
+# leaves out; shown through i18n.label('link_kind', ...).
+WEB_LINK = 'web'
 # Characters percent-encoding may leave as they are, tried from the gentlest set to the strictest:
 # a collected link must reach the download box whole (see queueable_url).  The last set also
 # encodes ':' (final-fix-ui, final-privacy-security-1): a second link inside the path, query or
@@ -98,210 +101,138 @@ def queueable_url(url):
 
 class CollectionUI:
     def build_collection_page(self):
-        page = self.page('collect', i18n.t('nav.collect'), i18n.t('collect.subtitle'))
-        page.grid_rowconfigure(2, weight=1)
+        """(2.0.0 S4, collect.md 2.5) No cards: the link box, the options row (mode, scrolls, pages, CSS scope,
+        Subscribe, Start / Stop in one cell), the privacy line, the results toolbar (search, filter, count,
+        Add to downloads, '⋯'), the table or the empty state in one cell, the status line."""
+        page = self.page('collect', i18n.t('nav.collect'))
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(5, weight=1)
         # The page's state containers are created by StudioApp.init_collection() (studio.py).
-        pad = ui_theme.CARD_PAD
-        muted = ui_theme.MUTED
 
-        # ------------------------------------------------ input card
-        inputs = ui_theme.card(page)
-        inputs.grid(row=1, column=0, sticky='ew', pady=(0, ui_theme.GAP))
-        inputs.grid_columnconfigure(0, weight=1)
-        self.collect_card = inputs
-        top = ctk.CTkFrame(inputs, fg_color='transparent', corner_radius=0)
-        top.grid(row=0, column=0, sticky='ew', padx=pad, pady=(12, 8))
-        top.grid_columnconfigure(2, weight=1)
-        ui_theme.label(top, i18n.t('collect.start_pages'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
-        ui_theme.label(top, i18n.t('collect.start_pages.hint'), role='caption', text_color=muted,
-                       anchor='w').grid(row=0, column=1, sticky='w', padx=(10, 0), pady=(3, 0))
-        subscribe_text = i18n.t('collect.save_subscription')
-        subscribe = ui_theme.button(top, subscribe_text, self.save_subscription,
-                                    width=max(72, text_button_width(top, subscribe_text)))
-        subscribe.grid(row=0, column=3, padx=(8, 0))
-        stop_text = i18n.t('common.stop')
-        self.collect_stop = ui_theme.button(top, stop_text, self.stop, kind='danger',
-                                            width=max(64, text_button_width(top, stop_text)), state='disabled')
-        self.collect_stop.grid(row=0, column=4, padx=(8, 0))
-        # (I18N.md 10.1) the text, the icon (16) and customtkinter's 6 px between them
-        start_text = i18n.t('collect.start')
-        self.collect_start = ui_theme.button(top, start_text, self.start_collection, kind='primary',
-                                             width=max(112, text_button_width(top, start_text) + 22),
-                                             image=ui_theme.icon(ui_theme.ICON_SEARCH, 'white'), compound='left')
-        self.collect_start.grid(row=0, column=5, padx=(8, 0))
-
-        self.collect_urls = ui_theme.textbox(inputs, height=56, wrap='word')
-        self.collect_urls.grid(row=1, column=0, sticky='ew', padx=pad)
-        self._collect_hint_shown = False
-        self.collect_placeholder = ui_theme.label(self.collect_urls, i18n.t('collect.placeholder'), text_color=ui_theme.FAINT,
-                                                  fg_color=ui_theme.SURFACE_ALT, anchor='w', cursor='xterm')
-        self.collect_placeholder.bind('<Button-1>', self._collect_placeholder_clicked)
-        self.collect_urls.bind('<KeyRelease>', lambda _event: self.sync_collect_placeholder())
-        self.collect_urls.bind('<<Modified>>', self._collect_urls_modified)
+        self.collect_urls = ui_theme.textbox(page, placeholder=i18n.t('collect.placeholder'), height=56, wrap='word')
+        self.collect_urls.grid(row=1, column=0, sticky='ew')
         self.collect_urls.bind('<Control-Return>', self._collect_from_box)     # like the download link box
-        self._collect_box_dimmed = False
-        self.sync_collect_placeholder()
 
-        options = ctk.CTkFrame(inputs, fg_color='transparent', corner_radius=0)
-        options.grid(row=2, column=0, sticky='ew', padx=pad, pady=(10, 0))
-        options.grid_columnconfigure(6, weight=1)
-        self.collect_options_row = options
-        ui_theme.label(options, i18n.t('collect.option.mode'), role='caption', text_color=muted).grid(row=0, column=0, sticky='w')
-        # (1.7.0) The variable keeps MODE_STATIC / MODE_DYNAMIC (compared); the menu shows the labels.
-        mode_labels = [i18n.label('collect_mode', value) for value in (MODE_STATIC, MODE_DYNAMIC)]
-        mode = ui_theme.option_menu(options, (MODE_STATIC, MODE_DYNAMIC), labels=mode_labels, variable=self.collect_mode,
-                                    width=max(170, ui_theme.menu_width(options, mode_labels)))
-        mode.grid(row=0, column=1, sticky='w', padx=(8, 16))
-        ui_theme.label(options, i18n.t('collect.option.scrolls'), role='caption', text_color=muted).grid(row=0, column=2, sticky='w')
-        scroll = ui_theme.option_menu(options, [str(n) for n in range(6)], variable=self.collect_scrolls, width=64)
-        scroll.grid(row=0, column=3, sticky='w', padx=(8, 16))
-        ui_theme.label(options, i18n.t('collect.option.pages'), role='caption', text_color=muted).grid(row=0, column=4, sticky='w')
-        limit = ui_theme.option_menu(options, [str(n) for n in range(1, 6)], variable=self.collect_pages_limit,
-                                     width=64)
-        limit.grid(row=0, column=5, sticky='w', padx=(8, 0))
-        scope = ui_theme.entry(options, textvariable=self.collect_selector, placeholder=i18n.t('collect.option.selector'))
-        self.collect_scope = scope
-        self._collect_narrow = None
-        self._collect_layout_options(False)
-        # On the outer frame: customtkinter's bind() would go to the inner canvas (see ui_theme.fit).
-        tk.Misc.bind(options, '<Configure>', lambda _event: self._collect_layout_options(), add='+')
+        # ------------------------------------------------ options: no labels, the values say what they are
+        options = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
+        options.grid(row=2, column=0, sticky='ew', pady=(ui_theme.GAP, 0))
+        options.grid_columnconfigure(3, weight=1, minsize=round(96 * ctk.ScalingTracker.get_widget_scaling(options)))
+        self.collect_options = options
+        # The variables keep the codes ('static' / 'dynamic', '0'…'5', '1'…'5'); the menus show the labels.
+        labels = [i18n.label('collect_mode', value) for value in (MODE_STATIC, MODE_DYNAMIC)]
+        self.collect_mode_menu = ui_theme.option_menu(options, (MODE_STATIC, MODE_DYNAMIC), labels=labels,
+                                                      variable=self.collect_mode,
+                                                      width=ui_theme.menu_width(options, labels))
+        self.collect_mode_menu.grid(row=0, column=0, sticky='w')
+        values = [str(n) for n in range(6)]
+        labels = [scrolls_label(n) for n in range(6)]
+        self.collect_scrolls_menu = ui_theme.option_menu(options, values, labels=labels, variable=self.collect_scrolls,
+                                                         width=ui_theme.menu_width(options, labels))
+        self.collect_scrolls_menu.grid(row=0, column=1, sticky='w', padx=(ui_theme.INLINE, 0))
+        values = [str(n) for n in range(1, 6)]
+        labels = [pages_label(n) for n in range(1, 6)]
+        self.collect_pages_menu = ui_theme.option_menu(options, values, labels=labels, variable=self.collect_pages_limit,
+                                                       width=ui_theme.menu_width(options, labels))
+        self.collect_pages_menu.grid(row=0, column=2, sticky='w', padx=(ui_theme.INLINE, 0))
+        self.collect_scope = ui_theme.entry(options, textvariable=self.collect_selector, width=96,
+                                            placeholder=i18n.t('collect.option.selector'))
+        self.collect_scope.grid(row=0, column=3, sticky='ew', padx=(ui_theme.PAD, 0))
+        text = i18n.t('collect.save_subscription')
+        self.collect_subscribe = ui_theme.button(options, text, self.save_subscription, kind='ghost',
+                                                 width=ui_theme.fitted_width(options, text))
+        # INLINE on both sides: the ghost button's own padding then sits evenly between the CSS box and Start.
+        self.collect_subscribe.grid(row=0, column=4, padx=(ui_theme.INLINE, 0))
+        # Start and Stop share one cell and one width, so Subscribe never moves when they swap: the text, the
+        # 16 px icon, customtkinter's 6 px spacing and the image label's own border and padding (6 physical px).
+        start_text, stop_text = i18n.t('collect.start'), i18n.t('common.stop')
+        width = max(ui_theme.fitted_width(options, start_text) + 30, ui_theme.fitted_width(options, stop_text))
+        self.collect_start = ui_theme.button(options, start_text, self.start_collection, kind='primary', width=width,
+                                             image=ui_theme.icon(ui_theme.ICON_SEARCH, 'white'), compound='left')
+        self.collect_start.grid(row=0, column=5, padx=(ui_theme.INLINE, 0))
+        self.collect_stop = ui_theme.button(options, stop_text, self.stop, kind='danger', width=width)
+        self.collect_stop.grid(row=0, column=5, padx=(ui_theme.INLINE, 0))
+        self.collect_stop.grid_remove()
 
-        self.collect_note = ui_theme.label(inputs, '', role='caption', text_color=muted, anchor='w')
-        self.collect_note.grid(row=3, column=0, sticky='ew', padx=pad, pady=(8, 14))
-        self.refresh_collect_note()
-        self.collect_mode.trace_add('write', lambda *_: self.refresh_collect_note())
-        self.controls += [self.collect_urls, mode, scroll, limit, scope]
-        self.controls.append(subscribe)
-        self.controls.append(self.collect_start)
+        # Dynamic mode only: the privacy line; during an automatic subscription check, why the controls are grey.
+        self.collect_note = ui_theme.label(page, '', role='caption', text_color=ui_theme.MUTED, anchor='w', width=1)
+        self.collect_note.grid(row=3, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
+        self.collect_mode.trace_add('write', lambda *_: self._collect_mode_changed())
+        self._collect_mode_changed()
+        self.controls += [self.collect_urls, self.collect_mode_menu, self.collect_scrolls_menu, self.collect_pages_menu,
+                          self.collect_scope, self.collect_subscribe, self.collect_start]
 
-        # ------------------------------------------------ results card
-        result = ui_theme.card(page)
-        result.grid(row=2, column=0, sticky='nsew')
-        result.grid_columnconfigure(0, weight=1)
-        result.grid_rowconfigure(2, weight=1)
-        self.collect_results = result
-        head = ctk.CTkFrame(result, fg_color='transparent', corner_radius=0)
-        head.grid(row=0, column=0, sticky='ew', padx=pad, pady=(12, 0))
-        head.grid_columnconfigure(2, weight=1)
-        ui_theme.label(head, i18n.t('collect.found'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
-        self.collect_count = ui_theme.chip(head, i18n.t('collect.count', shown=0, total=0, selected=0), 'idle')
-        self.collect_count.grid(row=0, column=1, sticky='w', padx=(10, 0))
-        filter_labels = [i18n.label('collect_filter', value) for value in FILTERS]
-        ui_theme.option_menu(head, FILTERS, labels=filter_labels, variable=self.collect_filter,
-                             width=max(120, ui_theme.menu_width(head, filter_labels))).grid(row=0, column=3, padx=(12, 0))
-        self.collect_search_entry = ui_theme.entry(head, textvariable=self.collect_search,
-                                                   placeholder=i18n.t('collect.filter.placeholder'), width=220)
-        self.collect_search_entry.grid(row=0, column=4, padx=(8, 0))
-        self.collect_status = ui_theme.label(result, '', role='caption', text_color=muted, anchor='w')
-        self.collect_status.grid(row=1, column=0, sticky='ew', padx=pad, pady=(6, 8))
-        ui_theme.fit(self.collect_status, i18n.t('collect.status.idle'))
+        # ------------------------------------------------ results: toolbar (only with results), table or empty state
+        bar = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
+        bar.grid(row=4, column=0, sticky='ew', pady=(ui_theme.SECTION, 0))
+        bar.grid_columnconfigure(3, weight=1)
+        self.collect_toolbar = bar
+        self.collect_search_entry = ui_theme.entry(bar, textvariable=self.collect_search, width=200,
+                                                   placeholder=i18n.t('common.search'))
+        self.collect_search_entry.grid(row=0, column=0, sticky='w')
+        labels = [i18n.label('collect_filter', value) for value in FILTERS]
+        self.collect_filter_menu = ui_theme.option_menu(bar, FILTERS, labels=labels, variable=self.collect_filter,
+                                                        width=ui_theme.menu_width(bar, labels))
+        self.collect_filter_menu.grid(row=0, column=1, sticky='w', padx=(ui_theme.INLINE, 0))
+        self.collect_count = ui_theme.label(bar, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        self.collect_count.grid(row=0, column=2, sticky='w', padx=(ui_theme.PAD, 0))
+        # As wide as the longest count, so the button never changes width.
+        self.collect_add = ui_theme.button(bar, i18n.t('collect.add'), self.add_collected, kind='primary',
+                                           width=ui_theme.fitted_width(bar, self.add_text(9999)), state='disabled')
+        self.collect_add.grid(row=0, column=4, sticky='e')
+        self.collect_menu = ui_theme.menu_button(bar, self.collect_menu_items)
+        self.collect_menu.grid(row=0, column=5, padx=(ui_theme.INLINE, 0))
+        bar.grid_remove()
+
         # (1.7.0, I18N.md 10.1) The Type column shows the link-kind labels: as wide as the widest needs.
-        # (final fix round 1, ENV-3) Measured with the room AppTable's cut keeps beside a cell (20 px
-        # rather than 16), so 动态页面媒体请求 / Page request are shown in full.
-        kind_width = cell_width(result, [text for _value, text in i18n.choices('link_kind')], 88)
-        self.collect_tree = ui_theme.table(result, columns(result, [
+        kind_width = cell_width(page, [text for _value, text in i18n.choices('link_kind')], 72)
+        self.collect_tree = ui_theme.table(page, columns(page, [
             ('kind', i18n.t('table.type'), kind_width, False), ('title', i18n.t('table.title'), 260, True),
-            ('url', i18n.t('table.link'), 360, True)]),
-                                           selectmode='extended', empty=i18n.t('collect.empty'))
-        self.collect_tree.container.grid(row=2, column=0, sticky='nsew', padx=pad)
+            ('url', i18n.t('table.link'), 360, True)]), selectmode='extended', empty=i18n.t('common.no_match'))
+        self.collect_tree.container.grid(row=5, column=0, sticky='nsew', pady=(ui_theme.GAP, 0))
+        self.collect_tree.container.grid_remove()
         pin_rows(self.collect_tree, 4)     # the page's request stays the same once the scrollbar appears
         self.collect_tree.ellipsize(middle=('url',))     # cut with '…'; links keep their distinguishing end
         self.collect_tree.bind('<<TreeviewSelect>>', lambda _: self.collection_selection_changed())
-        footer = ctk.CTkFrame(result, fg_color='transparent', corner_radius=0)
-        footer.grid(row=3, column=0, sticky='ew', padx=pad, pady=(10, 14))
-        footer.grid_columnconfigure(3, weight=1)
-        ui_theme.button(footer, i18n.t('collect.select_shown'),
-                        lambda: self.collect_tree.selection_set(self.collect_tree.get_children()),
-                        kind='ghost').grid(row=0, column=0, sticky='w')
-        self.collect_export = ui_theme.button(footer, i18n.t('collect.export_links'), self.export_collected_links,
-                                              state='disabled')
-        self.collect_export.grid(row=0, column=1, sticky='w', padx=(8, 0))
-        self.collect_text = ui_theme.button(footer, i18n.t('collect.save_text'), self.export_collected_text,
-                                            state='disabled')
-        self.collect_text.grid(row=0, column=2, sticky='w', padx=(8, 0))
-        # (I18N.md 10.1) wide enough for the longest count suffix, so the button never changes width
-        self.collect_add = ui_theme.button(footer, i18n.t('collect.add'), self.add_collected, kind='primary',
-                                           width=max(132, text_button_width(footer, self.add_text(9999))),
-                                           state='disabled')
-        self.collect_add.grid(row=0, column=4, sticky='e')
-        self.controls.append(self.collect_add)
+        for sequence in ('<Control-a>', '<Control-A>'):      # Ctrl+A on the table only: in the entries it selects text
+            self.collect_tree.bind(sequence, self._collect_select_all)
+        ui_theme.bind_menu(self.collect_tree, self.collect_menu_items)
+        self.collect_empty = ui_theme.empty_state(page, i18n.t('collect.empty'), ui_theme.ICON_SEARCH)
+        self.collect_empty.grid(row=5, column=0, sticky='nsew', pady=(ui_theme.GAP, 0))
+
+        self.collect_status = ui_theme.label(page, '', role='caption', text_color=ui_theme.MUTED, anchor='w', width=1)
+        self.collect_status.grid(row=6, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
+        ui_theme.fit(self.collect_status, '')
         self.collect_filter.trace_add('write', lambda *_: self.render_collection_links())
         self.collect_search.trace_add('write', lambda *_: self.render_collection_links())
         self.render_collection_links()
+        self.refresh_collect_actions()
 
-    # ------------------------------------------------------------ input card helpers
-    def _collect_placeholder_clicked(self, _event=None):
-        self.collect_urls.focus_set()
-        return 'break'
-
+    # ------------------------------------------------------------ input helpers
     def _collect_from_box(self, _event=None):
         """Ctrl+Enter in the start-URL box starts the collection instead of adding a line."""
         self.start_collection()
         return 'break'
 
-    def _dim_collect_box(self, dimmed):
-        """While a task runs the start-URL box is disabled; it also looks so (as the download link box)."""
-        if dimmed == self._collect_box_dimmed:
-            return
-        self._collect_box_dimmed = dimmed
-        fill = ui_theme.SURFACE if dimmed else ui_theme.SURFACE_ALT
-        self.collect_urls.configure(text_color=ui_theme.FAINT if dimmed else ui_theme.INK, fg_color=fill)
-        self.collect_placeholder.configure(fg_color=fill)
-
-    def _collect_urls_modified(self, _event=None):
-        try:
-            self.collect_urls.edit_modified(False)
-        except tk.TclError:
-            pass
-        self.sync_collect_placeholder()
-
-    def sync_collect_placeholder(self):
-        """The faint example stays while the start-URL box is empty, focused or not."""
-        try:
-            empty = not self.collect_urls.get('1.0', 'end-1c')
-            if empty and not self._collect_hint_shown:
-                self.collect_placeholder.place(x=10, y=6)
-            elif not empty and self._collect_hint_shown:
-                self.collect_placeholder.place_forget()
-            self._collect_hint_shown = empty
-        except tk.TclError:
-            pass
-
-    def _collect_layout_options(self, narrow=None):
-        """The CSS entry stretches beside the three menus; on a row narrower than 700 px it moves below them."""
-        row = self.collect_options_row
-        if narrow is None:
-            try:
-                width = row.winfo_width()
-            except tk.TclError:
-                return
-            if width <= 1:
-                return
-            narrow = width / ctk.ScalingTracker.get_widget_scaling(row) < NARROW_OPTIONS
-        if narrow == self._collect_narrow:
-            return
-        self._collect_narrow = narrow
-        if narrow:
-            self.collect_scope.grid(row=1, column=0, columnspan=7, sticky='ew', padx=0, pady=(8, 0))
-        else:
-            self.collect_scope.grid(row=0, column=6, columnspan=1, sticky='ew', padx=(16, 0), pady=0)
+    def _collect_mode_changed(self):
+        """The scrolls menu only means something for dynamic pages; the privacy line explains that mode."""
+        ui_theme.show(self.collect_scrolls_menu, self.collect_mode.get() == MODE_DYNAMIC)
+        self.refresh_collect_note()
 
     def refresh_collect_note(self, background=None):
-        """The caption under the options: the paging rule, or (``background`` = a subscription name)
-        why the controls are disabled while an automatic subscription check runs (robust-13)."""
+        """The line under the options: ``background`` (a subscription name) says why the controls are grey while
+        an automatic subscription check runs (robust-13); otherwise the privacy line of dynamic mode, or nothing."""
         if background is not None:
-            self.collect_note.configure(text_color=ui_theme.ACCENT_TEXT)
-            ui_theme.fit(self.collect_note, i18n.t('collect.background', name=background))
-            return
-        text = i18n.t('collect.note.pages')
-        if self.collect_mode.get() == MODE_DYNAMIC:
-            # Two sentences of one line (I18N.md 8.2): zh joins them directly, en with a space.
-            text += i18n.t('common.sentence_join') + i18n.t('collect.note.dynamic')
-        self.collect_note.configure(text_color=ui_theme.MUTED)
-        ui_theme.fit(self.collect_note, text)
+            text, color = i18n.t('collect.background', name=background), ui_theme.ACCENT_TEXT
+        elif self.collect_mode.get() == MODE_DYNAMIC:
+            text, color = i18n.t('collect.note.dynamic'), ui_theme.MUTED
+        else:
+            text, color = '', ui_theme.MUTED
+        self.collect_note.configure(text_color=color)
+        ui_theme.fit(self.collect_note, text)      # a long subscription name is cut, the full text is kept
+        ui_theme.show(self.collect_note, bool(text))
 
     def set_collect_status(self, text, tone=None):
-        """The one-line status of the results card; tone idle (MUTED), running, warn or ok."""
+        """The one-line status under the table; tone idle (MUTED), running, warn or ok."""
         colors = {'idle': ui_theme.MUTED, 'running': ui_theme.ACCENT_TEXT, 'warn': ui_theme.WARN, 'ok': ui_theme.OK}
         if tone is None:
             self.collect_status.configure(text=text)
@@ -325,9 +256,11 @@ class CollectionUI:
             self.collect_mode.get() != MODE_STATIC, int(self.collect_scrolls.get()),
             self.collect_selector.get().strip(), int(self.collect_pages_limit.get()), self.proxy.get().strip()).validate()
 
-    def launch_collection(self, options, job_id=None, title=None, background=False):
+    def launch_collection(self, options, job_id=None, title=None, background=False, via=None):
         """Start a collection.  ``background`` (automatic subscription checks) leaves the results,
         the status line, the start-URL box and the text-export button of the collect page alone.
+        ``title`` / ``via``: the new job's title (default: the first start link) and how it was made
+        (library.create_job; 'subscription' for a subscription check, whose title may be '').
 
         Returns False when the history record could not be written (final-fix-ui,
         final-architecture-2): nothing starts, the results shown stay, and the owner gets a dialog
@@ -337,9 +270,9 @@ class CollectionUI:
         self.collect_pending = None
         try:
             if fresh:
-                # (1.8.0) Untitled: the first start link, user data (MESSAGES.md 3.3).
-                job_id = self.library.create_job('collect', title or messages.raw(options.urls[0]), asdict(options),
-                                                 self.active_subscription)
+                # Untitled: the first start link (user data); a subscription's job keeps its name.
+                job_id = self.library.create_job('collect', title if title or via else options.urls[0],
+                                                 asdict(options), self.active_subscription, via=via)
             else:
                 self.library.change_job(job_id, status='running', errors=[], owner=os.getpid(), worker=None)
         except (sqlite3.Error, OSError, ValueError) as error:
@@ -351,6 +284,7 @@ class CollectionUI:
                 # (retry_collection) until the record can be written or COLLECT_WAIT has passed.
                 self.collect_pending = (options, None if fresh else job_id, title, self.active_subscription,
                                         time.monotonic() + COLLECT_WAIT)
+                self.collect_pending_via = via          # (2.0.0) a subscription check's job keeps its 'via'
                 self.active_subscription = None
                 self.set_collect_status(i18n.t('collect.status.waiting_library'), 'running')
                 self.library_busy(error)
@@ -384,12 +318,10 @@ class CollectionUI:
         self.collection_errors = 0
         if not background:
             self.render_collection_links()
-            self.collect_text.configure(state='disabled')
         self.operation = 'collect'
         try:
             # Inside the try: if set_busy raised, the except below still releases the window.
-            self.set_busy(True)
-            self.collect_stop.configure(state='normal')
+            self.set_busy(True)         # refresh_collect_actions: Stop takes Start's place
             if not background:
                 self.set_collect_status(i18n.t('collect.status.preparing'), 'running')
             # Activity start (WP4 section C): a token, an emit closure that drops the events of an
@@ -408,7 +340,6 @@ class CollectionUI:
             self.collection_job = None
             self.collection_background = False
             self.set_busy(False)
-            self.collect_stop.configure(state='disabled')
             raise
 
     def retry_collection(self):
@@ -418,6 +349,7 @@ class CollectionUI:
         if pending is None or self.closing:
             return
         options, job_id, title, subscription, deadline = pending
+        via, self.collect_pending_via = getattr(self, 'collect_pending_via', None), None
         if self.busy:
             self.append_log(i18n.t('collect.status.library_dropped'))
             self.set_collect_status(i18n.t('collect.status.library_dropped'), 'warn')
@@ -427,7 +359,7 @@ class CollectionUI:
             self.set_collect_status(i18n.t('collect.status.library_gave_up'), 'warn')
             return
         self.active_subscription = subscription
-        self.launch_collection(options, job_id, title)
+        self.launch_collection(options, job_id, title, via=via)
 
     def _subscription_task(self, job, subscription, cancelled):
         """The bookkeeping of a subscription check, for the HistoryWriter (1.7.0 U1)."""
@@ -457,8 +389,9 @@ class CollectionUI:
                 if len(self.collected_links) < MAX_LINKS:
                     self.collected_links.setdefault(link['url'], link)
             self.render_collection_links()
+            self.refresh_collect_actions()      # the first page brings the toolbar and the table
             self.set_collect_status(i18n.t('collect.status.progress', pages=len(self.collected_pages),
-                                           links=len(self.collected_links)))
+                                           links=len(self.collected_links)), 'running')
             self.append_log(i18n.t('log.collect.page', title=messages.show(value['title']),
                                    count=len(value['links'])))
             if value.get('text_truncated'):
@@ -498,7 +431,6 @@ class CollectionUI:
                 self.active_subscription = None
                 self.collection_background = False
                 self.set_busy(False)
-                self.collect_stop.configure(state='disabled')
             if background:
                 self.set_hint('')
                 self.refresh_collect_note()
@@ -512,7 +444,6 @@ class CollectionUI:
                 except Exception as error:
                     applog.get('ui').exception('loading the collection record failed')
                     self.append_log(i18n.t('log.collect.load_failed', error=messages.error_text(error)))
-            self.collect_text.configure(state='normal' if any(p['text'] for p in self.collected_pages) else 'disabled')
             self.collection_selection_changed()
             status = i18n.t('collect.status.stopped') if value['cancelled'] else i18n.t('collect.status.finished')
             # One style for numbers (polish ui-wording-consistency-4): '3 页', the running status's spacing.
@@ -545,30 +476,76 @@ class CollectionUI:
                                for index, item in enumerate(shown))
         self.collection_selection_changed()
 
+    def refresh_collect_actions(self):
+        """(2.0.0 S4, collect.md 2.6) What follows the busy state and the results: Stop takes Start's place
+        while a collection runs (also an automatic subscription check); with results the toolbar and the table
+        replace the empty state, and Add to downloads is the solid button instead of Start (soft).  Called by
+        set_busy, a collected page (handle_collection) and load_collection_record; only a change touches a widget (1.7.0 U6)."""
+        collecting = bool(self.busy) and self.operation == 'collect'
+        rich = bool(self.collected_links or self.collected_pages)
+        before = getattr(self, '_collect_stage', (None, None))
+        if before == (collecting, rich):
+            return
+        self._collect_stage = (collecting, rich)
+        if collecting != before[0]:
+            # usable while shown (studio.stop greys it until the run ends), grey while hidden
+            self.collect_stop.configure(state='normal' if collecting else 'disabled')
+            ui_theme.show(self.collect_start, not collecting)
+            ui_theme.show(self.collect_stop, collecting)
+        if rich != before[1]:
+            self.collect_start.set_kind('soft' if rich else 'primary',
+                                        image=ui_theme.icon(ui_theme.ICON_SEARCH, 'accent' if rich else 'white'))
+            ui_theme.show(self.collect_toolbar, rich)
+            ui_theme.show(self.collect_tree.container, rich)
+            ui_theme.show(self.collect_empty, not rich)
+
     def collection_selection_changed(self):
         count = len(self.collect_tree.selection())
-        total = len(self.collect_tree.get_children())
-        self.collect_count.set(i18n.t('collect.count', shown=total, total=len(self.collected_links), selected=count))
+        text = i18n.t('collect.count', shown=len(self.collect_tree.get_children()), total=len(self.collected_links))
+        if self.collect_count.cget('text') != text:
+            self.collect_count.configure(text=text)
         # (1.7.0 U6) set_busy calls this method on every busy switch: a control is configured only
         # when its text or state changes (each customtkinter redraw can flush the window's layout).
         text = self.add_text(count)
         state = 'normal' if count and self.can_add_collected() else 'disabled'
         if self.collect_add.cget('text') != text or self.collect_add.cget('state') != state:
             self.collect_add.configure(text=text, state=state)
-        state = 'normal' if count else 'disabled'
-        if self.collect_export.cget('state') != state:
-            self.collect_export.configure(state=state)
         # The start-URL box's disabled look: at once on the collect page or for a collection; for a
         # download started on another page it waits until the collect page is shown (show_page),
         # because the text box's redraw lays out the whole window again (about 0.2 s right after
         # 开始下载 with 300 links).
         if getattr(self, 'current_page', 'collect') == 'collect' or self.operation == 'collect':
-            self._dim_collect_box(bool(self.busy))
+            self.collect_urls.set_dimmed(bool(self.busy))
 
     @staticmethod
     def add_text(count):
-        """添加到下载列表, with the number of selected links when there are any."""
+        """加入下载, with the number of selected links when there are any."""
         return f"{i18n.t('collect.add')} ({count})" if count else i18n.t('collect.add')
+
+    # ------------------------------------------------------------ the results' '⋯' and its right-click mirror
+    def collect_menu_items(self):
+        """(collect.md 4.2) Built when the menu opens, so every entry is enabled by the state of that moment."""
+        tree = self.collect_tree
+        picked = len(tree.selection())
+        collecting_here = self.busy and self.operation == 'collect' and not getattr(self, 'collection_background', False)
+        return [MenuItem(self.add_text(picked), self.add_collected, enabled=bool(picked) and self.can_add_collected()),
+                MenuItem(i18n.t('common.select_all'), self.select_collected, enabled=bool(tree.get_children())),
+                SEPARATOR,
+                MenuItem(i18n.t('collect.export_links'), self.export_collected_links, enabled=bool(picked)),
+                MenuItem(i18n.t('collect.save_text'), self.export_collected_text,
+                         enabled=any(p['text'] for p in self.collected_pages) and not collecting_here),
+                MenuItem(i18n.t('collect.archive_text'), self.archive_pages,
+                         enabled=bool(self.collected_pages) and not self.busy)]
+
+    def select_collected(self):
+        """Select every row the table shows (the filter and the search decide which)."""
+        rows = self.collect_tree.get_children()
+        if rows:
+            self.collect_tree.selection_set(rows)
+
+    def _collect_select_all(self, _event=None):
+        self.select_collected()
+        return 'break'
 
     def selected_collection_links(self):
         return [self.visible_collection_links[int(i)] for i in self.collect_tree.selection()]

@@ -14,17 +14,11 @@ vendor/
 data/
 *.log
 
-# Internal records of the 1.6.0 upgrade (contain local paths); only the spec is published
-docs/1.6.0/audit/
-docs/1.6.0/baseline/
-docs/1.6.0/handoff/
-docs/1.6.0/prototype/
+# Internal work records per version (contain local paths); never published
 docs/*/handoff/
 
-# Old test outputs and local backups
-verification/backup-*/
+# Old test outputs (from before the sandbox; still on disk in old checkouts)
 verification/*.json
-!verification/i18n_inventory.json
 verification/collection-test/
 verification/packaged-collection/
 

@@ -4,24 +4,30 @@
 
 ## English
 
-A Windows desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp): paste links, pick a format, download. Interface in English and Simplified Chinese.
+A Windows desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp): paste links, pick a format, download. English and Simplified Chinese.
 
 ![Downloads](docs/screenshots/download-en.png)
 
-### Why use it
+### Features
 
-- **Waits out YouTube's bot check.** When YouTube asks to confirm you are not a bot, only the YouTube links are put on hold and retried automatically after 30, 15 and 15 minutes; other sites keep downloading. Steady mode spaces items 10–20 s apart and pauses the queue on HTTP 429 (5, then 10, at most 15 minutes).
-- **Nothing gets lost.** Unfinished links survive a restart and are retried with one click (F5), each with its own format and folder. An existing file is kept; the new one is saved as “name (2)”.
-- **Collects links from web pages.** Static mode reads the page; dynamic mode uses a separate headless Chrome and can scroll. Up to 20 start pages, paging along same-site `rel=next` links. Chosen links go to the download list.
-- **Library and subscriptions.** Task history with resume; subscriptions check their pages by hand, every 15 minutes, hourly or daily while the app is open, and list only new items. Since 1.8.1 a subscription can be renamed or deleted and pending items can be ignored. Optional archive: one folder per item with its record, page text and transcripts.
-- **Safe engine updates.** A new yt-dlp comes only from its official GitHub release, is checked for size and SHA-256, and must start and accept the options this app passes before it replaces the current one; “Restore built-in engine” goes back.
-- **Private.** No usage data is collected. The proxy address lives for the current session only and is shown as `[proxy]` in logs and errors. Of a cookies file only its path is saved; lines the engine echoes from it are kept out of the log. The only background request is a version check on `api.github.com`, at most once a day, and it can be turned off.
-- **Ready to run.** yt-dlp, FFmpeg and Deno are bundled (versions and SHA-256 pinned in `vendor.lock.json`); no Python needed.
-- **Two languages.** Follows the Windows language, or choose English / 简体中文 in Settings.
+- **Waits out YouTube's check.** When YouTube asks to confirm you are not a bot, the remaining YouTube links are held instead of tried; other sites keep downloading. Without a cookies file, held links are retried after 30, 15 and 15 minutes, or at once with Retry now.
+- **Backs off on rate limits.** On HTTP 429 a link is retried after 5, then 10 minutes; if it is still refused, it fails and the queue pauses 15 minutes before the next link. A longer `Retry-After` from the server is honored. Steady mode (on by default) spaces downloads 10–20 s apart.
+- **Loses no links.** Links that did not finish stay in Unfinished across restarts, each with its own format, folder and options; Retry unfinished (F5) runs them again.
+- **Collects links from pages.** Static or dynamic pages (dynamic uses a separate, temporary Chrome and can scroll); up to 20 page links at once, each followed along same-site `rel=next` for up to 5 pages. You pick what goes to Downloads; Subscribe saves these settings as a subscription.
+- **Checks subscriptions** by hand, every 15 minutes, hourly or daily while the app is open. New items stay listed until downloaded or ignored.
+- **One archive.** With Archive downloads on, every item gets its own folder by site and ID: media, page text (TXT and MD), item info and transcripts.
+- **Safe engine updates.** A new yt-dlp comes only from its official GitHub release, must match the release's size and SHA-256, and must run with the options this app uses before it replaces the current one. Restore built-in engine goes back.
+- **Private.** No usage data. The proxy lives for this session only and shows as `[proxy]` in logs. Of a cookies file only the path is saved, and its contents never reach the log. Watch clipboard only offers the links it finds: it never fills the box, starts a download or stores the text. Besides what you start or schedule, the only network request is a daily version check on `api.github.com`; it installs nothing and can be turned off.
+- **Bundled engine.** yt-dlp, FFmpeg and Deno ship with the program, pinned by version and SHA-256 in `vendor.lock.json`.
 
-| Web Collector | Subscriptions |
+| Collect | Subscriptions |
 |---|---|
-| ![Web Collector](docs/screenshots/collect-en.png) | ![Subscriptions](docs/screenshots/library-en.png) |
+| ![Collect](docs/screenshots/collect-en.png) | ![Subscriptions](docs/screenshots/subscriptions-en.png) |
+
+### New in 2.0
+
+- A cleaner interface: one-word navigation, title-only headers, explanations moved to the manual.
+- A new data format. History, subscriptions and the Unfinished list written by 1.x are not read: at first start each file is renamed (`….bad-<time>…`) and left where it is, the app starts empty, and the Log page says which file was kept. Archive info files are set aside (`资料信息.bad.json`) when their item is next written. Most settings carry over; format and resolution go back to their defaults, and the language follows Windows again. Downloaded files are not touched.
 
 ### Use
 
@@ -30,9 +36,9 @@ There are no prebuilt downloads; build the program as below. The result is a fol
 | Data | Location |
 |---|---|
 | Settings, Unfinished list, log | `%LOCALAPPDATA%\YtDlpDesktop` |
-| History, subscriptions, archive index | `data\library.sqlite3` next to the program |
+| History, subscriptions, archive index | `%LOCALAPPDATA%\YtDlpDesktop\library.sqlite3`; `data\library.sqlite3` next to the program instead, when that file exists and can be written |
 
-The full manual is [使用说明.txt](使用说明.txt) (Chinese).
+The manual is [使用说明.txt](使用说明.txt) (Chinese).
 
 ### Build and test
 
@@ -41,28 +47,34 @@ Python 3.11, from the repository root:
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-.venv\Scripts\python.exe prepare_vendor.py
-.venv\Scripts\python.exe -B src\app.py
+.venv\Scripts\python.exe -X utf8 -B prepare_vendor.py
+.venv\Scripts\python.exe -X utf8 -B verification\sandbox_app.py
 ```
 
 ```powershell
-.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py --quick
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py -k urls,unfinished
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py -j 4
 .venv\Scripts\python.exe -X utf8 -B verification\run_tests.py --all
 .venv\Scripts\python.exe -X utf8 -B build.py
-.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-1.8.1\YT-DLP下载器 --target "<program folder>" --dry-run
+.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<version>\YT-DLP下载器 --target "<program folder>" --dry-run
 ```
 
 - `prepare_vendor.py` downloads the pinned yt-dlp, FFmpeg and Deno into `vendor\` and stops on any SHA-256 mismatch.
-- `run_tests.py` runs in a sandbox and leaves your settings and data alone; `--all` adds the real engine, a local fixture server and Chrome.
-- `build.py` runs the tests, packages `build\package-1.8.1\YT-DLP下载器` and writes `build\verify\release-1.8.1.json` with every file's size and SHA-256.
-- `install_release.py` checks every file against that record, keeps the previous version, self-tests the new one and restores the previous one if the test fails. Drop `--dry-run` to install.
+- `sandbox_app.py` starts the app in a temporary folder, so your settings and data stay untouched.
+- `run_tests.py` runs every test file in its own sandbox. `--quick` is the fast subset with no windows; `-k` picks files by name; `-j N` runs N files at once; `--all` adds the real engine, a local test server and Chrome.
+- `build.py` runs `--all` serially, packages `build\package-<version>\YT-DLP下载器`, tests the packaged exe and writes `build\verify\release-<version>.json` with every file's size and SHA-256. The release gate accepts only serial runs of the current sources and tests.
+- `install_release.py` checks every file against that record, keeps the previous version, self-tests the new one and rolls back if the test fails. Drop `--dry-run` to install.
 
 | Path | Contents |
 |---|---|
-| `src\` | the app (`app.py` is the entry point) |
-| `verification\` | tests and `run_tests.py` |
-| `docs\` | design specs per version, screenshots |
-| `架构说明.txt` | modules, events, data files, packaging (Chinese) |
+| `src\` | the app; `app.py` is the entry point; `i18n_*.py` hold every interface text in both languages |
+| `verification\` | tests, `run_tests.py`, `sandbox_app.py` |
+| `docs\ARCHITECTURE.md` | modules, events, data files, packaging |
+| `docs\DATA.md` | the data file formats |
+| `AGENTS.md` | rules for contributors and coding agents |
+
+Design records of 1.x are in the tag `v1.8.1`.
 
 ### License
 
@@ -74,22 +86,28 @@ py -3.11 -m venv .venv
 
 基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 的 Windows 桌面下载器：粘贴链接，选格式，下载。界面有简体中文和英文。
 
-![下载中心](docs/screenshots/download.png)
+![下载](docs/screenshots/download-zh.png)
 
-### 优势
+### 特点
 
-- **自动等过 YouTube 验证。** YouTube 要求“确认不是机器人”时，只暂缓 YouTube 链接，并在 30、15、15 分钟后自动重试；其他网站照常下载。稳健模式让条目间隔 10–20 秒，遇到 HTTP 429 整个队列冷却（5 分钟、10 分钟，最长 15 分钟）。
-- **任务不丢。** 未完成的链接重启后还在，一键重试（F5），各自沿用自己的格式和目录。重名时保留已有文件，新文件存为“名称 (2)”。
-- **网页采集。** 普通模式直接读取网页；动态模式用一个独立的无头 Chrome，可以滚动。最多 20 个起始网页，翻页只跟随同站的 `rel=next`。选中的链接加入下载列表。
-- **资料管理与订阅。** 任务历史可续采；订阅可手动、每 15 分钟、每小时或每天检查（程序打开时），只列出新增。1.8.1 起订阅可以改名、删除，待处理条目可以忽略。可选统一归档：每个条目一个文件夹，含记录、网页正文和转写稿。
-- **引擎更新稳妥。** 新版 yt-dlp 只从官方 GitHub 发布页获取，核对大小和 SHA-256，并且要能正常启动、认得本程序传给它的各项选项，才会替换当前版本；“恢复内置引擎”可退回。
-- **隐私。** 不收集使用数据。代理地址只在本次运行有效，日志和错误里显示为“[代理]”。cookies 文件只保存路径，引擎回显的文件行不写入日志。唯一的后台联网是每天最多一次向 `api.github.com` 查询版本号，可以关闭。
-- **开箱即用。** 内置 yt-dlp、FFmpeg、Deno（版本和 SHA-256 锁定在 `vendor.lock.json`），不需要安装 Python。
-- **中英文界面。** 默认跟随 Windows，也可在设置中选择简体中文或 English。
+- **YouTube 验证时自动等待。** YouTube 要求“确认不是机器人”时，余下的 YouTube 链接暂缓、不再尝试；其他网站照常下载。没有设置 cookies 时，暂缓的链接在 30、15、15 分钟后自动重试，也可以点“立即重试”。
+- **遇到限流会退让。** 遇到 HTTP 429，该链接在 5 分钟、再 10 分钟后重试；仍被拒绝就记为失败，整个队列暂停 15 分钟再继续下一条。服务器给出更长的 `Retry-After` 时按它等待。稳健模式（默认开启）让两次下载间隔 10–20 秒。
+- **链接不丢。** 没完成的链接留在“未完成”里，重启后还在，各自保留格式、文件夹和选项；“重试未完成”（F5）重新下载。
+- **从网页采集链接。** 普通或动态网页（动态采集使用独立的临时 Chrome，可以滚动）；一次最多 20 个网页链接，每个连同同站 `rel=next` 的后续页最多 5 页。由你挑选哪些加入下载；“订阅”把这些设置存为订阅。
+- **检查订阅。** 程序打开时可手动、每 15 分钟、每小时或每天检查。新增保留到下载成功或忽略。
+- **统一归档。** 开启“统一归档”后，每个条目按站点和 ID 各占一个文件夹：媒体、正文（TXT 和 MD）、资料信息、转写稿。
+- **引擎更新稳妥。** 新版 yt-dlp 只从官方 GitHub 发布页获取，大小和 SHA-256 必须与发布信息一致，并且能带着本程序使用的选项正常运行，才会替换当前版本。“恢复内置引擎”可退回。
+- **隐私。** 不收集使用数据。代理只在本次运行有效，日志里显示为“[代理]”。cookies 文件只保存路径，文件内容不会进入日志。“识别剪贴板”只提示找到的链接，不自动填入、不开始下载、不保存内容。除了你自己启动或安排的任务，唯一的联网是每天一次向 `api.github.com` 查询版本号；它不安装任何东西，可以关闭。
+- **自带引擎。** yt-dlp、FFmpeg、Deno 随程序提供，版本和 SHA-256 锁定在 `vendor.lock.json`。
 
-| 网页采集 | 增量订阅 |
+| 采集 | 订阅 |
 |---|---|
-| ![网页采集](docs/screenshots/collect.png) | ![增量订阅](docs/screenshots/library.png) |
+| ![采集](docs/screenshots/collect-zh.png) | ![订阅](docs/screenshots/subscriptions-zh.png) |
+
+### 2.0 的变化
+
+- 界面更干净：导航只有单词，页头只有标题，说明文字移进使用说明。
+- 数据格式更新。1.x 写的历史、订阅和未完成清单不再读取：首次启动时各自改名（`….bad-<时间>…`）留在原处，程序从空白开始，日志页写明哪个文件被保留。归档里的资料信息文件在该条目下次写入时改名保留（`资料信息.bad.json`）。大部分设置沿用；格式、分辨率回到默认，语言重新跟随 Windows。已下载的文件不受影响。
 
 ### 使用
 
@@ -98,9 +116,9 @@ py -3.11 -m venv .venv
 | 数据 | 位置 |
 |---|---|
 | 设置、未完成清单、日志 | `%LOCALAPPDATA%\YtDlpDesktop` |
-| 历史、订阅、归档索引 | 程序旁的 `data\library.sqlite3` |
+| 历史、订阅、归档索引 | `%LOCALAPPDATA%\YtDlpDesktop\library.sqlite3`；程序旁的 `data\library.sqlite3` 已存在且可写时用那个 |
 
-完整说明见 [使用说明.txt](使用说明.txt)。
+使用说明见 [使用说明.txt](使用说明.txt)。
 
 ### 构建与测试
 
@@ -109,28 +127,34 @@ Python 3.11，在仓库根目录：
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-.venv\Scripts\python.exe prepare_vendor.py
-.venv\Scripts\python.exe -B src\app.py
+.venv\Scripts\python.exe -X utf8 -B prepare_vendor.py
+.venv\Scripts\python.exe -X utf8 -B verification\sandbox_app.py
 ```
 
 ```powershell
-.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py --quick
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py -k urls,unfinished
+.venv\Scripts\python.exe -X utf8 -B verification\run_tests.py -j 4
 .venv\Scripts\python.exe -X utf8 -B verification\run_tests.py --all
 .venv\Scripts\python.exe -X utf8 -B build.py
-.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-1.8.1\YT-DLP下载器 --target "<程序目录>" --dry-run
+.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<版本>\YT-DLP下载器 --target "<程序目录>" --dry-run
 ```
 
 - `prepare_vendor.py` 按锁定版本把 yt-dlp、FFmpeg、Deno 下载到 `vendor\`，SHA-256 不符即停止。
-- `run_tests.py` 在沙箱中运行，不碰本机设置和数据；`--all` 另含真实引擎、本地测试服务器和 Chrome。
-- `build.py` 先跑测试，再打包到 `build\package-1.8.1\YT-DLP下载器`，并写出记录每个文件大小和 SHA-256 的 `build\verify\release-1.8.1.json`。
-- `install_release.py` 按这份记录逐个核对文件，保留旧版本，安装后自检，失败时恢复旧版本。去掉 `--dry-run` 即正式安装。
+- `sandbox_app.py` 在临时文件夹里启动程序，不碰本机设置和数据。
+- `run_tests.py` 让每个测试文件在自己的沙箱里运行。`--quick` 是不开窗口的快速子集；`-k` 按名字选文件；`-j N` 同时跑 N 个文件；`--all` 另含真实引擎、本地测试服务器和 Chrome。
+- `build.py` 串行运行 `--all`，打包到 `build\package-<版本>\YT-DLP下载器`，测试打包后的 exe，并写出记录每个文件大小和 SHA-256 的 `build\verify\release-<版本>.json`。发布门禁只接受对当前源码和测试的串行运行。
+- `install_release.py` 按这份记录逐个核对文件，保留上一版，安装后自检，失败即回滚。去掉 `--dry-run` 即正式安装。
 
 | 路径 | 内容 |
 |---|---|
-| `src\` | 程序（入口 `app.py`） |
-| `verification\` | 测试和 `run_tests.py` |
-| `docs\` | 各版本设计规范、截图 |
-| `架构说明.txt` | 模块、事件流、数据文件、打包 |
+| `src\` | 程序；入口是 `app.py`；`i18n_*.py` 存放全部界面文字（中英文） |
+| `verification\` | 测试、`run_tests.py`、`sandbox_app.py` |
+| `docs\ARCHITECTURE.md` | 模块、事件、数据文件、打包 |
+| `docs\DATA.md` | 数据文件的格式 |
+| `AGENTS.md` | 给贡献者和编程智能体的规则 |
+
+1.x 的设计记录在标签 `v1.8.1` 里。
 
 ### 许可证
 

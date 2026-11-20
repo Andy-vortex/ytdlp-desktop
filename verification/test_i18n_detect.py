@@ -1,3 +1,4 @@
+# serial: the restart flow raises the window under either title (focus_window)
 """1.7.0 language adaptation: choosing the language and restarting (I18N.md 3.3, 3.4, 5, 6.3, 11.3; WP-L0).
 
     python -X utf8 -B test_i18n_detect.py
@@ -23,6 +24,7 @@ import i18n
 import paths
 import procutil
 import settings
+from _sandbox import en_t, zh_t
 
 HIDDEN = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # settings.defaults() of 1.6.0: the language choice is not a typed setting (I18N.md 5.1, D11).
@@ -30,6 +32,8 @@ DEFAULT_KEYS_1_6_0 = {'output', 'mode', 'resolution', 'batch_safe', 'archive_ena
                       'naming', 'embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded', 'notify_done',
                       'clipboard_hint', 'check_engine_updates', 'last_engine_check', 'bot_check_at', 'latest_engine',
                       'last_clip', 'geometry', 'zoomed', 'appearance'}
+# (2.0.0 S4 A1) the defaults of a new subscription (settings.md 3.2)
+SUBSCRIPTION_KEYS = {'subscription_media_only', 'subscription_first_new', 'subscription_interval'}
 
 
 def settings_path() -> Path:
@@ -143,7 +147,7 @@ class StoredChoiceTests(unittest.TestCase):
             if path.exists():
                 path.unlink()
 
-    def test_stored_choice_reads_the_extra_key(self):
+    def test_stored_choice_reads_the_language_key(self):
         write_settings({'appearance': 'dark'})
         self.assertEqual(i18n.stored_choice(settings.load()), 'system')
         write_settings({'language': 'en'})
@@ -156,10 +160,11 @@ class StoredChoiceTests(unittest.TestCase):
         self.assertEqual(i18n.stored_choice(settings.load()), 'system')
         settings_path().unlink()
         self.assertEqual(i18n.stored_choice(settings.load()), 'system')
-        for prefs in ({}, {'_extra': 'x'}, {'_extra': {'language': ['en']}}, None, 'x'):
+        for prefs in ({}, {'_extra': 'x'}, {'_extra': {'language': 'en'}}, {'language': ['en']}, None, 'x'):
             self.assertEqual(i18n.stored_choice(prefs), 'system')
+        self.assertEqual(i18n.stored_choice({'language': 'en'}), 'en')
 
-    def test_store_choice_is_saved_at_the_top_level_and_keeps_other_keys(self):
+    def test_store_choice_is_saved_with_the_other_keys(self):
         write_settings({'appearance': 'dark', 'future_key': {'a': 1}, 'language': 'zh'})
         prefs = settings.load()
         self.assertTrue(i18n.store_choice(prefs, 'en'))
@@ -168,13 +173,13 @@ class StoredChoiceTests(unittest.TestCase):
         stored = json.loads(settings_path().read_bytes().decode('utf-8'))
         self.assertFalse(settings_path().read_bytes().startswith(b'\xef\xbb\xbf'), 'no BOM')
         self.assertEqual(stored['language'], 'en')
-        self.assertEqual(stored['future_key'], {'a': 1})
+        self.assertNotIn('future_key', stored, '(2.0.0) a key this version does not know is not kept')
         self.assertEqual(stored['appearance'], 'dark')
         self.assertFalse([key for key in stored if key.startswith('_')])
         self.assertEqual(i18n.stored_choice(settings.load()), 'en')
         fresh = {}
         self.assertTrue(i18n.store_choice(fresh, 'system'))
-        self.assertEqual(fresh, {'_extra': {'language': 'system'}})
+        self.assertEqual(fresh, {'language': 'system'})
         self.assertFalse(i18n.store_choice(None, 'en'))
 
     def test_a_held_session_does_not_store_the_choice(self):
@@ -189,11 +194,14 @@ class StoredChoiceTests(unittest.TestCase):
         stored = json.loads(settings_path().read_text(encoding='utf-8'))
         self.assertEqual((stored['language'], stored['appearance']), ('zh', 'system'))
 
-    def test_settings_py_is_the_1_6_0_one(self):
-        self.assertEqual(set(settings.defaults()), DEFAULT_KEYS_1_6_0)
-        self.assertEqual(set(settings._CHECKS), DEFAULT_KEYS_1_6_0)
-        self.assertNotIn('language', settings.defaults())
-        self.assertEqual(i18n.EXTRA, '_extra')
+    def test_language_is_a_key_of_settings_py(self):
+        """(2.0.0 S2 P3) settings.json 'language' is a known key: the keys of 1.6.0 plus 'language', with
+        the choices of i18n; i18n no longer reaches into '_extra'.  (S4 A1) Plus the three subscription keys."""
+        self.assertEqual(set(settings.defaults()), DEFAULT_KEYS_1_6_0 | {'language'} | SUBSCRIPTION_KEYS)
+        self.assertEqual(set(settings._CHECKS), DEFAULT_KEYS_1_6_0 | {'language'} | SUBSCRIPTION_KEYS)
+        self.assertEqual(settings.defaults()['language'], 'system')
+        self.assertEqual(settings.LANGUAGES, i18n.CHOICES)
+        self.assertFalse(hasattr(i18n, 'EXTRA'))
 
 
 class AppStartTests(unittest.TestCase):
@@ -283,7 +291,7 @@ class AppStartTests(unittest.TestCase):
             os.environ.pop('YTDLP_DESKTOP_INSTANCE')
             code, inits, built, calls = self.run_main([], single_instance=mock.Mock(return_value=None))
         self.assertEqual((code, built, inits), (0, [], []))
-        self.assertEqual([call.args for call in calls['focus_window']], [(('YT-DLP 下载器', 'YT-DLP Downloader'),)])
+        self.assertEqual([call.args for call in calls['focus_window']], [((zh_t('app.title'), en_t('app.title')),)])
 
     def test_self_test_reports_the_language(self):
         report = _sandbox.out('self-test', 'report.json')
@@ -303,8 +311,22 @@ class AppStartTests(unittest.TestCase):
             self.assertIsNone(result['language']['env'])
             for key in ('ui_language', 'locale', 'detected'):
                 self.assertIn(key, result['language'])
+            # (S2 review F1) The self-test only reads: a damaged settings.json is not set aside.
+            settings_path().write_bytes(b'{"language": "en", broken')
+            before = sorted(path.name for path in settings_path().parent.iterdir())
+            report.unlink()
+            process = subprocess.run(command, capture_output=True, encoding='utf-8', errors='replace', timeout=300,
+                                     creationflags=HIDDEN, env=dict(environment, **{_sandbox.LANG_OVERRIDE: '1'}))
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            result = json.loads(report.read_text(encoding='utf-8'))
+            self.assertEqual((result['status'], result['language']['choice']), ('passed', 'system'))
+            self.assertTrue(settings_path().is_file(), 'the self-test set settings.json aside')
+            self.assertEqual(settings_path().read_bytes(), b'{"language": "en", broken')
+            self.assertEqual(sorted(path.name for path in settings_path().parent.iterdir()), before)
         finally:
-            settings_path().unlink()
+            settings_path().unlink(missing_ok=True)
+            for path in settings_path().parent.glob('settings.bad*.json'):
+                path.unlink()
 
 
 class RestartHelperTests(unittest.TestCase):

@@ -1,16 +1,16 @@
-"""The unfinished list (1.6.0 WP2, R9): unfinished.py, the two wrappers that 1.5.1 callers
-use, the Options serialisers, and the list as Runner.download leaves it.
+# quick
+"""The unfinished list (1.6.0 WP2, R9): unfinished.py, the Options serialisers, and the list as
+Runner.download leaves it.
 
-No process is started: _run_once is scripted.  The rollback checks run the untouched
-1.5.1 engine.py from the backup folder against files written by the new code.
+No process is started: _run_once is scripted.  (2.0.0 S2 P3) The file is format 2 (version 2, no
+1.5.1 view); (S2 Q2, PLAN 3.10) a file that is not version 2 is read as empty and set aside as
+failed-downloads.bad-<time>.json, at the window's start or before the next save (ForeignListTests).
 """
 import _sandbox
 from dataclasses import replace
-import importlib.util
 import json
 import os
 from pathlib import Path
-import sys
 import tempfile
 import time
 import unittest
@@ -18,30 +18,13 @@ from unittest import mock
 
 import engine
 import formats
+import i18n
 import paths
 import unfinished
 import urls
 
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
-BACKUP = _sandbox.release_src('1.5.1')
 ENTRY_KEYS = {'key', 'format', 'url', 'title', 'reason', 'error', 'time', 'referer', 'options'}
-OPTION_KEYS_OF_1_5_1 = {'output', 'mode', 'resolution', 'playlist', 'proxy', 'batch_safe', 'referers', 'archive_root',
-                        'archive_contexts', 'cookies'}
-
-
-def old_engine(state):
-    """The engine.py of 1.5.1, loaded under another name, with its state folder redirected."""
-    name = 'engine_1_5_1'
-    spec = importlib.util.spec_from_file_location(name, BACKUP / 'engine.py')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module      # dataclasses looks the module up while the class is built
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(name, None)
-    assert module.APP_VERSION == '1.5.1'
-    module.STATE_DIR = Path(state)
-    return module
 
 
 class Case(unittest.TestCase):
@@ -68,14 +51,6 @@ class Case(unittest.TestCase):
         paths.failed_file().parent.mkdir(parents=True, exist_ok=True)
         paths.failed_file().write_text(data if isinstance(data, str) else json.dumps(data, ensure_ascii=False),
                                        encoding='utf-8')
-
-    def legacy_file(self, links, **options):
-        settings = {'output': str(self.out), 'mode': formats.MODES[0], 'resolution': '最佳', 'playlist': False,
-                    'proxy': '', 'batch_safe': True, 'referers': {}, 'archive_root': '', 'archive_contexts': {},
-                    'cookies': ''}
-        settings.update(options)
-        self.write({'version': 1, 'urls': links, 'options': settings})
-        return settings
 
     def entry(self, url, options=None, reason='failed', **more):
         options = options or self.options
@@ -117,9 +92,8 @@ class StoreTests(Case):
         self.assertEqual(path, paths.failed_file())
         self.assertEqual(unfinished.load(), entries)
         data = self.file()
-        self.assertEqual(list(data), ['version', 'urls', 'options', 'entries'])
-        self.assertEqual(data['version'], 1)
-        self.assertEqual(data['urls'], [A, B])
+        self.assertEqual(list(data), ['version', 'entries'], '(2.0.0) no 1.5.1 view')
+        self.assertEqual(data['version'], 2)
         # Fix round 1 (core-rv-state-1-1): an entry's options are written without their default values.
         self.assertEqual(data['entries'], [dict(item, options=unfinished._written_options(item['options'])) for item in entries])
         self.assertEqual(data['entries'][0]['options'], {'output': str(self.out), 'mode': formats.MODES[0]})
@@ -152,113 +126,25 @@ class StoreTests(Case):
                         '{"version": 1, "entries": "x"}'):
             self.write(content)
             self.assertEqual(unfinished.load(), [], content)
-            self.assertIsNone(engine.load_failed_job(), content)
         paths.failed_file().write_bytes(b'\xff\xfe\x00broken')
         self.assertEqual(unfinished.load(), [])
         self.write({'version': 1, 'entries': [self.entry(A)], 'padding': 'x' * (5 * 1024 * 1024)})
         self.assertGreater(paths.failed_file().stat().st_size, 5 * 1024 * 1024)
         self.assertEqual(unfinished.load(), [], 'larger than 5 MB')
-        self.assertIsNone(engine.load_failed_job())
 
     def test_entries_are_authoritative_and_broken_ones_are_dropped(self):
         good = self.entry(A)
-        self.write({'version': 1, 'urls': [B, C], 'options': {'output': str(self.out)},
+        self.write({'version': 2, 'urls': [B, C], 'options': {'output': str(self.out)},
                     'entries': [good, 'text', {'key': 'k'}, dict(good, options='x'), dict(good, url=7),
                                 dict(self.entry(B), title=None, error=5, referer=[], reason='odd', time='yesterday')]})
         loaded = unfinished.load()
-        self.assertEqual([item['url'] for item in loaded], [A, B], 'the legacy urls are not read when entries exist')
+        self.assertEqual([item['url'] for item in loaded], [A, B], 'keys other than entries are not read')
         self.assertEqual(loaded[0], good)
         self.assertEqual((loaded[1]['title'], loaded[1]['error'], loaded[1]['referer'], loaded[1]['reason'], loaded[1]['time']),
                          ('', '', '', 'failed', 0.0))
-        self.write({'version': 1, 'urls': [B], 'options': {'output': str(self.out)}, 'entries': []})
-        self.assertEqual(unfinished.load(), [], 'an empty entries list is an empty list, not a reason to migrate')
-
-    def test_a_file_of_1_5_1_is_migrated(self):
-        settings = self.legacy_file([A, B, A], mode=formats.MODES[4], resolution='1080p', playlist=True, batch_safe=False,
-                                    referers={B: 'https://example.org/page', C: 'https://example.org/other'},
-                                    archive_root='D:\\资料', archive_contexts={A: {'title': '甲'}},
-                                    proxy='http://127.0.0.1:1', cookies='D:\\c.txt')
-        stamp = paths.failed_file().stat().st_mtime
-        loaded = unfinished.load()
-        self.assertEqual([item['url'] for item in loaded], [A, B])
-        for item in loaded:
-            self.assertEqual(set(item), ENTRY_KEYS)
-            self.assertEqual((item['format'], item['reason'], item['title'], item['error'], item['time']),
-                             ('video_mkv@1080p', 'failed', '', '', stamp))
-            self.assertEqual(item['key'], urls.link_key(item['url'], True))
-            self.assertEqual(item['options'], {'output': settings['output'], 'mode': formats.MODES[4], 'resolution': '1080p',
-                                               'playlist': True, 'proxy': '', 'batch_safe': False, 'archive_root': 'D:\\资料',
-                                               'cookies': ''})
-        self.assertEqual([item['referer'] for item in loaded], ['', 'https://example.org/page'])
-        # Reading does not rewrite the file.
-        self.assertNotIn('entries', self.file())
-        job = engine.load_failed_job()
-        self.assertEqual(job['urls'], [A, B])
-        self.assertEqual(job['options'], engine.Options(Path(settings['output']), formats.MODES[4], '1080p', True, '', False,
-                                                        {B: 'https://example.org/page'}, 'D:\\资料'))
-        # A file of 1.5.1 without a mode means the first format, as in its own loader.
-        self.write({'version': 1, 'urls': [A], 'options': {'output': str(self.out)}})
-        self.assertEqual(unfinished.load()[0]['format'], 'audio_best')
-        self.assertEqual(engine.load_failed_job()['options'], engine.Options(self.out))
-        # Comment lines are skipped as its parser does.
-        self.write({'version': 1, 'urls': ['# note', A, '  ', B + '  '], 'options': {'output': str(self.out)}})
-        self.assertEqual([item['url'] for item in unfinished.load()], [A, B])
-
-    def test_legacy_view_is_the_newest_group_in_a_format_1_5_1_knows(self):
-        self.assertEqual(unfinished.legacy_view([]), ([], None))
-        mp3 = engine.Options(self.out, formats.MODES[3])
-        old = [dict(self.entry(A), time=100.0), dict(self.entry(B, referer='https://example.org/b'), time=100.0)]
-        new = [dict(self.entry(C, mp3, referer='https://example.org/c'), time=200.0)]
-        links, options = unfinished.legacy_view(old + new)
-        self.assertEqual(links, [C])
-        self.assertEqual(options, dict(new[0]['options'], referers={C: 'https://example.org/c'}, archive_contexts={},
-                                       proxy='', cookies=''))
-        self.assertEqual(options['mode'], formats.MODES[3])
-        # The newest entry decides, wherever it stands in the list; ties go to the later entry.
-        self.assertEqual(unfinished.legacy_view(new + old)[0], [C])
-        self.assertEqual(unfinished.legacy_view(old)[0], [A, B])
-        self.assertEqual(unfinished.legacy_view(old)[1]['referers'], {B: 'https://example.org/b'})
-        same_time = [dict(new[0], time=100.0)] + old
-        self.assertEqual(unfinished.legacy_view(same_time)[0], [A, B])
-        self.assertEqual(unfinished.newest_group(old + new), new)
-        self.assertEqual(unfinished.newest_group([]), [])
-
-    def test_a_format_only_1_6_0_knows_gives_an_empty_legacy_list(self):
-        for mode in formats.MODES[5:]:
-            fresh = engine.Options(self.out, mode)
-            older = dict(self.entry(A), time=100.0)
-            unfinished.save([older, self.entry(B, fresh)])
-            data = self.file()
-            self.assertEqual((data['urls'], data['options']), ([], {}), mode)
-            self.assertEqual(len(data['entries']), 2)
-            self.assertIsNone(old_engine(self.state).load_failed_job(), '1.5.1 sees no list instead of a format it cannot run')
-            # 1.6.0 itself still gets the group.
-            self.assertEqual(engine.load_failed_job(), {'urls': [B], 'options': fresh})
-
-    def test_a_file_written_by_1_6_0_is_accepted_by_the_loader_of_1_5_1(self):
-        options = engine.Options(self.out, formats.MODES[2], '720p', True, 'http://user:secret@127.0.0.1:1', False,
-                                 {A: 'https://example.org/page'}, str(self.root / '资料'), {A: {'title': '甲'}},
-                                 str(self.root / 'cookies.txt'), naming='clean', embed_metadata=False, embed_cover=False,
-                                 subtitles=True, skip_downloaded=True)
-        engine.store_failed_job([A, B, A], options)
-        data = self.file()
-        # The rules of its loader, spelled out ...
-        self.assertEqual(data['version'], 1)
-        self.assertTrue(data['urls'] and all(isinstance(link, str) for link in data['urls']))
-        self.assertIsInstance(data['options'], dict)
-        self.assertTrue(isinstance(data['options']['output'], str) and data['options']['output'].strip())
-        self.assertIn(data['options']['mode'], formats.LEGACY_MODES)
-        self.assertGreaterEqual(set(data['options']), OPTION_KEYS_OF_1_5_1)
-        text = paths.failed_file().read_text(encoding='utf-8')
-        self.assertNotIn('secret', text)
-        self.assertNotIn('cookies.txt', text)
-        # ... and the loader itself.
-        legacy = old_engine(self.state)
-        job = legacy.load_failed_job()
-        self.assertEqual(job['urls'], [A, B])
-        self.assertEqual(job['options'], legacy.Options(self.out, formats.MODES[2], '720p', True, '', False,
-                                                        {A: 'https://example.org/page'}, str(self.root / '资料'), {}, ''))
-        self.assertEqual(legacy.build_command(A, job['options'])[-2:], ['--', A])
+        self.write({'version': 2, 'urls': [B], 'options': {'output': str(self.out)}, 'entries': []})
+        self.assertEqual(unfinished.load(), [], 'an empty entries list is an empty list')
+        self.assertEqual(unfinished._read(paths.failed_file())[1], '', 'and the file is read completely')
 
     def test_options_survive_the_round_trip_through_an_entry(self):
         options = engine.Options(self.out, formats.MODES[6], '1440p', True, '', False, {}, str(self.root / '资料'), {}, '',
@@ -279,7 +165,7 @@ class StoreTests(Case):
         cookies = self.root / 'my-cookies.txt'
         cookies.write_text('# Netscape HTTP Cookie File\n', encoding='utf-8')
         options = engine.Options(self.out, proxy='http://user:topsecret@127.0.0.1:7890', cookies=str(cookies))
-        engine.store_failed_job([A], options)
+        _sandbox.save_unfinished([A], options)
         runner = engine.Runner(lambda kind, value: self.events.append((kind, value)))
         with mock.patch.object(runner, '_run_once', return_value=(1, False, None)):
             runner.download([B], options)
@@ -289,8 +175,6 @@ class StoreTests(Case):
             self.assertNotIn('my-cookies', text, path.name)
         for item in unfinished.load():
             self.assertEqual((item['options']['proxy'], item['options']['cookies']), ('', ''))
-        self.assertEqual(self.file()['options']['proxy'], '')
-        self.assertEqual(self.file()['options']['cookies'], '')
 
     def test_remove(self):
         entries = [self.entry(A), self.entry(B), self.entry(A, engine.Options(self.out, formats.MODES[3]))]
@@ -299,21 +183,6 @@ class StoreTests(Case):
         self.assertEqual(unfinished.remove(entries, []), entries)
         self.assertEqual(unfinished.remove(entries, [list(unfinished.signature(item)) for item in entries]), [])
         self.assertEqual(len(entries), 3, 'the given list is not changed')
-
-    def test_wrappers_for_1_5_1_callers(self):
-        self.assertIsNone(engine.load_failed_job())
-        path = engine.store_failed_job([A, B, A], self.options)
-        self.assertEqual(path, paths.failed_file())
-        self.assertEqual(engine.load_failed_job(), {'urls': [A, B], 'options': self.options})
-        self.assertEqual([item['reason'] for item in unfinished.load()], ['failed', 'failed'])
-        self.assertEqual(engine.store_failed_job([], self.options), paths.failed_file(), 'the path also for an empty list')
-        self.assertFalse(paths.failed_file().exists())
-        self.assertIsNone(engine.load_failed_job())
-        # An entry whose stored options cannot be used any more gives None, not an exception.
-        unfinished.save([dict(self.entry(A), options={'output': str(self.out), 'mode': formats.MODES[0], 'resolution': '999p'})])
-        self.assertEqual(len(unfinished.load()), 1)
-        self.assertIsNone(engine.load_failed_job())
-
 
 class OptionsTests(Case):
     def test_new_fields_and_positional_order(self):
@@ -344,12 +213,12 @@ class OptionsTests(Case):
         self.assertNotIn(B, options.referers, 'to_dict hands out copies')
 
     def test_from_dict(self):
-        options = engine.Options(self.out, formats.MODES[5], '最佳', True, 'socks5://127.0.0.1:1', False,
+        options = engine.Options(self.out, formats.MODES[5], 'best', True, 'socks5://127.0.0.1:1', False,
                                  {A: 'https://example.org/p'}, 'D:\\资料', {A: {'title': '甲'}}, 'D:\\c.txt', 'title_id',
                                  False, False, True, True)
         self.assertEqual(engine.Options.from_dict(options.to_dict(private=True)), options)
         self.assertEqual(engine.Options.from_dict(options.to_dict()), engine.Options(
-            self.out, formats.MODES[5], '最佳', True, '', False, {A: 'https://example.org/p'}, 'D:\\资料',
+            self.out, formats.MODES[5], 'best', True, '', False, {A: 'https://example.org/p'}, 'D:\\资料',
             {A: {'title': '甲'}}, '', 'title_id', False, False, True, True))
         # Missing keys get their defaults, unknown keys are ignored, a Path is accepted as output.
         self.assertEqual(engine.Options.from_dict({'output': str(self.out)}), engine.Options(self.out))
@@ -371,9 +240,9 @@ class OptionsTests(Case):
             self.assertEqual(engine.Options.from_dict({'output': str(self.out), 'naming': style}).naming, style)
 
     def test_from_dict_refuses_what_cannot_run(self):
-        good = {'output': str(self.out), 'mode': formats.MODES[0], 'resolution': '最佳'}
+        good = {'output': str(self.out), 'mode': formats.MODES[0], 'resolution': 'best'}
         for bad in ({'output': ''}, {'output': '   '}, {'output': None}, {'output': 7}, {'mode': 'x'}, {'mode': None},
-                    {'mode': formats.PRESETS[0].label}, {'resolution': '999p'}, {'resolution': None}, {'resolution': 1080}):
+                    {'mode': i18n.CATALOG['zh']['format.' + formats.MODES[0]]}, {'resolution': '999p'}, {'resolution': None}, {'resolution': 1080}):
             with self.assertRaises(ValueError, msg=bad):
                 engine.Options.from_dict({**good, **bad})
         for not_a_dict in (None, [], 'x', 5):
@@ -498,10 +367,12 @@ class RunTests(Case):
         self.assertIsNone(done['failed_path'])
         self.assertFalse(paths.failed_file().exists())
 
-    def test_a_retried_entry_of_1_5_1_in_a_video_resolution_leaves_the_list(self):
-        """Fix round 1 (bughunt-9): the migrated entry and the retry have the same format key."""
-        self.legacy_file([A, B], mode=formats.MODES[4], resolution='1080p')
-        job = engine.load_failed_job()
+    def test_a_retried_entry_in_a_video_resolution_leaves_the_list(self):
+        """Fix round 1 (bughunt-9): the stored entry and the retry have the same format key.  (2.0.0 S2 Q1)
+        The list is written in format 2 (before: a 1.5.1 file migrated at start-up); the
+        entries are the same: a video preset in a resolution other than best."""
+        _sandbox.save_unfinished([A, B], engine.Options(self.out, formats.MODES[4], '1080p'))
+        job = {'options': engine.Options.from_dict(unfinished.load()[0]['options'])}
         self.assertEqual(self.listed(), [(A, 'video_mkv@1080p', 'failed'), (B, 'video_mkv@1080p', 'failed')])
         self.run_job([A], [0], options=job['options'])
         self.assertEqual(self.listed(), [(B, 'video_mkv@1080p', 'failed')])
@@ -541,9 +412,6 @@ class RunTests(Case):
         self.run_job([C], [1], options=engine.Options(self.out, formats.MODES[3]))
         self.assertEqual(self.listed(), [(A, 'video_mkv@1080p', 'failed'), (B, 'video_mkv@1080p', 'failed'), (C, 'audio_mp3', 'failed')])
         self.assertEqual(engine.Options.from_dict(unfinished.load()[0]['options']), video, 'the older entries keep their options')
-        # What 1.5.1 would see: the newest group.
-        self.assertEqual(self.file()['urls'], [C])
-        self.assertEqual(self.file()['options']['mode'], formats.MODES[3])
 
     def test_success_in_another_format_does_not_clear(self):
         video = engine.Options(self.root / 'video', formats.MODES[4])
@@ -574,8 +442,6 @@ class RunTests(Case):
         self.assertEqual((second['referer'], second['format']), ('https://example.org/page', 'video_mp4@720p'))
         self.assertEqual(first['referer'], '')
         self.assertNotIn('pw@', paths.failed_file().read_text(encoding='utf-8'))
-        # The newest group is the MP4 link: no list for 1.5.1, the entries are all there.
-        self.assertEqual((self.file()['urls'], self.file()['options']), ([], {}))
 
     def test_a_list_that_cannot_be_saved_is_reported_and_the_job_still_ends(self):
         blocker = self.root / 'a-file'
@@ -585,47 +451,135 @@ class RunTests(Case):
         self.addCleanup(patcher.stop)
         done = self.run_job([A], [1])
         self.assertEqual((done['failed'], done['failed_path'], done['unfinished'], done['pending_urls']), (1, None, 0, [A]))
-        self.assertTrue([line for kind, line in self.events if kind == 'log' and line.startswith('失败清单未能保存：')])
+        self.assertTrue([line for kind, line in self.events
+                         if kind == 'log' and getattr(line, 'key', None) == 'core.engine.unfinished_not_saved'])
 
-    def test_rollback_1_5_1_rewrites_the_file_and_1_6_0_reads_it_again(self):
-        """SPEC section 5: a download in 1.5.1 replaces the list with its own; the entries of the
-        other format are gone (accepted), and 1.6.0 then migrates what 1.5.1 wrote."""
-        mp3 = engine.Options(self.out, formats.MODES[3])
-        mp4 = engine.Options(self.root / 'video', formats.MODES[6])
-        d, e = 'https://example.invalid/d', 'https://example.invalid/e'
-        self.run_job([A, B], [1, 1], options=mp4)
-        self.run_job([C, d], [1, 1], options=mp3)
-        self.assertEqual([item['format'] for item in unfinished.load()], ['video_mp4', 'video_mp4', 'audio_mp3', 'audio_mp3'])
-        legacy = old_engine(self.state)
-        job = legacy.load_failed_job()
-        self.assertEqual(job['urls'], [C, d], '1.5.1 sees the newest group, which is in a format it knows')
-        self.assertEqual((job['options'].mode, job['options'].output), (formats.MODES[3], self.out))
-        # 1.5.1 retries its list: C succeeds, d fails again, and a new link fails.
-        events = []
-        runner = legacy.Runner(lambda kind, value: events.append((kind, value)))
-        results = iter([(0, False, None), (1, False, None), (1, False, None)])
-        with mock.patch.object(runner, '_run_once', side_effect=lambda *arguments: next(results)):
-            runner.download([C, d, e], job['options'])
-        self.assertEqual(events[-1][0], 'done')
-        written = self.file()
-        self.assertNotIn('entries', written, 'the file is now what 1.5.1 writes')
-        self.assertEqual(written['urls'], [d, e])
-        # 1.6.0 reads it without an error: the legacy links, migrated.
-        loaded = unfinished.load()
-        self.assertEqual([(item['url'], item['format'], item['reason']) for item in loaded],
-                         [(d, 'audio_mp3', 'failed'), (e, 'audio_mp3', 'failed')])
-        self.assertEqual(engine.Options.from_dict(loaded[0]['options']), mp3)
-        self.assertEqual(engine.load_failed_job(), {'urls': [d, e], 'options': mp3})
-        # ... and works with it: d succeeds now.
-        self.run_job([d], [0], options=mp3)
-        self.assertEqual(self.listed(), [(e, 'audio_mp3', 'failed')])
-        self.assertIn('entries', self.file())
-        # The explicit store of 1.5.1 on a 1.6.0 file, and back.
-        legacy.store_failed_job([A], legacy.Options(self.out))
-        self.assertEqual([item['url'] for item in unfinished.load()], [A])
-        legacy.store_failed_job([], legacy.Options(self.out))
-        self.assertEqual(unfinished.load(), [])
-        self.assertIsNone(engine.load_failed_job())
+
+
+LOG = 'YtDlpDesktop.unfinished'
+
+
+class ForeignListTests(Case):
+    """(2.0.0 S2 Q2, S2-AMEND.md 2.2, 2.5 items 11-13) A file that is not version 2 (1.6.0-1.8.1 wrote
+    version 1, 1.5.1 had no version, a later version may write 3): no entry is read from it, nothing is
+    written into it; it is renamed to failed-downloads.bad-<time>.json (byte for byte) and one line says so."""
+
+    def shapes(self):
+        entry = dict(self.entry(A), options={'output': str(self.out), 'mode': formats.MODES[0]})
+        return [{'version': 1, 'entries': [entry]}, {'urls': [A, B], 'options': {'output': str(self.out)}},
+                {'version': 3, 'entries': []}, {'version': 2, 'entries': {}}]
+
+    def kept(self):
+        return sorted(self.state.glob('failed-downloads.bad-*.json'))
+
+    def clear(self):
+        for path in self.kept():
+            path.unlink()
+
+    def assert_kept(self, before, lines):
+        """The list file was renamed (its bytes), reported once as kept aside (unknown_format)."""
+        kept = self.kept()
+        self.assertEqual([path.read_bytes() for path in kept], [before])
+        self.assertEqual([(line.key, line.params['problem'].key, line.params['target']) for line in lines],
+                         [('core.unfinished.kept_aside', 'core.unfinished.problem.unknown_format', kept[0].name)])
+
+    def test_11_a_file_that_is_not_version_2_is_set_aside_at_the_start(self):
+        for data in self.shapes():
+            with self.subTest(data=data):
+                self.clear()
+                self.write(data)
+                before = paths.failed_file().read_bytes()
+                self.assertEqual(unfinished.load(), [])
+                entries, problem, stamp = unfinished._read(paths.failed_file())
+                self.assertEqual((entries, problem.key, stamp), ([], 'core.unfinished.problem.unknown_format', None))
+                self.assertEqual(paths.failed_file().read_bytes(), before, 'load() changes nothing')
+                self.assertEqual(sorted(os.listdir(self.state)), ['failed-downloads.json'])
+                lines = []
+                with self.assertLogs(LOG, 'WARNING') as logs:
+                    self.assertEqual(unfinished.load_at_start(lines.append), [])
+                self.assertFalse(paths.failed_file().exists())
+                self.assert_kept(before, lines)
+                self.assertEqual(len(logs.output), 1, 'download.log gets the same one line')
+                again = []
+                with self.assertNoLogs(LOG):
+                    self.assertEqual(unfinished.load_at_start(again.append), [])
+                self.assertEqual((again, len(self.kept())), ([], 1), 'nothing more the second time')
+
+    def test_11_the_merge_and_save_still_set_such_a_file_aside_first(self):
+        """A file that turns up after the start (or could not be renamed then): the 1.8.1 path."""
+        for data in self.shapes():
+            for name, call in (('load_for_merge', lambda lines: unfinished.load_for_merge(lines.append)),
+                               ('save', lambda lines: unfinished.save([self.entry(C)], log=lines.append)),
+                               ('save []', lambda lines: unfinished.save([], log=lines.append))):
+                with self.subTest(data=data, call=name):
+                    self.clear()
+                    self.write(data)
+                    before = paths.failed_file().read_bytes()
+                    lines = []
+                    with self.assertLogs(LOG, 'WARNING'):
+                        result = call(lines)
+                    self.assert_kept(before, lines)
+                    if name == 'save':
+                        self.assertEqual((self.file()['version'], [item['url'] for item in unfinished.load()]), (2, [C]))
+                    else:
+                        self.assertFalse(paths.failed_file().exists())
+                        self.assertEqual(result, [] if name == 'load_for_merge' else None)
+                    if paths.failed_file().exists():
+                        paths.failed_file().unlink()
+
+    def test_11b_load_at_start_leaves_no_file_a_good_file_and_a_partly_usable_file_alone(self):
+        good = self.entry(A)
+        with self.assertNoLogs(LOG):
+            self.assertEqual(unfinished.load_at_start(self.fail), [])
+        self.assertFalse(self.state.exists() and os.listdir(self.state))
+        unfinished.save([good])
+        before = paths.failed_file().read_bytes()
+        with self.assertNoLogs(LOG):
+            self.assertEqual(unfinished.load_at_start(self.fail), [good])
+        self.assertEqual(paths.failed_file().read_bytes(), before)
+        # dropped: the usable entries are kept and the file is left to the first merge (1.8.1), so that
+        # no link is only in memory while the file is already renamed (PLAN 3.3)
+        self.write({'version': 2, 'entries': [unfinished._written(good), {'key': 'k'}]})
+        before = paths.failed_file().read_bytes()
+        with self.assertNoLogs(LOG):
+            self.assertEqual(unfinished.load_at_start(self.fail), [good])
+        self.assertEqual(paths.failed_file().read_bytes(), before)
+        self.assertEqual(os.listdir(self.state), ['failed-downloads.json'])
+
+    def test_12_a_run_sets_aside_a_file_that_is_not_version_2_and_writes_version_2(self):
+        self.write({'version': 1, 'urls': [A], 'options': {'output': str(self.out)}})
+        before = paths.failed_file().read_bytes()
+        done = self.run_job([B], [1])
+        self.assertEqual((done['failed'], done['unfinished']), (1, 1))
+        lines = [value for kind, value in self.events if kind == 'log' and getattr(value, 'key', None) == 'core.unfinished.kept_aside']
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].params['problem'].key, 'core.unfinished.problem.unknown_format')
+        self.assertEqual([path.read_bytes() for path in self.kept()], [before])
+        self.assertEqual(lines[0].params['target'], self.kept()[0].name)
+        self.assertEqual((self.file()['version'], [item['url'] for item in unfinished.load()]), (2, [B]))
+
+    def test_13_a_file_in_use_is_not_touched(self):
+        self.write({'version': 1, 'entries': []})
+        before = paths.failed_file().read_bytes()
+        with open(paths.failed_file(), 'rb'):      # Windows gives no delete sharing: the rename fails
+            with self.assertNoLogs(LOG):
+                self.assertEqual(unfinished.load_at_start(self.fail), [])
+            self.assertEqual(paths.failed_file().read_bytes(), before)
+            with self.assertRaises(OSError):
+                unfinished.load_for_merge()
+            done = self.run_job([B], [1])
+        self.assertEqual((done['failed'], done['failed_path'], done['unfinished']), (1, None, 0))
+        lines = [value for kind, value in self.events
+                 if kind == 'log' and getattr(value, 'key', None) == 'core.engine.unfinished_not_saved']
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(paths.failed_file().read_bytes(), before)
+        self.assertEqual(self.kept(), [])
+        # The same without depending on the platform: set_aside raises PermissionError.
+        with mock.patch.object(paths, 'set_aside', side_effect=PermissionError(13, 'in use')), self.assertNoLogs(LOG):
+            self.assertEqual(unfinished.load_at_start(self.fail), [])
+        self.assertEqual(paths.failed_file().read_bytes(), before)
+
+    run_job = RunTests.run_job
 
 
 if __name__ == '__main__':

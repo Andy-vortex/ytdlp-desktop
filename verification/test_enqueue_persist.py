@@ -31,12 +31,17 @@ from unittest import mock
 
 import engine
 import formats
+import i18n
 import library
 import ui_download
 import ui_theme
 import updater
 from engine import MODES, Options, QueueItem
 from library import job_downloads
+
+
+from _sandbox import pump, zh_t
+
 
 FIXTURE = _sandbox.ROOT / 'verification' / 'fixture' / 'fixture.mp4'
 FIRST_SLOW = 'https://example.invalid/slow-first'
@@ -136,7 +141,7 @@ def child(scenario, result_path):
     result['accepted'] = [first_count, second_count]
     result['inbox'] = [item.url for item in app.runner.inbox]
     result['queued_event'] = 'queued' in seen
-    result['hint'] = ui_theme.full_text(app.link_hint)
+    result['hint'] = app.link_note.cget('text')      # (2.0.0 S4) the line under the link box
     Path(result_path).write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
     sys.stdout.flush()
     os._exit(1)                     # the hard kill: no finally, no queued event, no unfinished list
@@ -173,7 +178,7 @@ class HardKillTests(unittest.TestCase):
         self.assertEqual(result['accepted'], [1, 2])
         self.assertEqual(result['inbox'], [ADDED_SAME, *ADDED_OTHER], 'the links were still only in the inbox')
         self.assertFalse(result['queued_event'], 'no queued event came before the kill')
-        self.assertEqual(result['hint'], '已加入队列 2 条')
+        self.assertEqual(result['hint'], zh_t('download.hint.queued', count=2))
 
     def check_record(self, result, first):
         row = self.job_of(result['job'])
@@ -236,16 +241,6 @@ class FakeRunner:
         self.release.set()
 
 
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.01)
-    return condition is None
-
-
 class WindowTests(unittest.TestCase):
     def setUp(self):
         from studio import StudioApp
@@ -296,7 +291,7 @@ class WindowTests(unittest.TestCase):
             self.assertEqual(FakeRunner.instances[-1].enqueued[-1][0], ['https://example.org/late'])
             self.assertEqual([model['url'] for model in app.row_model],
                              ['https://example.org/first', 'https://example.org/late'])
-            self.assertEqual(ui_theme.full_text(app.link_hint), '已加入队列 1 条')
+            self.assertEqual(app.link_note.cget('text'), zh_t('download.hint.queued', count=1))
             self.assertEqual(app.urls.get('1.0', 'end-1c'), '')
             self.assertTrue(app.busy)
             FakeRunner.instances[-1].release.set()

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import customtkinter as ctk
 from studio import StudioApp
+from _sandbox import zh_t
 import engine
 from engine import Options, MODES
 
@@ -20,10 +21,10 @@ try:
     assert set(app.pages) == {'download', 'collect', 'library', 'logs', 'settings'}
     app.handle('collect_page', {'url': 'https://example.org/list', 'title': '测试文章',
         'text': '完整正文', 'markdown': '# 完整正文', 'links': [
-            {'url': 'https://example.org/film.mp4', 'title': '视频甲', 'kind': '媒体地址', 'source': 'https://example.org/list'},
-            {'url': 'https://example.org/article', 'title': '文章', 'kind': '网页链接', 'source': 'https://example.org/list'}]})
+            {'url': 'https://example.org/film.mp4', 'title': '视频甲', 'kind': 'media', 'source': 'https://example.org/list'},
+            {'url': 'https://example.org/article', 'title': '文章', 'kind': 'web', 'source': 'https://example.org/list'}]})
     assert len(app.collect_tree.get_children()) == 1
-    app.collect_filter.set('全部链接')
+    app.collect_filter.set('all')        # collection_ui.FILTERS[1]
     assert len(app.collect_tree.get_children()) == 2
     app.collect_search.set('视频甲')
     assert len(app.collect_tree.get_children()) == 1
@@ -67,7 +68,7 @@ try:
     # (1.8.0) the waiting reason as the engine emits it (a message, MESSAGES.md 8.3)
     app.handle('waiting', {'index': 1, 'total': 2, 'seconds': 300, 'reason': engine.msg('core.wait.rate_queue')})
     assert '05:00' in app.metrics.cget('text')
-    assert app.rows[0]['badge'].cget('text') == '等待中'
+    assert app.rows[0]['badge'].cget('text') == zh_t('download.chip.waiting')
     assert not app.animating
     app.wait_deadline = time.monotonic() + 59
     app.render_wait()
@@ -75,7 +76,7 @@ try:
     app.handle('resuming', {'index': 1, 'total': 2})
     assert app.wait_context is None and app.animating
     app.handle('progress', {'fraction': .5, 'downloaded': 1024, 'total': 2048, 'speed': 512, 'eta': 2, 'status': 'downloading'})
-    assert app.rows[0]['badge'].cget('text') == '50.0%'
+    assert app.rows[0]['badge'].cget('text') == '50%'
     assert app.progress.target == .5
     app.handle('item_done', {'index': 1, 'success': True, 'cancelled': False, 'files': 1})
     app.handle('item', {'index': 2, 'total': 2, 'url': 'https://example.org/two'})
@@ -87,7 +88,7 @@ try:
     app.handle('done', {'success': 0, 'failed': 0, 'cancelled': True, 'files': []})
     assert app.progress.target == .4
     # WP4: retry launches the stored entry with its own options; form and link box stay as they are (R13).
-    engine.store_failed_job(['https://example.org/two'],
+    _sandbox.save_unfinished(['https://example.org/two'],
                             Options(_sandbox.out('original-output'), MODES[2], '720p', True, '', True))
     app.handle('done', {'success': 1, 'failed': 1, 'cancelled': False, 'files': [],
                         'failed_urls': ['https://example.org/two'], 'failed_path': 'test-failures.json'})
@@ -106,7 +107,7 @@ try:
     engine.save_unfinished([])
     app.set_busy(True)
     assert app.retry_button.cget('state') == 'disabled'
-    assert app.cookies_entry.cget('state') == 'disabled'
+    assert app.cookies_button.cget('state') == 'disabled'
     app.set_busy(False)
     cookie_file = _sandbox.out('ui-test-cookies.txt')
     cookie_file.write_text('# Netscape HTTP Cookie File\n', encoding='utf-8')
@@ -127,7 +128,7 @@ try:
     app.handle('item_done', {'index': 1, 'success': False, 'cancelled': False, 'files': 0, 'bot_check': True})
     assert 'cookies' in app.rows[0]['detail'].cget('text')
     app.handle('done', {'success': 0, 'failed': 1, 'cancelled': False, 'files': [], 'bot_check': True})
-    assert '偏好设置' in app.metrics.cget('text')
+    assert zh_t('download.metrics.bot') in app.metrics.cget('text')
     app.show_page('settings')
     app.show_page('logs')
     app.show_page('download')

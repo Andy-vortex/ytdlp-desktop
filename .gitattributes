@@ -1,0 +1,14 @@
+# Line endings (2.0.0): every text file is stored and checked out with LF.
+# test_text_guard.TreeTests.test_text_files_use_lf checks the working tree against this file.
+* text=auto eol=lf
+
+# Binary files: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.pyd binary
+*.zip binary
+*.mp4 binary
+*.sqlite3 binary

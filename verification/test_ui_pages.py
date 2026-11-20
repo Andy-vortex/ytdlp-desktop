@@ -17,6 +17,7 @@ from urllib.parse import unquote
 import customtkinter as ctk
 import collection_ui
 import engine
+import i18n
 import library
 import library_ui
 import messages
@@ -27,17 +28,10 @@ import urls
 from collector import CollectOptions
 from engine import MODES
 from studio import StudioApp
+from _sandbox import no_clipboard, no_network, zh_t
 
 # (1.8.0) What open_library returns: a message with the sqlite text as its raw param (C-F26).
 WARNING = messages.msg('core.library.temporary', error='unable to open database file')
-
-
-def no_network(*_args, **_kwargs):
-    raise AssertionError('updater.check_latest must not be called in this test')
-
-
-def no_clipboard(self, *_args, **_kwargs):
-    raise tk.TclError('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
 
 
 class FakeCollectionRunner:
@@ -60,7 +54,7 @@ class FakeCollectionRunner:
 
 
 def links(count, prefix='https://media.example.org/v/'):
-    return [{'url': f'{prefix}{number:03d}.mp4', 'title': f'第 {number} 集', 'kind': '媒体地址',
+    return [{'url': f'{prefix}{number:03d}.mp4', 'title': f'第 {number} 集', 'kind': 'media',
              'source': 'https://example.org/list'} for number in range(count)]
 
 
@@ -143,8 +137,9 @@ class RegressionTests(Base):
         self.assertEqual(app.collect_stop.cget('state'), 'disabled')
         self.assertIsNone(app.collection_job)
         self.assertIsNone(app.worker)
-        self.assertEqual([line for line in lines if line.startswith('采集记录保存失败')],
-                         ['采集记录保存失败：database is locked'])
+        failed = i18n.CATALOG['zh']['log.collect.record_failed'].partition('{')[0]     # the text before {error}
+        self.assertEqual([line for line in lines if line.startswith(failed)],
+                         [zh_t('log.collect.record_failed', error='database is locked')])
 
     def test_r8_a_failing_tick_still_rearms_the_timer(self):
         app = self.make_app()
@@ -175,7 +170,7 @@ class RegressionTests(Base):
             self.assertTrue(app.busy)
             self.assertEqual(app.operation, 'collect')
             self.assertTrue(app.collection_background)
-            self.assertEqual(ui_theme.full_text(app.link_hint), '正在检查订阅“自动订阅”，完成后可以开始下载')
+            self.assertEqual(app.link_note.cget('text'), zh_t('download.hint.subscription_check', name='自动订阅'))
             self.assertEqual(app.current_page, 'download')        # an automatic check does not switch pages
             app.handle('collect_status', '正在采集第1页…')
             app.handle('collect_page', page(links(3, 'https://media.example.org/new/'), 'https://example.org/other'))
@@ -189,10 +184,10 @@ class RegressionTests(Base):
             load.assert_not_called()
         self.assertFalse(app.busy)
         self.assertFalse(app.collection_background)
-        self.assertEqual(ui_theme.full_text(app.link_hint), ui_download.HINT_DEFAULT)
+        self.assertEqual(app.link_note.winfo_manager(), '', 'nothing under the box once the check ended')
         self.assertEqual((dict(app.collected_links), app.collect_urls.get('1.0', 'end-1c')), (shown[0], shown[2]))
-        self.assertIn('网页采集：示例列表，3 条链接', lines)
-        self.assertIn('网页采集未完成：网站返回HTTP 503', lines)
+        self.assertIn(zh_t('log.collect.page', title='示例列表', count=3), lines)
+        self.assertIn(zh_t('log.collect.unfinished', error='网站返回HTTP 503'), lines)
         # finish_subscription ran: the check is recorded (here as not successful, the job never completed).
         record = next(item for item in app.library.subscriptions() if item['id'] == key)
         self.assertTrue(record['data']['last_error'])
@@ -244,37 +239,38 @@ class PageTests(Base):
             app = self.make_app()
         self.assertIs(app.library, store)
         self.assertEqual(app.library_warning, WARNING)
-        self.assertEqual(app.library_warning_bar.winfo_manager(), 'grid')
-        self.assertEqual(ui_theme.full_text(app.library_warning_label), WARNING)
+        self.assertTrue(app.library_notice.shown)
+        self.assertEqual(app.library_notice.full_text, WARNING)
         self.assertIn(WARNING, app.log_buffer + app.logs.get('1.0', 'end').splitlines())
 
     def test_no_warning_no_bar(self):
         app = self.make_app()
         self.assertEqual(app.library_warning, '')
-        self.assertEqual(app.library_warning_bar.winfo_manager(), '')
+        self.assertFalse(app.library_notice.shown)
 
     def test_add_button_shows_the_selected_count(self):
         app = self.make_app()
         app.handle('collect_page', page(links(3)))
-        self.assertEqual(app.collect_add.cget('text'), '添加到下载列表')
+        self.assertEqual(app.collect_add.cget('text'), zh_t('collect.add'))
         self.assertEqual(app.collect_add.cget('state'), 'disabled')
         app.collect_tree.selection_set(['0', '2'])
         app.collection_selection_changed()
-        self.assertEqual(app.collect_add.cget('text'), '添加到下载列表 (2)')
+        self.assertEqual(app.collect_add.cget('text'), f"{zh_t('collect.add')} (2)")
         self.assertEqual(app.collect_add.cget('state'), 'normal')
-        self.assertEqual(app.collect_count.cget('text'), '显示 3 / 共 3 · 已选 2')
+        self.assertEqual(app.collect_count.cget('text'), zh_t('collect.count', shown=3, total=3))
         # A new filter result clears the selection (row ids are positions).
         app.collect_search.set('第 1')
         self.assertEqual(app.collect_tree.selection(), ())
-        self.assertEqual(app.collect_add.cget('text'), '添加到下载列表')
+        self.assertEqual(app.collect_add.cget('text'), zh_t('collect.add'))
 
     def test_dynamic_mode_caption(self):
         app = self.make_app()
-        self.assertEqual(ui_theme.full_text(app.collect_note), collection_ui.NOTE_PAGES)
+        self.assertEqual(app.collect_note.winfo_manager(), '', 'static pages: no line')
         app.collect_mode.set(collection_ui.MODE_DYNAMIC)
-        self.assertEqual(ui_theme.full_text(app.collect_note), collection_ui.NOTE_PAGES + collection_ui.NOTE_DYNAMIC)
+        self.assertEqual(app.collect_note.winfo_manager(), 'grid')
+        self.assertEqual(ui_theme.full_text(app.collect_note), i18n.t('collect.note.dynamic'))
         app.collect_mode.set(collection_ui.MODE_STATIC)
-        self.assertEqual(ui_theme.full_text(app.collect_note), collection_ui.NOTE_PAGES)
+        self.assertEqual(app.collect_note.winfo_manager(), '')
 
     def test_history_note_shows_the_last_error(self):
         app = self.make_app()
@@ -288,28 +284,32 @@ class PageTests(Base):
         app.history_selection()
         # Fix round 1 (WP5-visual-2): a download job has no saved pages, and its error is the short
         # Chinese reason of the task row, not the engine's English line.
-        self.assertEqual(ui_theme.full_text(app.history_note), '0 条下载成功 · 最近错误：网站拒绝访问（403）')
+        none_done = zh_t('library.history.downloaded', completed=0)
+        self.assertEqual(ui_theme.full_text(app.history_note),
+                         none_done + zh_t('library.history.last_error', error=zh_t('core.reason.http_403')))
         app.library.download_event(job, 'item_done', {
             'index': 1, 'success': False, 'cancelled': False, 'files': 0, 'bot_check': True,
             'url': 'https://example.org/a',
             'error': "ERROR: [youtube] OQMcYxMlwGA: Sign in to confirm you're not a bot. Use --cookies-from-browser"})
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), '0 条下载成功 · 最近错误：' + engine.BOT_CHECK_REASON)
+        self.assertEqual(ui_theme.full_text(app.history_note),
+                         none_done + zh_t('library.history.last_error', error=zh_t('core.reason.bot_check')))
         # A collect job keeps pages and its own (Chinese) error.
         collect = app.library.create_job('collect', '列表', {'urls': ['https://example.org/list']})
         app.library.change_job(collect, errors=['网站返回HTTP 503'])
         app.refresh_library()
         app.history_tree.selection_set(collect)
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), '0 个已保存页面 · 0 条下载成功 · 最近错误：网站返回HTTP 503')
+        self.assertEqual(ui_theme.full_text(app.history_note), zh_t('library.history.pages', pages=0, done=none_done)
+                         + zh_t('library.history.last_error', error='网站返回HTTP 503'))
         app.history_tree.selection_remove(app.history_tree.selection())
         app.history_selection()
-        self.assertEqual(ui_theme.full_text(app.history_note), library_ui.HISTORY_NOTE)
+        self.assertEqual(ui_theme.full_text(app.history_note), '')
 
     def test_view_of_a_download_job_fills_the_box_only(self):
         app = self.make_app()
         app.urls.delete('1.0', 'end')
-        before = (app.mode.get(), app.format.get(), app.output.get(), app.resolution.get(), app.playlist.get())
+        before = (app.mode.get(), app.output.get(), app.resolution.get(), app.playlist.get())
         other = _sandbox.out('pages-other-output')
         job = app.library.create_job('download', '两首歌', {**engine.Options(other, MODES[3]).to_dict(),
                                                          'urls': ['https://example.org/one', 'https://example.org/two']})
@@ -318,10 +318,9 @@ class PageTests(Base):
         app.history_selection()
         app.view_history()
         self.assertEqual(app.urls.get('1.0', 'end-1c'), 'https://example.org/one\nhttps://example.org/two')
-        self.assertEqual((app.mode.get(), app.format.get(), app.output.get(), app.resolution.get(), app.playlist.get()),
-                         before)
+        self.assertEqual((app.mode.get(), app.output.get(), app.resolution.get(), app.playlist.get()), before)
         self.assertEqual(app.current_page, 'download')
-        self.assertEqual(ui_theme.full_text(app.link_hint), '已载入这条记录的链接；格式沿用当前设置')
+        self.assertEqual(app.link_note.cget('text'), zh_t('download.hint.history_loaded'))
 
     def test_resume_of_a_download_job_launches_the_rest_with_its_options(self):
         app = self.make_app()
@@ -333,7 +332,9 @@ class PageTests(Base):
             **engine.Options(other, MODES[2], '720p').to_dict(),
             'urls': ['https://example.org/one', 'https://example.org/two', 'https://example.org/three'],
             'overrides': {'https://example.org/three': own.to_dict()}})
-        app.library.change_job(job, status='partial', completed=['https://example.org/one'])
+        # (2.0.0 S2 P2) a finished download is a (link, format) pair in 'done'
+        first = library.job_downloads(app.library.job(job)['data'])[0]
+        app.library.change_job(job, status='partial', done=[[first['url'], first['format']]])
         app.refresh_library()
         app.history_tree.selection_set(job)
         app.history_selection()
@@ -358,7 +359,7 @@ class PageTests(Base):
                 mock.patch('library_ui.messagebox.showwarning') as warning:
             app.resume_history()
         launch.assert_not_called()
-        warning.assert_called_once_with('无法恢复', '这条记录的输出设置在当前版本中不可用。', parent=app)
+        warning.assert_called_once_with(zh_t('dialog.resume.failed.title'), zh_t('dialog.resume.failed.text'), parent=app)
 
 
 class FixRound1Tests(Base):
@@ -376,11 +377,11 @@ class FixRound1Tests(Base):
         with mock.patch.object(app.library, 'job', side_effect=RuntimeError('database is locked')):
             app.handle('collect_done', {'cancelled': False})
             self.assertFalse(app.busy)
-            self.assertEqual(app.side_status.cget('text'), '就绪')
+            self.assertEqual(app.side_status.cget('text'), zh_t('shell.status.ready'))
             self.assertIsNone(app.foreign_activity)
-            self.assertEqual(ui_theme.full_text(app.history_note), library_ui.HISTORY_UNREADABLE)
-            self.assertEqual((app.history_view.cget('state'), app.history_resume.cget('state')),
-                             ('disabled', 'disabled'))
+            self.assertEqual(ui_theme.full_text(app.history_note), i18n.t('library.history.unreadable'))
+            self.assertEqual((app.history_menu_items()[0].enabled, app.history_resume.cget('state')),
+                             (False, 'disabled'))
             # Starting a collection with the same failing read: started and registered, not wedged.
             app.launch_collection(CollectOptions(['https://example.org/list']).validate())
             self.assertTrue(app.busy)
@@ -408,7 +409,7 @@ class FixRound1Tests(Base):
             self.assertEqual(unquote(queued), url)
         app = self.make_app()
         app.urls.delete('1.0', 'end')
-        items = [{'url': url, 'title': str(n), 'kind': '媒体地址', 'source': 'https://example.org/list'}
+        items = [{'url': url, 'title': str(n), 'kind': 'media', 'source': 'https://example.org/list'}
                  for n, url in enumerate(tricky[:3])]
         app.collected_links = {item['url']: item for item in items}
         app.render_collection_links()
@@ -427,20 +428,21 @@ class FixRound1Tests(Base):
                 mock.patch.object(store, 'history', side_effect=error):
             app = self.make_app()
             lines = self.logged(app)
-            self.assertEqual(app.library_warning_bar.winfo_manager(), 'grid')
+            self.assertTrue(app.library_notice.shown)
             # (1.7.0 U1) A lock held by another program is said calmly and retried by itself.
-            self.assertEqual(ui_theme.full_text(app.library_warning_label), library_ui.LIBRARY_BUSY)
+            self.assertEqual(app.library_notice.full_text, i18n.t('library.busy'))
             app.refresh_library()       # the same error again: logged once only
             self.assertEqual(lines, [])
         app.refresh_library()           # readable again: the strip goes
-        self.assertEqual(app.library_warning_bar.winfo_manager(), '')
+        self.assertFalse(app.library_notice.shown)
         self.assertEqual(app.library_problem, '')
         # Any other read error still shows itself in the strip, as before.
         with mock.patch.object(store, 'history', side_effect=library.sqlite3.DatabaseError('file is not a database')):
             app.refresh_library()
-        self.assertEqual(ui_theme.full_text(app.library_warning_label), '历史记录暂时无法读取：file is not a database')
+        self.assertEqual(app.library_notice.full_text, zh_t('library.unreadable', error='file is not a database'))
+        self.assertEqual([button.cget('text') for button in app.library_notice.buttons], [zh_t('common.refresh')])
         app.refresh_library()
-        self.assertEqual(app.library_warning_bar.winfo_manager(), '')
+        self.assertFalse(app.library_notice.shown)
 
     def test_a_failing_automatic_check_backs_off(self):
         """WP5-bughunt-4: a check that cannot start (locked history) is not retried every 15 s."""
@@ -508,12 +510,11 @@ class FixRound1Tests(Base):
         key = app.library.subscription('后台订阅', asdict(options), 3600, True, True)
         row = next(item for item in app.library.subscriptions() if item['id'] == key)
         app.check_subscription(row, automatic=True)
-        self.assertEqual(ui_theme.full_text(app.collect_note), collection_ui.BACKGROUND_NOTE.format(name='后台订阅'))
+        self.assertEqual(ui_theme.full_text(app.collect_note), i18n.t('collect.background', name='后台订阅'))
         self.assertEqual(app.collect_note.cget('text_color'), ui_theme.ACCENT_TEXT)
         FakeCollectionRunner.instances[-1].release.set()
         app.handle('collect_done', {'cancelled': False})
-        self.assertEqual(ui_theme.full_text(app.collect_note), collection_ui.NOTE_PAGES)
-        self.assertEqual(app.collect_note.cget('text_color'), ui_theme.MUTED)
+        self.assertEqual(app.collect_note.winfo_manager(), '', 'static pages: the line goes with the check')
 
     def test_the_start_url_box_looks_disabled_while_busy(self):
         """WP5-visual-4."""
@@ -527,28 +528,31 @@ class FixRound1Tests(Base):
         self.assertEqual(app.collect_urls.cget('text_color'), ui_theme.INK)
         self.assertEqual(app.collect_urls.cget('fg_color'), ui_theme.SURFACE_ALT)
 
-    def test_actions_without_a_selection_say_why(self):
-        """WP5-visual-5: no silent no-ops (states stay as they are: the ui golden records them)."""
+    def test_actions_without_a_selection_are_grey_and_do_nothing(self):
+        """WP5-visual-5; (2.0.0 S4, subscriptions.md 4) no "please select first": the controls are grey, the
+        actions do nothing, the empty view says what to do."""
         app = self.make_app()
         lines = self.logged(app)
         with mock.patch('library_ui.messagebox.showinfo') as info:
             app.check_subscription()
-            self.assertEqual(ui_theme.full_text(app.subscription_note), library_ui.NO_SUBSCRIPTION)
-            self.assertEqual(app.subscription_note.cget('text_color'), ui_theme.WARN)
+            self.assertTrue(app.subscription_empty.winfo_manager(), 'no subscription: the empty state')
+            self.assertEqual(app.subscription_bar.winfo_manager(), '')
             options = CollectOptions(['https://example.org/feed']).validate()
-            app.library.subscription('订阅', asdict(options), 3600, True, True)
+            key = app.library.subscription('订阅', asdict(options), 3600, True, True)
             app.refresh_library()
-            self.assertEqual(app.subscription_note.cget('text_color'), ui_theme.MUTED)
-            for action in (app.check_subscription, app.toggle_subscription, app.change_interval):
-                app.subscription_note.configure(text='', text_color=ui_theme.MUTED)
+            self.assertEqual(app.subscription_tree.selection(), (str(key),), 'the first row is selected by itself')
+            app.subscription_tree.selection_remove(app.subscription_tree.selection())
+            app.subscription_selection()
+            self.assertEqual(app.subscription_check.cget('state'), 'disabled')
+            self.assertFalse(any(item.enabled for item in app.subscription_menu_items()[:4]))
+            for action in (app.check_subscription, app.toggle_subscription, app.queue_subscription):
                 action()
-                self.assertEqual(ui_theme.full_text(app.subscription_note), library_ui.PICK_SUBSCRIPTION)
-            app.queue_subscription()
-            self.assertEqual(ui_theme.full_text(app.subscription_note), library_ui.PICK_SUBSCRIPTION)
-            info.assert_not_called()
+                self.assertEqual(ui_theme.full_text(app.subscription_note), '')
+            self.assertFalse(app.busy)
+            self.assertEqual(app.archive_open.cget('state'), 'disabled')
             app.open_archive()
             app.attach_transcript()
-            self.assertEqual(info.call_count, 2)
+            info.assert_not_called()
         self.assertFalse(app.busy)
         self.assertEqual(lines, [])
 
@@ -565,10 +569,14 @@ class FixRound1Tests(Base):
 class VisibleTests(Base):
     def test_placeholders_are_shown_while_the_variables_are_empty(self):
         app = self.make_app(visible=True)
+        app.handle('collect_page', page(links(2)))      # the search box is shown with results
+        app.library.archive_index(str(_sandbox.out('pages-placeholder', 'item')),
+                                  {'url': 'https://example.org/a', 'source': 'https://example.org/list', 'title': 'A',
+                                   'uploader': '', 'files': ['a.m4a'], 'transcripts': []})
+        app.refresh_library()                            # and the archive search with an archive
         entries = [('collect', None, app.collect_scope, app.collect_selector),
                    ('collect', None, app.collect_search_entry, app.collect_search),
-                   ('library', '增量订阅', app.subscription_name_entry, app.subscription_name),
-                   ('library', '统一资料归档', app.archive_search_entry, app.archive_search)]
+                   ('library', library_ui.TAB_ARCHIVE, app.archive_search_entry, app.archive_search)]
         for name, tab, entry, variable in entries:
             app.show_page(name)
             if tab:
@@ -583,21 +591,27 @@ class VisibleTests(Base):
             self.assertTrue(entry.placeholder_label.winfo_ismapped())
         app.show_page('collect')
         pump(app, 0.1)
-        self.assertTrue(app.collect_placeholder.winfo_ismapped())
+        self.assertTrue(app.collect_urls.placeholder_label.winfo_ismapped())
         app.collect_urls.insert('1.0', 'https://example.org/list')
         pump(app, 0.05)
-        self.assertFalse(app.collect_placeholder.winfo_ismapped())
+        self.assertFalse(app.collect_urls.placeholder_label.winfo_ismapped())
 
-    def test_subscription_strip_fits_at_the_minimum_size(self):
+    def test_the_subscription_view_fits_at_the_minimum_size(self):
         app = self.make_app(visible=True, size='1000x740')
+        options = CollectOptions(['https://example.org/feed']).validate()
+        key = app.library.subscription('订阅', asdict(options), 3600, True, True)
+        app.library.finish_subscription(key, [page(links(5), 'https://example.org/feed')], True)
         app.show_page('library')
-        app.library_tabs.set('增量订阅')
+        app.library_tabs.set(library_ui.TAB_SUBSCRIPTIONS)
+        app.refresh_library()
         pump(app, 0.3)
-        strip, create = app.subscription_strip, app.subscription_create
-        self.assertTrue(create.winfo_ismapped())
-        self.assertLessEqual(create.winfo_x() + create.winfo_width(), strip.winfo_width())
         scale = ctk.ScalingTracker.get_widget_scaling(app)
-        self.assertGreaterEqual(app.subscription_name_entry.winfo_width() / scale, 279)
+        for widget in app.pending_bar.winfo_children():
+            if widget.winfo_ismapped():
+                self.assertLessEqual(widget.winfo_x() + widget.winfo_width(), app.pending_bar.winfo_width(), widget)
+        self.assertTrue(app.pending_queue.winfo_ismapped())
+        for tree in (app.subscription_tree, app.pending_tree):
+            self.assertGreaterEqual(tree.winfo_height() / scale, 4 * ui_theme.TABLE_ROW_H, 'four rows or more')
         # The CSS entry keeps its place beside the menus at the minimum width.
         app.show_page('collect')
         pump(app, 0.2)

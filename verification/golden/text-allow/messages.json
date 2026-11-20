@@ -1,25 +1,20 @@
 {
  "module": "messages",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
   "[代理]": {
    "category": "token",
-   "reason": "the separator / proxy-mask token of the message model (MESSAGES.md 2.1, 4.6 L5); allowed only in messages, i18n, i18n_legacy"
+   "reason": "the separator / proxy-mask token of the message model (MESSAGES.md 2.1, 4.6 L5); allowed only in messages and i18n"
   },
   "；": {
    "category": "token",
-   "reason": "the separator / proxy-mask token of the message model (MESSAGES.md 2.1, 4.6 L5); allowed only in messages, i18n, i18n_legacy"
+   "reason": "the separator / proxy-mask token of the message model (MESSAGES.md 2.1, 4.6 L5); allowed only in messages and i18n"
   }
  },
  "raises": {
   "Message is immutable": {
    "exception": "AttributeError",
    "line_hint": 85,
-   "reason": "internal error of the message model (immutability, malformed IPC line skipped by the reader, test-only guard exception)"
-  },
-  "Value is immutable": {
-   "exception": "AttributeError",
-   "line_hint": 117,
    "reason": "internal error of the message model (immutability, malformed IPC line skipped by the reader, test-only guard exception)"
   },
   "an exemption needs a reason": {
@@ -36,16 +31,6 @@
    "exception": "ValueError",
    "line_hint": 711,
    "reason": "internal error of the message model (immutability, malformed IPC line skipped by the reader, test-only guard exception)"
-  },
-  "malformed $r": {
-   "exception": "ValueError",
-   "line_hint": 701,
-   "reason": "internal error of the message model (immutability, malformed IPC line skipped by the reader, test-only guard exception)"
-  },
-  "malformed $v": {
-   "exception": "ValueError",
-   "line_hint": 706,
-   "reason": "internal error of the message model (immutability, malformed IPC line skipped by the reader, test-only guard exception)"
   }
  },
  "composed": {
@@ -54,6 +39,5 @@
    "reason": "test-only MessageFlattened text (G2 tripwire, 2.9): never raised without YTDLP_DESKTOP_MSG_GUARD"
   }
  },
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

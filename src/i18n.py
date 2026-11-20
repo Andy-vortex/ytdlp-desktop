@@ -1,7 +1,9 @@
 """Chinese / English texts (1.7.0, I18N.md sections 3 and 9). Standard library only.
 
-It imports the generated map module i18n_maps and the eight catalog modules i18n_<part> and no
-other module of the app, so every module may import it without a cycle.
+It imports the eight catalog modules i18n_<part> and no other module of the app, so every module may
+import it without a cycle.  (2.0.0 S3) Each catalog is hand-written and the only source of its texts:
+TEXTS {key: ('中文', 'English')}, and optionally GROUPS (menu value -> key) and TAGS (key -> log-line tag)
+for its own keys.  CATALOG, GROUPS and TAGS below are their merge; nothing is generated.
 
 The language ('zh' or 'en') is fixed for the life of a process: app.py calls init() once with
 the stored choice; everything else reads language(), which resolves lazily when init() was never
@@ -10,16 +12,14 @@ environment YTDLP_DESKTOP_LANG > the stored choice ('zh' / 'en') > detect() ('sy
 
     t(key, **values)        the text of a key in the running language (zh, then the key, as fallbacks)
     label(group, value)     the label of a stored value; choices(group) the menu (value, label) pairs
-    all_values(key)         the text of a key in every language; prefixes(tag) log-line starts
-    sep(name), join_sentences(parts)
+    all_values(key)         the text of a key in every language; log_tag(line) the TAGS tag of a log line
 
 Nothing here raises for a missing key, a missing placeholder, an unknown stored value or a
 Windows API failure: the result degrades and a WARNING is logged once.
 
 (1.8.0, MESSAGES.md 6.4) The reverse lookup of 1.7.0 (localize: a Chinese core text back to its
 key) is gone.  The core passes messages (messages.py) and the UI shows them with messages.show();
-keyless text stored by older versions is read by the frozen reader i18n_legacy behind
-messages.decode, never here.
+keyless text stored by older versions is not read (2.0.0).
 """
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ import logging
 import os
 import string
 import threading
+import unicodedata
 
-import i18n_maps
 import i18n_core
 import i18n_common
 import i18n_shell
@@ -43,7 +43,6 @@ LANGUAGES = ('zh', 'en')
 CHOICES = ('system', 'zh', 'en')          # settings.json 'language'
 ENV = 'YTDLP_DESKTOP_LANG'                 # override: zh / en (also zh-CN, en-US, ...: by prefix)
 HELD = '_held'                             # settings.HELD: the session started without settings.json
-EXTRA = '_extra'                           # settings.load(): the keys settings.py does not know
 CATALOG_MODULES = (i18n_core, i18n_common, i18n_shell, i18n_download, i18n_log, i18n_settings, i18n_collect,
                    i18n_library)
 LANG_CHINESE = 0x04
@@ -60,11 +59,17 @@ _FORMATTER = string.Formatter()
 def _merge(attribute):
     merged = {}
     for module in CATALOG_MODULES:
-        merged.update(getattr(module, attribute))     # a key in two modules: the later wins (the test finds it)
+        merged.update(getattr(module, attribute, {}))     # a name in two modules: the later wins (C2 finds it)
     return merged
 
 
-CATALOG = {'zh': _merge('ZH'), 'en': _merge('EN')}
+_TEXTS = _merge('TEXTS')
+CATALOG = {language_: {key: pair[index] for key, pair in _TEXTS.items()}
+           for index, language_ in enumerate(LANGUAGES)}
+# Stored value or code -> key, per group (label / choices; tests read this name too).
+GROUPS = _merge('GROUPS')
+# Key -> 'error' / 'ok': the log-line tag of the key's text (log_tag, ui_log.classify).
+TAGS = dict(sorted(_merge('TAGS').items()))
 
 
 def _warn_once(token, message, *args) -> None:
@@ -187,24 +192,20 @@ def diagnostics(choice=None) -> dict:
 
 
 def stored_choice(prefs) -> str:
-    """The stored choice: prefs['_extra']['language'] when it is one of CHOICES, else 'system'."""
+    """The stored choice: prefs['language'] when it is one of CHOICES, else 'system'."""
     try:
-        extra = prefs.get(EXTRA) if isinstance(prefs, dict) else None
-        value = extra.get('language') if isinstance(extra, dict) else None
+        value = prefs.get('language') if isinstance(prefs, dict) else None
         return value if isinstance(value, str) and value in CHOICES else 'system'
     except Exception:
         return 'system'
 
 
 def store_choice(prefs, value) -> bool:
-    """Keep the choice in prefs['_extra'] (settings.save() writes it at the top level).  False for
-    an unknown value and for a session that started with settings.json held (it would be lost)."""
+    """Keep the choice in prefs['language'] (settings.save() writes it).  False for an unknown value
+    and for a session that started with settings.json held (it would be lost)."""
     if not isinstance(prefs, dict) or HELD in prefs or value not in CHOICES:
         return False
-    extra = prefs.get(EXTRA)
-    if not isinstance(extra, dict):
-        extra = prefs[EXTRA] = {}
-    extra['language'] = value
+    prefs['language'] = value
     return True
 
 
@@ -268,41 +269,59 @@ def all_values(key) -> tuple:
     return tuple(found)
 
 
-def _literal_start(text) -> str:
+_line_patterns = {}     # tuple(TAGS.items()) -> ((tag, anchored, words), ...)
+
+
+def _words(text):
+    """(anchored, words) of a text: its literal parts in order, the first as it is (the line starts with it when
+    the text does not start with a placeholder), the later ones without the separators around them."""
     try:
-        for literal, _field, _spec, _conv in _FORMATTER.parse(text):
-            return literal
+        literals = [literal for literal, _field, _spec, _conv in _FORMATTER.parse(text)]
     except ValueError:
-        return text
-    return ''
+        literals = [text]
+    words = [literals[0]] + [_bare(part) for part in literals[1:]]
+    return bool(literals[0]), tuple(word for word in words if word)
 
 
-def prefixes(tag) -> tuple:
-    """The literal start (before the first placeholder) of every key tagged ``tag`` in
-    i18n_log.TAGS, in every language (ui_log.classify)."""
-    found = []
-    for key, value in getattr(i18n_log, 'TAGS', {}).items():
-        if value != tag:
+def _bare(part):
+    """``part`` without the spaces and punctuation (any script) at its ends."""
+    kept = [index for index, char in enumerate(part) if not (char.isspace() or unicodedata.category(char)[0] == 'P')]
+    return part[kept[0]:kept[-1] + 1] if kept else ''
+
+
+def _patterns():
+    snapshot = tuple(TAGS.items())
+    found = _line_patterns.get(snapshot)
+    if found is None:
+        found = tuple((tag, *_words(text)) for tag in ('error', 'ok') for key, value in snapshot if value == tag
+                      for text in all_values(key))
+        _line_patterns.clear()
+        _line_patterns[snapshot] = found
+    return found
+
+
+def log_tag(line):
+    """'error' or 'ok' when ``line`` is the text, in any language, of a key TAGS names, else None (ui_log.classify).
+
+    A line is a key's text when it starts with the text's literal start and the text's other literal parts follow
+    in order (the spaces and punctuation around a placeholder are ignored).  'error' keys are tried first."""
+    for tag, anchored, words in _patterns():
+        if not words or (anchored and not line.startswith(words[0])):
             continue
-        for text in all_values(key):
-            start = _literal_start(text)
-            if start and start not in found:
-                found.append(start)
-    return tuple(found)
-
-
-def sep(name) -> str:
-    """A joiner: sep('clause_sep') is '；' / '; ', sep('sentence_join') is '' / ' '."""
-    return t('common.' + name)
-
-
-def join_sentences(parts) -> str:
-    """zh: the parts joined with '；' (the stored form); en: each part ends with a full stop and
-    the parts are joined with sentence_join."""
-    return _join_sentences(language(), parts)
+        position = 0
+        for word in words:
+            position = line.find(word, position)
+            if position < 0:
+                break
+            position += len(word)
+        else:
+            return tag
+    return None
 
 
 def _join_sentences(language_, parts) -> str:
+    """zh: the parts joined with '；' (the stored form, JOIN); en: each part ends with a full stop and the parts
+    are joined with common.sentence_join (messages renders common.clauses with it)."""
     parts = [str(part) for part in parts]
     if language_ == 'zh':
         return JOIN.join(parts)
@@ -320,7 +339,7 @@ def _join_sentences(language_, parts) -> str:
 def label(group, value) -> str:
     """The label of a stored value of ``group`` (I18N.md 7); an unknown value is shown as str(value)."""
     try:
-        key = i18n_maps.GROUPS.get(group, {}).get(value)
+        key = GROUPS.get(group, {}).get(value)
     except TypeError:
         key = None
     if key is None:
@@ -330,5 +349,5 @@ def label(group, value) -> str:
 
 def choices(group) -> list:
     """[(stored value, label)] of ``group`` in menu order."""
-    return [(value, label(group, value)) for value in i18n_maps.GROUPS.get(group, {})]
+    return [(value, label(group, value)) for value in GROUPS.get(group, {})]
 

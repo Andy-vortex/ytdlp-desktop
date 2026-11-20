@@ -2,18 +2,18 @@
 
     python -X utf8 -B test_i18n_download.py
 
-Unit tests of the L1-A rewrites: the 清除未完成 header rendered from the job's numbers (8.7),
-classify with English lines (8.6), append_log localization and the proxy mask (8.6; since 1.8.0
-core lines arrive as messages and are shown with messages.show, MESSAGES.md 6.2 / 8.3), the start
-button compared with the running language's texts (8.7), the unfinished-row detail and the
-other 9.3 sites, the stats line that gives way to the task title (10.5), the sidebar status and
-the window title (8.5, 10.4); a quick English check that the download page, the log page and
-the sidebar show no Chinese except user data; set_busy and poll byte-identical to the F state
-(H3).  Smoke-mode windows (alpha 0, no frame), no network, no real engine.
+Unit tests of the L1-A rewrites: the title after 清除未完成 (2.0.0 S4: it never counts the unfinished
+links, so it stays as it is), classify with English lines (8.6), append_log localization and the proxy
+mask (8.6; since 1.8.0 core lines arrive as messages and are shown with messages.show, MESSAGES.md 6.2 /
+8.3), the start button compared with the running language's texts (8.7), the unfinished-row detail and
+the other 9.3 sites, the sidebar status and the window title (8.5, 10.4); a quick English check that the
+download page (its menus included), the log page and the sidebar show no Chinese except user data.
+(2.0.0 S4) The stats line and its room rules (10.5, ENV-1, ENV3-1) are gone with the line; the
+constants the tests read keep their Chinese
+values (H3; (2.0.0 S2 Q4) the SHA-256 pins of set_busy and poll are gone: test_busy_matrix and
+test_poll_order test what they do).  Smoke-mode windows (alpha 0, no frame), no network, no real engine.
 """
 import _sandbox
-import ast
-import hashlib
 import re
 import threading
 import time
@@ -26,29 +26,20 @@ import customtkinter as ctk
 import engine
 import formats
 import i18n
+import library_ui
 import messages
 import studio
 import ui_download
 import ui_log
+import ui_settings
 import ui_theme
 import updater
 from studio import StudioApp
 
 CJK = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
-# StudioApp.set_busy and StudioApp.poll of the F state (build/v170/fix-merged): sha256 of their
-# source text (ast.get_source_segment).  Protected blocks (H3): never edited by the language work.
-PROTECTED = {'set_busy': '2947d2da0755e1c42236e6e05225e7660a900cb42f4c5b7b85c49f6af87dead7',
-             'poll': 'ba3f5fb76cfd49aa2045eea313f4828b02a34abab7e2404d57a783f1601313cb'}
-
-
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.01)
-    return condition is None
+# (2.0.0 S3 W4) The expected app texts are read by key in a fixed language (S3-DESIGN.md 4.3): the test
+# pins which key and which params; the wording lives only in the catalog.
+from _sandbox import en_t, pump, zh_t
 
 
 class FakeRunner:
@@ -117,8 +108,10 @@ class AppCase(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------------------- 8.7
-class HeaderRewriteTests(AppCase):
-    """清除未完成 renders the header from the job's numbers (download.title.finished_cleared)."""
+class TitleAfterClearTests(AppCase):
+    """(2.0.0 S4, download-tasks 5.1) The title of a job that left links unfinished counts the successes only
+    (download.title.finished_n), so 清除未完成 never rewrites it (was: the header rendered again from the job's
+    numbers, download.title.finished_cleared); the "links kept" metrics line goes, the reason stays."""
 
     def clear(self, app):
         app.unfinished = [entry(1)]
@@ -143,82 +136,48 @@ class HeaderRewriteTests(AppCase):
         app.handle('done', {'success': success, 'failed': unfinished, 'files': [], 'cancelled': False,
                             'pending_urls': links[success:]})
 
-    def test_english_job_end_then_clear(self):
-        app = self.make_app('en')
-        self.finish(app, 1, 1)
-        self.assertEqual(app.job_summary, (1, 1))
-        self.assertEqual(ui_theme.full_text(app.current_title), 'Task finished · Succeeded: 1 · Unfinished: 1')
-        self.assertEqual(self.clear(app), 'Task finished · Succeeded: 1')
-        self.assertEqual(ui_theme.full_text(app.metrics), i18n.t('download.metrics.cleared'))
-
-    def test_chinese_job_end_then_clear_is_the_f_state_text(self):
-        app = self.make_app('zh')
-        self.finish(app, 2, 1)
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 2 条成功，1 条未完成')
-        self.assertEqual(self.clear(app), '任务结束 · 2 条成功')
-        self.assertEqual(ui_theme.full_text(app.metrics), ui_download.CLEARED_METRICS)
-
-    def test_only_the_unfinished_header_is_rewritten_in_both_languages(self):
-        for lang in ('en', 'zh'):
+    def test_job_end_then_clear_in_both_languages(self):
+        for lang, tr in (('en', en_t), ('zh', zh_t)):
             with self.subTest(lang=lang):
-                app = self.make_app(lang, visible=False)
-                self.addCleanup(self.close, app)
-                app.job_summary = None          # a header written without on_done: read with the template
-                for title, expected in (
-                        (i18n.t('download.title.finished_unfinished', success=3, unfinished=2),
-                         i18n.t('download.title.finished_cleared', success=3)),
-                        (i18n.t('download.title.finished_unfinished', success=12, unfinished=345),
-                         i18n.t('download.title.finished_cleared', success=12)),
-                        (i18n.t('download.title.stopped'), i18n.t('download.title.stopped')),
-                        (i18n.t('download.title.bot'), i18n.t('download.title.bot')),
-                        (i18n.t('download.title.done', success=2), i18n.t('download.title.done', success=2)),
-                        (i18n.t('download.title.finished_cleared', success=2),
-                         i18n.t('download.title.finished_cleared', success=2))):
-                    app.current_title.configure(text=title)
-                    self.assertEqual(self.clear(app), expected, title)
+                app = self.make_app(lang)
+                self.finish(app, 2, 1)
+                title = tr('download.title.finished_n', success=2)
+                self.assertEqual(ui_theme.full_text(app.current_title), title)
+                self.assertEqual(ui_theme.full_text(app.metrics), tr('download.metrics.finished_unfinished'))
+                self.assertEqual(self.clear(app), title, 'the title stays')
+                self.assertEqual(ui_theme.full_text(app.metrics), '', '"links kept" no longer holds')
+                # the failed row keeps its reason, marked as removed from the unfinished list
+                self.assertEqual(app.row_model[2]['chip'], tr('download.chip.cleared'))
+                self.assertEqual(app.row_model[2]['detail'],
+                                 f"{tr('download.detail.cleared')} · {tr('core.reason.network')}")
+                self.assertFalse(app.retry_button.winfo_manager() or app.task_menu.winfo_manager())
                 self.close(app)
 
-    def test_a_media_title_is_never_cut(self):
+    def test_no_title_is_rewritten(self):
         app = self.make_app('en', visible=False)
-        for title in ('Task finished · Succeeded: x · Unfinished: 1', 'My song · Unfinished: 2',
-                      '任务结束 · 1 条成功，1 条未完成'):
+        for title in (i18n.t('download.title.finished_n', success=3), i18n.t('download.title.stopped'),
+                      i18n.t('download.title.bot'), i18n.t('download.title.done', success=2),
+                      'Task finished · Succeeded: x · Unfinished: 1', 'My song · Unfinished: 2'):
             app.current_title.configure(text=title)
             self.assertEqual(self.clear(app), title)
 
 
 # ---------------------------------------------------------------------------------------- 8.6
-def classify_160(line):
-    """ui_log.classify of 1.6.0 / the F state (the reference for Chinese lines)."""
-    if line.startswith('ERROR'):
-        return 'error'
-    if line.startswith('WARNING'):
-        return 'warn'
-    if re.match(r'^\[[\w:]+\]', line) or 'Deleting original file' in line:
-        return 'dim'
-    if line.startswith(ui_log._ERROR_STARTS) or (line.startswith('任务结束') and '未完成' in line):
-        return 'error'
-    if line.startswith(('文件已保存', '下载完成')):
-        return 'ok'
-    return 'app'
-
-
 class ClassifyTests(unittest.TestCase):
     ENGLISH = [
         ('ERROR: [youtube] abc: Video unavailable', 'error'),
         ('WARNING: [youtube] abc: Some formats may be missing', 'warn'),
         ('[youtube] abc: Downloading webpage', 'dim'),
         ('[ExtractAudio] Deleting original file a.webm', 'dim'),
-        ('Task finished · Succeeded: 1 · Unfinished: 1', 'error'),
-        ('Task finished · Succeeded: 3', 'app'),
-        ('Task started · Links: 3 · MP3 · 320 kbps · Save to D:\\Music', 'app'),
-        ('File saved: D:\\Music\\a.m4a', 'ok'),
-        ('Files saved: double-click a task to play it; Ctrl+E shows it in its folder.', 'ok'),
-        ('Download complete · Succeeded: 2', 'ok'),
-        ('Download complete · Succeeded: 2 · Skipped: 1', 'ok'),
-        ('Error: the page is gone', 'error'),
-        ('Interface error: ValueError: x', 'error'),
-        ('Ready: yt-dlp 2026.11.03; FFmpeg, ffprobe and Deno are built in.', 'app'),
-        ('Link 2 / 8: https://example.org/a', 'app'),
+        (en_t('download.title.finished_n', success=1), 'error'),
+        (en_t('download.title.all_skipped', skipped=3), 'app'),
+        (en_t('log.task_started', count=3, format=en_t('format.audio_mp3'), folder='D:\\Music'), 'app'),
+        (en_t('log.file_saved', path='D:\\Music\\a.m4a'), 'ok'),
+        (en_t('download.title.done', success=2), 'ok'),
+        (en_t('core.engine.error', error='the page is gone'), 'error'),
+        (en_t('log.ui_error', kind='ValueError', value='x'), 'error'),
+        (en_t('log.ready', version='2026.11.03'), 'app'),
+        (en_t('log.link_n', index=2, total=8, url='https://example.org/a'), 'app'),
     ]
 
     def test_english_lines(self):
@@ -229,27 +188,46 @@ class ClassifyTests(unittest.TestCase):
 
     def test_every_tagged_key_in_english(self):
         with _sandbox.language('en'):
-            for key, tag in __import__('i18n_log').TAGS.items():
+            for key, tag in i18n.TAGS.items():
                 text = i18n.t(key, **{name: '1' for name in re.findall(r'\{(\w+)\}', i18n.CATALOG['en'][key])})
                 self.assertEqual(ui_log.classify(text), tag, f'{key}: {text!r}')
 
+    # (2.0.0 S4 A1) The colours the 1.6.0 rule gave these Chinese lines (classify_160, gone with ui_log's Chinese
+    # starts): classify now finds them by the key whose text they are (i18n.TAGS); every colour is the same.
+    # (2.0.0 S4 B1) download.title.finished_n is the title of a job that left links unfinished: red, as that
+    # job's title always was.  (S4 stage C, deferred-to-C 3) The app's lines are rendered from their keys, so the
+    # table pins the colours and not the wording; only the engine's own lines are written out.
+    CHINESE = [
+        (zh_t('core.engine.item_unfinished', code=1), 'error'), (zh_t('download.title.finished_n', success=1), 'error'),
+        (zh_t('log.file_saved', path='a.m4a'), 'ok'), (zh_t('download.title.done', success=2), 'ok'),
+        (zh_t('download.title.all_skipped', skipped=2), 'app'), (zh_t('log.ready', version='2026.11.03'), 'app'),
+        (zh_t('core.engine.error', error='页面不存在'), 'error'), (zh_t('log.ui_error', kind='ValueError', value='x'), 'error'),
+        (zh_t('log.settings_not_saved'), 'error'),
+        ('[youtube] abc: Downloading webpage', 'dim'), ('ERROR: x', 'error'), ('WARNING: y', 'warn'),
+        (zh_t('log.task_started', count=3, format='MP3', folder='D:/x'), 'app'),
+    ]
+
     def test_chinese_lines_keep_the_1_6_0_rule(self):
-        lines = ['此链接未完成（退出码 1），继续处理队列中的下一项。', '任务结束 · 1 条成功，1 条未完成', '任务结束 · 1 条成功',
-                 '文件已保存：a.m4a', '下载完成 · 2 条成功', '就绪：yt-dlp 2026.11.03；FFmpeg、ffprobe 和 Deno 已内置。',
-                 '错误：页面不存在', '界面错误：ValueError: x', '设置未保存：无法写入 settings.json，详情见日志文件。',
-                 '[youtube] abc: Downloading webpage', 'ERROR: x', 'WARNING: y', '开始任务：3 条链接']
-        for key in __import__('i18n_log').TAGS:
+        for lang in ('en', 'zh'):        # classify does not depend on the running language
+            with _sandbox.language(lang):
+                for line, tag in self.CHINESE:
+                    self.assertEqual(ui_log.classify(line), tag, line)
+        # every tagged key's Chinese line gets its tag (the 1.6.0 rule gave the same to all of them before S4;
+        # the six kept-aside lines of S2 are tagged 'error' since S4, log.md Q3)
+        for key, tag in i18n.TAGS.items():
             zh = i18n.CATALOG['zh'][key]
-            lines.append(zh.format(**{name: '1' for name in re.findall(r'\{(\w+)\}', zh)}))
-        for line in lines:
-            self.assertEqual(ui_log.classify(line), classify_160(line), line)
+            line = zh.format(**{name: '1' for name in re.findall(r'\{(\w+)\}', zh)})
+            self.assertEqual(ui_log.classify(line), tag, f'{key}: {line!r}')
+        for area in ('library', 'unfinished', 'archive'):
+            for name in ('kept_aside', 'cannot_set_aside'):
+                self.assertEqual(i18n.TAGS[f'core.{area}.{name}'], 'error')
 
 
 # ---------------------------------------------------------------------------------------- 8.6, 8.7, 9.3
 class ShellAndLogTests(AppCase):
 
     def test_append_log_localizes_and_masks_the_proxy(self):
-        for lang, mask in (('en', '[proxy]'), ('zh', '[代理]')):
+        for lang, mask in (('en', en_t('core.proxy_mask')), ('zh', zh_t('core.proxy_mask'))):
             with self.subTest(lang=lang):
                 app = self.make_app(lang, visible=False)
                 written = []
@@ -258,7 +236,7 @@ class ShellAndLogTests(AppCase):
                 app.proxy.set('http://127.0.0.1:8899')
                 # (1.8.0) the core line is the message the engine emits (its value is the 1.7.0 text)
                 core = engine.msg('core.engine.item_unfinished', code=1)
-                self.assertEqual(core, '此链接未完成（退出码 1），继续处理队列中的下一项。')
+                self.assertEqual(core, zh_t('core.engine.item_unfinished', code=1))
                 raw = '[download]  12.5% of 3.00MiB at 1.2MiB/s ETA 00:02'
                 for line in (core, raw, '代理 http://127.0.0.1:8899 无响应', engine.NETWORK_REASON):
                     app.append_log(line)
@@ -266,8 +244,8 @@ class ShellAndLogTests(AppCase):
                 self.assertEqual(app.log_buffer, expected)
                 self.assertEqual(written, expected, 'download.log holds what the owner saw')
                 if lang == 'en':
-                    self.assertTrue(app.log_buffer[0].startswith('This link did not finish (exit code 1)'))
-                    self.assertEqual(app.log_buffer[3], "Can't reach the site; check your network or VPN")
+                    self.assertEqual(app.log_buffer[0], en_t('core.engine.item_unfinished', code=1))
+                    self.assertEqual(app.log_buffer[3], en_t('core.reason.network'))
                 else:
                     self.assertEqual(app.log_buffer[0], core)
                 app.flush_log()
@@ -294,48 +272,58 @@ class ShellAndLogTests(AppCase):
                 app.refresh_shell()
                 self.assertEqual(app.start_button.cget('text'), i18n.t('download.start'))
                 self.close(app)
-        self.assertEqual(i18n.t('download.start'), '开始下载')
+        self.assertEqual(i18n.t('download.start'), zh_t('download.start'), 'the language is zh again')
 
     def test_sidebar_status_window_title_and_badges(self):
         # (the settings page writes the badge again with its own engine check: L1-B's code, not run here)
-        with mock.patch.object(studio, 'engine_version', return_value=updater.BUILTIN),                 mock.patch.object(StudioApp, 'settings_startup', lambda self: None),                 mock.patch.object(StudioApp, 'refresh_engine_labels', lambda self: None):
+        with mock.patch.object(studio, 'engine_version', return_value=updater.BUILTIN),                 mock.patch.object(ui_settings, 'engine_version', return_value=updater.BUILTIN),                 mock.patch.object(StudioApp, 'settings_startup', lambda self: None),                 mock.patch.object(StudioApp, 'refresh_engine_labels', lambda self: None):
             app = self.make_app('en')
-        self.assertEqual(app.title(), 'YT-DLP Downloader')
-        self.assertEqual(app.engine_badge.cget('text'), 'yt-dlp built-in')
-        self.assertTrue(self.logged(app)[0].startswith('Ready: yt-dlp built-in;'), self.logged(app)[:2])
-        app.show_app_badge(True)
-        self.assertEqual(app.app_badge.cget('text'), f'v{engine.APP_VERSION} · new engine')
-        app.show_app_badge(False)
-        self.assertEqual(app.app_badge.cget('text'), f'v{engine.APP_VERSION}')
+        self.assertEqual(app.title(), en_t('app.title'))
+        # (2.0.0 S4 A2) The yt-dlp version is on the settings page only (version_label); the sidebar shows the
+        # 'Update available' link while a newer engine is offered, and its status is one word that is never cut.
+        self.assertEqual(app.version_label.cget('text'), 'yt-dlp ' + en_t('core.update.builtin'))
+        self.assertFalse(hasattr(app, 'engine_badge') or hasattr(app, 'app_badge'))
+        self.assertEqual(self.logged(app)[0], en_t('log.ready', version=en_t('core.update.builtin')),
+                         self.logged(app)[:2])
+        self.assertEqual(app.engine_notice.cget('text'), en_t('shell.engine_update'))
+        self.assertEqual(app.engine_notice.winfo_manager(), '')
+        app.show_engine_notice(True)
+        self.assertEqual(app.engine_notice.winfo_manager(), 'grid')
+        app.show_engine_notice(False)
+        self.assertEqual(app.engine_notice.winfo_manager(), '')
         links = [f'https://example.org/{number}' for number in range(456)]
         app.populate_queue(links)
         app.operation = 'download'
         app.set_busy(True)
         app.handle('item', {'index': 123, 'total': 456, 'url': links[122]})
         pump(app, timeout=0.2)
-        self.assertEqual(ui_theme.full_text(app.side_status), 'Item 123 / 456')
-        self.assertEqual(app.side_status.cget('text'), 'Item 123 / 456', 'fits the sidebar without a cut')
-        self.assertTrue(app.title().startswith('123/456 — YT-DLP Downloader'), app.title())
-        self.assertTrue(ui_theme.full_text(app.current_title).startswith('Downloading 123 / 456'))
-        app.side_status.configure(text='A status that is much too long for the sidebar of the window')
-        pump(app, timeout=0.2)
-        self.assertTrue(app.side_status.cget('text').endswith('…'), 'the status is cut with an ellipsis')
+        self.assertEqual(app.side_status.cget('text'), en_t('shell.status.downloading'))
+        self.assertIsNone(getattr(app.side_status, '_fit_text', None), 'the status is not managed by fit')
+        self.assertTrue(app.title().startswith(f"123/456 — {en_t('app.title')}"), app.title())
+        self.assertTrue(ui_theme.full_text(app.current_title).startswith(
+            en_t('download.title.downloading_n', index=123, total=456)))
         app.set_window_title(i18n.t('window.title.unfinished', unfinished=2))
-        self.assertEqual(app.title(), '✗ Unfinished: 2 — YT-DLP Downloader')
+        self.assertEqual(app.title(), f"{en_t('window.title.unfinished', unfinished=2)} — {en_t('app.title')}")
 
     def test_unfinished_rows_show_the_reason_and_format_in_the_running_language(self):
-        entries = [entry(1, 'blocked', 'audio_mp3'), entry(2, 'failed', 'no-such-format', mode='音频 · FLAC'),
-                   entry(3, 'stopped', 'video_mp4')]
-        expected = {'en': ['YouTube check · MP3 · 320 kbps', 'Failed last time · Audio · FLAC',
-                           'Stopped · MP4 · most compatible (H.264)'],
-                    'zh': ['YouTube 验证 · MP3 · 320 kbps', '上次失败 · 音频 · FLAC', '已停止 · MP4 · 兼容优先（H.264）']}
+        entries = [entry(1, 'blocked', 'audio_mp3'), entry(2, 'failed', 'no-such-format', mode='audio_flac'),
+                   entry(3, 'stopped', 'video_mp4'), entry(4, 'unstarted', 'audio_mp3'), entry(5, 'odd', 'audio_mp3')]
+        # (2.0.0 S3 W4, R4) download.detail.unfinished of the reason word (ui_download.REASON_KEYS) and the
+        # format label (format.<id>, or format.<stored mode> when the format key is unknown; 2.0.0 S4 A1: one name)
+        parts = [('download.reason.blocked', 'format.audio_mp3'), ('download.reason.failed', 'format.audio_flac'),
+                 ('download.chip.stopped', 'format.video_mp4'), ('download.chip.unstarted', 'format.audio_mp3'),
+                 ('download.reason.failed', 'format.audio_mp3')]
+        self.assertEqual([ui_download.REASON_KEYS.get(e['reason'], 'download.reason.failed') for e in entries],
+                         [reason for reason, _label in parts], 'the keys the rows use are the ones REASON_KEYS names')
+        expected = {lang: [tr('download.detail.unfinished', reason=tr(reason), format=tr(label)) for reason, label in parts]
+                    for lang, tr in (('en', en_t), ('zh', zh_t))}
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
                 app = self.make_app(lang, visible=False)
                 app.unfinished = list(entries)
                 app.show_unfinished_rows()
                 self.assertEqual([model['detail'] for model in app.row_model], expected[lang])
-                self.assertEqual([model['entry']['options'].get('mode') for model in app.row_model][1], '音频 · FLAC',
+                self.assertEqual([model['entry']['options'].get('mode') for model in app.row_model][1], 'audio_flac',
                                  'the entry keeps its stored mode')
                 self.assertEqual(app.row_model[0]['state'], 'unfinished')
                 self.assertEqual(app.rows[0]['badge'].cget('text'), i18n.label('row_state', 'unfinished'))
@@ -343,10 +331,9 @@ class ShellAndLogTests(AppCase):
 
     def test_task_start_log_line_and_stored_job_title(self):
         app = self.make_app('en', visible=False)
-        mode = formats.by_id('audio_mp3').mode
-        app.format.set(formats.by_id('audio_mp3').label)
-        app.on_format()
-        self.assertEqual(app.mode.get(), mode, 'the stored mode stays the canonical Chinese string')
+        mode = formats.by_id('audio_mp3').id
+        app.format_menu._dropdown_callback(i18n.t('format.audio_mp3'))
+        self.assertEqual(app.mode.get(), mode, 'the menu stores the preset id')
         app.urls.insert('1.0', 'https://example.org/a\nhttps://example.org/b')
         created = []
         real_create = app.library.create_job
@@ -358,16 +345,13 @@ class ShellAndLogTests(AppCase):
                 mock.patch.object(app.library, 'create_job', side_effect=create):
             app.start()
             pump(app, lambda: not app.busy, timeout=5)
-        started = [line for line in self.logged(app) if line.startswith('Task started')]
+        head = en_t('log.task_started', count=2, format=en_t('format.audio_mp3'), folder='')
+        started = [line for line in self.logged(app) if line.startswith(head)]
         self.assertEqual(len(started), 1, self.logged(app))
-        self.assertTrue(started[0].startswith('Task started · Links: 2 · MP3 · 320 kbps · Save to '), started[0])
-        self.assertEqual(created, [f'2 条 · {mode}'], 'the history keeps the canonical title (H2)')
-        # (1.8.0, D-F45) the title is a message: its key travels with the stored zh text; en shows it in English
-        self.assertEqual((created[0].key, created[0].params['count'], created[0].params['mode']),
-                         ('value.job_title.placeholder', 2, mode))
-        self.assertIsInstance(created[0].params['mode'], messages.Value)
-        self.assertEqual(messages.show(created[0]), i18n.t('value.job_title.placeholder', count=2,
-                                                           mode=i18n.label('mode', mode)))
+        # (2.0.0 S2 P2) the stored title is '' until the first media title; the history shows the first link
+        self.assertEqual(created, [''])
+        self.assertEqual(library_ui.history_title(app.library.history()[0]),
+                         en_t('value.job_title.multi', title='example.org/a', count=2))
 
     def test_row_reasons_are_localized_and_the_engine_error_stays_raw(self):
         app = self.make_app('en', visible=False)
@@ -385,133 +369,25 @@ class ShellAndLogTests(AppCase):
         app.handle('item', {'index': 3, 'total': 3, 'url': links[2]})
         app.handle('waiting', {'reason': engine.msg('core.wait.pace'), 'seconds': 90})
         app.render_wait()
-        self.assertEqual(app.row_model[0]['detail'], "Can't reach the site; check your network or VPN")
+        self.assertEqual(app.row_model[0]['detail'], en_t('core.reason.network'))
         self.assertEqual(app.row_model[0]['error'], raw)
-        self.assertEqual(app.row_reason(0), "Can't reach the site; check your network or VPN\n\nEngine error as reported:\n"
-                         + raw)
+        self.assertEqual(app.row_reason(0), en_t('core.reason.network')
+                         + en_t('dialog.reason.engine_error', error=raw))
         self.assertEqual(app.row_model[1]['detail'],
                          i18n.t('download.detail.stale_update', reason=i18n.t('core.reason.stale')))
-        self.assertTrue(app.row_model[1]['detail'].endswith('; you can update it in Settings'))
-        self.assertTrue(ui_theme.full_text(app.metrics).startswith('Download pause · 01:30 left'),
+        self.assertEqual(app.row_model[1]['detail'],
+                         en_t('download.detail.stale_update', reason=en_t('core.reason.stale')), 'in English')
+        self.assertTrue(ui_theme.full_text(app.metrics).startswith(
+            en_t('download.metrics.wait', reason=en_t('core.wait.pace'), time='01:30')),
                         ui_theme.full_text(app.metrics))
-        self.assertTrue(ui_theme.full_text(app.side_status).startswith('Waiting '))
+        self.assertTrue(app.side_status.cget('text').startswith(en_t('shell.status.waiting', time='')))
         app.proxy.set('http://127.0.0.1:8899')
         app.job_options = (engine.Options(_sandbox.out('dl'), proxy='http://127.0.0.1:8899'), {})
         app.handle('item_done', {'index': 3, 'success': False, 'cancelled': False, 'files': 0, 'bot_check': False,
                                  'reason': engine.NETWORK_REASON})
-        self.assertEqual(app.row_model[2]['detail'], 'Cannot reach the proxy or the site; check the proxy address')
+        self.assertEqual(app.row_model[2]['detail'], en_t('download.reason.proxy'))
         stored = ui_download.history_value('item_done', {'reason': engine.NETWORK_REASON}, True)
         self.assertEqual(stored['reason'], ui_download.PROXY_REASON, 'the history stores the canonical text')
-
-
-# ---------------------------------------------------------------------------------------- 10.5
-class StatsRoomTests(AppCase):
-    """The running stats drop their unfinished part when the task title would get less than 160 px."""
-
-    def scene(self, app, done, waiting, unfinished):
-        links = [f'https://example.org/job-{number}' for number in range(done + 1 + waiting)]
-        app.unfinished = [entry(number) for number in range(unfinished)]
-        app.populate_queue(links)
-        app.show_unfinished_tail()
-        app.operation = 'download'
-        app.set_busy(True)
-        for number in range(done):
-            app.row_model[number]['state'] = 'done'
-        app.update_row(done, state='active', detail='')
-        app.active_index = done
-        app.current_title.configure(text=app._active_title(done + 1, len(links)))
-        app.refresh_failed_button()
-        app.refresh_stats()
-        pump(app, timeout=0.4)
-        scale = ctk.ScalingTracker.get_widget_scaling(app)
-        return app.current_title.winfo_width() / scale
-
-    def test_title_keeps_160_px(self):
-        for lang in ('en', 'zh'):
-            for done, waiting, unfinished in ((12, 37, 4), (120, 335, 123)):
-                with self.subTest(lang=lang, counts=(done, waiting, unfinished)):
-                    app = self.make_app(lang)
-                    title = self.scene(app, done, waiting, unfinished)
-                    shown = app.queue_stats.cget('text')
-                    full, short = app.stats_texts
-                    self.assertEqual(full, short + i18n.t('download.stats.running_unfinished', unfinished=unfinished))
-                    self.assertIn(shown, (full, short))
-                    self.assertGreaterEqual(title, ui_download.TITLE_MIN - 1, (lang, shown, title))
-                    self.assertEqual(app.retry_button.cget('text'),
-                                     i18n.t('download.retry_unfinished_n', count=unfinished))
-                    if lang == 'zh':
-                        self.assertEqual(shown, full, 'Chinese never drops the part at 1000x740')
-                    if lang == 'en' and (done, unfinished) == (12, 4):
-                        self.assertEqual(shown, '12 done · 1 active · 37 waiting')
-                    self.close(app)
-
-    def test_a_wider_window_shows_the_full_stats_again(self):
-        app = self.make_app('en')
-        self.scene(app, 12, 37, 4)
-        self.assertEqual(app.queue_stats.cget('text'), app.stats_texts[1])
-        app.geometry('1600x900+0+0')
-        pump(app, lambda: app.queue_stats.cget('text') == app.stats_texts[0], timeout=2)
-        self.assertEqual(app.queue_stats.cget('text'), '12 done · 1 active · 37 waiting · 4 unfinished')
-
-
-class FinishedStatsRoomTests(AppCase):
-    """(final fix round 1, ENV-1) A finished job's stats follow the room rule too: after a job that ended
-    with the YouTube check, after 清除未完成 and while a collection or an update runs after it, the title
-    keeps 160 px and the stop button ends inside the task card (1000x740)."""
-
-    def inside(self, app):
-        card = app.task_card
-        edge = card.winfo_rootx() + card.winfo_width() - card._apply_widget_scaling(card.cget('border_width'))
-        return app.stop_button.winfo_rootx() + app.stop_button.winfo_width() <= edge + 1
-
-    def title_px(self, app):
-        pump(app, timeout=0.4)
-        return app.current_title.winfo_width() / ctk.ScalingTracker.get_widget_scaling(app)
-
-    def test_finished_job_cleared_then_collecting(self):
-        import snapshot_ui
-        for lang in ('en', 'zh'):
-            with self.subTest(lang=lang):
-                app = self.make_app(lang)
-                snapshot_ui._finished_bot_job(app)
-                forms = app.final_stats_forms()
-                self.assertEqual(forms[0], app.final_stats())
-                self.assertEqual(forms[-1], i18n.t('download.stats.final_short', done=3, total=12))
-                self.assertEqual(app.stats_texts, (forms[0], tuple(forms[1:])))
-                scenes = [('ended', self.title_px(app), app.queue_stats.cget('text'), self.inside(app))]
-                with mock.patch.object(ui_download.messagebox, 'askyesno', return_value=True):
-                    app.clear_unfinished()
-                scenes.append(('cleared', self.title_px(app), app.queue_stats.cget('text'), self.inside(app)))
-                cleared_forms = app.final_stats_forms()
-                self.assertTrue(cleared_forms[0].endswith(i18n.t('download.stats.final_cleared', cleared=8)))
-                for operation in ('collect', 'update'):
-                    app.operation = operation
-                    app.set_busy(True)
-                    scenes.append((operation, self.title_px(app), app.queue_stats.cget('text'), self.inside(app)))
-                    self.assertEqual(app.stop_button.cget('text'), i18n.t(f'download.foreign.{operation}.stop'))
-                    app.set_busy(False)
-                for name, title, shown, inside in scenes:
-                    self.assertGreaterEqual(title, ui_download.TITLE_MIN - 1, (lang, name, shown))
-                    self.assertTrue(inside, (lang, name, 'the stop button ends inside the task card'))
-                    self.assertIn(shown, app.final_stats_forms() if name != 'ended' else forms, (lang, name))
-                if lang == 'zh':
-                    # Chinese keeps the full line at 1000x740 (its 1.6.0 behaviour)
-                    self.assertEqual([shown for _n, _t, shown, _i in scenes],
-                                     [forms[0]] + [cleared_forms[0]] * 3)
-                else:
-                    self.assertNotEqual(scenes[2][2], cleared_forms[0], 'English drops the tails while collecting')
-                app.geometry('1600x900+0+0')
-                if lang == 'zh':
-                    pump(app, lambda: app.queue_stats.cget('text') == app.stats_texts[0], timeout=2)
-                    self.assertEqual(app.queue_stats.cget('text'), cleared_forms[0], 'a wide window shows it in full')
-                else:
-                    # (final fix round 3, ENV3-1) English: the whole title comes first.  The page content stops
-                    # growing at about 1048 px of header, where the YouTube-check title and the full line do not
-                    # fit together (13 px short): the title is shown whole beside the line without its tails.
-                    pump(app, lambda: app.queue_stats.cget('text') == cleared_forms[1], timeout=2)
-                    self.assertEqual(app.queue_stats.cget('text'), cleared_forms[1])
-                    self.assertEqual(app.current_title.cget('text'), ui_theme.full_text(app.current_title))
-                self.close(app)
 
 
 # ---------------------------------------------------------------------------------------- 13 (A)
@@ -543,19 +419,17 @@ class EnglishPagesTests(AppCase):
         roots = [app.pages['download'], app.pages['logs'], app.nav_buttons['download'].master]
         for root in roots:
             for widget, value in self.shown(root):
-                if widget is app.urls._textbox or widget is getattr(app.output_entry, '_entry', None):
-                    continue        # the link box and the save folder: user data
+                if widget is app.urls._textbox or widget is app.output_button or widget.master is app.output_button:
+                    continue        # the link box and the download folder: user data
                 if CJK.search(value):
                     found.append(f'{widget}: {value!r}')
         found += [f'title: {app.title()!r}'] if CJK.search(app.title()) else []
         return found
 
-    def menu_labels(self, app, build):
-        with mock.patch.object(app, '_popup'):
-            build()
-        menu = app.row_menu
-        return [menu.entrycget(index, 'label') for index in range(menu.index('end') + 1)
-                if menu.type(index) == 'command']
+    @staticmethod
+    def menu_labels(items):
+        """(2.0.0 S4) The labels of a menu, from its generator (*_menu_items), without opening it."""
+        return [item.label for item in items if item is not ui_theme.SEPARATOR]
 
     def test_idle_running_and_finished_scenes(self):
         app = self.make_app('en')
@@ -590,10 +464,11 @@ class EnglishPagesTests(AppCase):
         app.flush_log()
         pump(app, timeout=0.3)
         self.assertEqual(self.chinese(app), [], 'running')
-        self.assertTrue(all(CJK.search(label) is None for label in
-                            self.menu_labels(app, lambda: app.row_context(mock.Mock(x_root=0, y_root=0), 1))))
-        self.assertTrue(all(CJK.search(label) is None for label in
-                            self.menu_labels(app, lambda: app._box_menu(mock.Mock(x_root=0, y_root=0)))))
+        menus = {'row': self.menu_labels(app.row_menu_items(1)), 'skipped row': self.menu_labels(app.row_menu_items(2)),
+                 'link': self.menu_labels(app.link_menu_items()), 'task': self.menu_labels(app.task_menu_items())}
+        self.assertEqual([len(labels) for labels in menus.values()], [6, 6, 4, 1])   # task: 清除未完成 (final polish)
+        for name, labels in menus.items():
+            self.assertEqual([label for label in labels if CJK.search(label)], [], name)
         app.handle('done', {'success': 1, 'failed': 1, 'files': [], 'cancelled': False, 'bot_check': True,
                             'pending_urls': links[1:]})
         app.arm_bot_retry(1)
@@ -613,112 +488,34 @@ class EnglishPagesTests(AppCase):
     def test_labeled_menus_keep_the_stored_values(self):
         app = self.make_app('en', visible=False)
         values = app.format_menu.stored_values
-        self.assertEqual(values, [formats.by_id(i).label for i in formats.MENU_ORDER])
+        self.assertEqual(values, list(formats.MENU_ORDER))      # (2.0.0 S4 A1) the menu's values are the preset ids
         for value in values:
-            label = i18n.label('format', value)
+            label = i18n.t('format.' + value)
             self.assertIsNone(CJK.search(label), label)
             app.format_menu._dropdown_callback(label)
-            self.assertEqual(app.format.get(), value)
-            self.assertEqual(app.mode.get(), formats.by_label(value).mode)
-        app.format.set(formats.by_id('video_mp4').label)
+            self.assertEqual(app.mode.get(), value)
+        app.mode.set('video_mp4')
         app.on_format()
-        app.quality_menu._dropdown_callback('Best')
+        app.quality_menu._dropdown_callback(en_t('value.resolution.best'))
         self.assertEqual(app.resolution.get(), engine.RESOLUTIONS[0])
         app.quality_menu._dropdown_callback('1080p')
         self.assertEqual(app.resolution.get(), '1080p')
-        self.assertGreaterEqual(app.format_menu.cget('width'), 250)
+        # (2.0.0 S4 A1) as wide as its longest name needs (the 250 floor went with download-input 7.2)
+        self.assertEqual(app.format_menu.cget('width'),
+                         ui_theme.menu_width(app.format_menu.master, [i18n.t('format.' + i) for i in formats.MENU_ORDER]))
 
 
 # ------------------------------------------------------------------------------ final fix round 3
 class FinalFixRound3Tests(AppCase):
-    """(ENV3-1) English: a finished job's stats form is chosen by the title and a title that does not
-    fit shows a shorter form whole; Chinese keeps its header.  (SWEEP-1, SWEEP-2) core error texts of
-    the reason dialog and of the unfinished-list dialogs in the running language."""
-
-    def finish(self, app, total, done, unfinished):
-        links = [f'https://www.youtube.com/watch?v=r3{n:09d}' for n in range(total)]
-        app.unfinished = []
-        app.populate_queue(links)
-        app.operation = 'download'
-        app.set_busy(True)
-        for number, url in enumerate(links, 1):
-            app.handle('item', {'index': number, 'total': total, 'url': url})
-            app.handle('item_done', {'index': number, 'success': number <= done, 'cancelled': False,
-                                     'files': int(number <= done), 'bot_check': False,
-                                     **({} if number <= done else {'reason': engine.NETWORK_REASON})})
-        app.handle('done', {'success': done, 'failed': unfinished, 'files': [], 'cancelled': False,
-                            'pending_urls': links[done:], 'bot_check': False, 'archive_errors': []})
-        app.unfinished = [{'url': url, 'key': 'youtube:' + url[-11:], 'format': 'audio_best', 'reason': 'failed',
-                           'title': '', 'error': '', 'time': n, 'options': {}} for n, url in enumerate(links[done:])]
-        app.show_unfinished_tail()
-        app.refresh_failed_button()
-        app.refresh_stats(final=app.final_stats())
-        pump(app, timeout=0.4)
-
-    def header(self, app, size):
-        app.geometry(size + '+0+0')
-        pump(app, timeout=0.5)
-        scale = ctk.ScalingTracker.get_widget_scaling(app)
-        return (app.current_title.cget('text'), ui_theme.full_text(app.current_title),
-                app.queue_stats.cget('text'), app.current_title.winfo_width() / scale)
-
-    def test_env3_1_english_finished_titles_are_never_a_fragment(self):
-        app = self.make_app('en')
-        self.finish(app, 4, 3, 1)
-        full = i18n.t('download.title.finished_unfinished', success=3, unfinished=1)
-        forms = app.final_stats_forms()
-        shown, title, stats, small = self.header(app, '1000x740')
-        self.assertEqual(title, full, 'the full title stays the label text')
-        self.assertEqual(shown, 'Task finished · Unfinished: 1', 'a shorter form, whole, instead of a fragment')
-        self.assertEqual(stats, forms[-1], 'the shortest stats leave the title the most room')
-        shown, title, stats, large = self.header(app, '1120x810')
-        self.assertEqual(shown, full, 'shown in full at 1120x810')
-        self.assertGreaterEqual(large, small, 'a wider window never gives the title less room')
-        shown, title, stats, _ = self.header(app, '1600x900')
-        self.assertEqual((shown, stats), (full, forms[0]), 'a wide window shows both in full')
-        # three-digit counts: the shortest form 'Task finished' (the counts are beside it)
-        self.finish(app, 240, 120, 120)
-        shown, title, stats, _ = self.header(app, '1000x740')
-        self.assertEqual(shown, 'Task finished')
-        self.assertEqual(stats, i18n.t('download.stats.final_short', done=120, total=240))
-        self.assertEqual(app.retry_button.cget('text'), i18n.t('download.retry_unfinished_n', count=120))
-        # a successful job and one that skipped links
-        self.finish(app, 3, 3, 0)
-        shown, title, stats, _ = self.header(app, '1000x740')
-        self.assertEqual(shown, title, 'Download complete · Succeeded: 3 in full')
-        self.assertNotIn('…', shown)
-        # a new title (a collection starts) measures the room again: its title is shown in full
-        app.geometry('1120x810+0+0')
-        self.finish(app, 4, 3, 1)
-        app.operation = 'collect'
-        app.set_busy(True)
-        shown, title, stats, _ = self.header(app, '1120x810')
-        self.assertEqual(shown, i18n.t('download.foreign.collect.title'))
-        app.set_busy(False)
-        shown, title, stats, _ = self.header(app, '1120x810')
-        self.assertEqual(shown, full)
-        # 清除未完成: 'Task finished · Succeeded: 3' (with 'Task finished' as its shorter form)
-        with mock.patch.object(ui_download.messagebox, 'askyesno', return_value=True):
-            app.clear_unfinished()
-        shown, title, stats, _ = self.header(app, '1000x740')
-        self.assertEqual(title, i18n.t('download.title.finished_cleared', success=3))
-        self.assertIn(shown, (title, 'Task finished'))
-
-    def test_env3_1_chinese_header_keeps_the_round_1_rule(self):
-        app = self.make_app('zh')
-        self.finish(app, 4, 3, 1)
-        self.assertIsNone(getattr(app.current_title, '_fit_alternatives', None), 'no shorter forms in Chinese')
-        self.assertFalse(app.stats_title_first)
-        for size in ('1000x740', '1120x810'):
-            shown, title, stats, _ = self.header(app, size)
-            self.assertEqual((shown, title, stats), ('任务结束 · 3 条成功，1 条未完成', '任务结束 · 3 条成功，1 条未完成',
-                                                     '成功 3  /  未完成 1  /  共 4'), size)
+    """(SWEEP-1, SWEEP-2) core error texts of the reason dialog and of the unfinished-list dialogs in the
+    running language.  (2.0.0 S4) The ENV3-1 cases (a finished job's stats form chosen by the title, shorter
+    title forms) went with the stats line: the title has a line of its own (test_page_download)."""
 
     def test_sweep_1_the_error_of_a_link_that_could_not_start_reads_english(self):
         missing = 'C:\\Missing\\cookies.txt'
         # (1.8.0) the item's error is the message build_command raised (its value is the 1.7.0 text)
         core = engine.msg('core.cookies.missing', file=missing)
-        self.assertEqual(core, f'找不到 cookies 文件：{missing}\n请在“偏好设置 → 网络”中重新选择。')
+        self.assertEqual(core, zh_t('core.cookies.missing', file=missing))
         raw = 'ERROR: [generic] a: Unable to download webpage: HTTP Error 404'
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
@@ -733,18 +530,17 @@ class FinalFixRound3Tests(AppCase):
                                              'bot_check': False, 'error': error})
                 shown = messages.show(core)
                 if lang == 'en':
-                    self.assertEqual(shown, f'Cookies file not found: {missing}\n'
-                                            'Choose it again in Settings → Network.')
+                    self.assertEqual(shown, en_t('core.cookies.missing', file=missing))
                 else:
                     self.assertEqual(shown, core)
                 self.assertTrue(app.row_reason(0).endswith(i18n.t('dialog.reason.engine_error', error=shown)))
                 self.assertTrue(app.row_reason(1).endswith(i18n.t('dialog.reason.engine_error', error=raw)),
                                 'a raw yt-dlp line stays raw')
                 self.assertEqual(app.row_model[0]['error'], core, 'the row keeps the stored form')
-                # the same error stored with an unfinished entry (failed-downloads.json): a 1.7.0 entry
-                # without a sidecar, read back the way unfinished.load decodes it (lifted, origin legacy)
-                stored = messages.decode(dict(entry(7), error=messages.zh(core)), 'failed_entry')
-                self.assertEqual((stored['error'].key, stored['error'].origin), ('core.cookies.missing', 'legacy'))
+                # the same error stored with an unfinished entry (failed-downloads.json), read back the way
+                # unfinished.load reads it ((2.0.0 S2 P4) format 2: the error slot is {"k", "p"})
+                stored = dict(entry(7), error=messages.from_json(messages.to_json(core)))
+                self.assertEqual(stored['error'].key, 'core.cookies.missing')
                 model = app._unfinished_model(stored)
                 app.row_model.append(model)
                 self.assertTrue(app.row_reason(len(app.row_model) - 1).endswith(
@@ -757,7 +553,7 @@ class FinalFixRound3Tests(AppCase):
         problem = 'C:\\State\\failed-downloads.json'
         # (1.8.0) unfinished.save raises its OSError with a message (its value is the 1.7.0 text)
         core = OSError(messages.msg('core.unfinished.cannot_set_aside', path=problem))
-        self.assertEqual(str(core), f'无法保留读不出的未完成清单：{problem}')
+        self.assertEqual(str(core), zh_t('core.unfinished.cannot_set_aside', path=problem))
         for lang in ('en', 'zh'):
             with self.subTest(lang=lang):
                 app = self.make_app(lang, visible=False)
@@ -774,36 +570,10 @@ class FinalFixRound3Tests(AppCase):
                 expected = messages.error_text(core)
                 self.assertEqual(shown, [expected, expected])
                 if lang == 'en':
-                    self.assertEqual(expected, f'Could not set aside the unreadable Unfinished list: {problem}')
+                    self.assertEqual(expected, en_t('core.unfinished.cannot_set_aside', path=problem))
                 else:
                     self.assertEqual(expected, str(core))
                 self.close(app)
-
-
-# ---------------------------------------------------------------------------------------- H3
-class ProtectedTests(unittest.TestCase):
-    def test_set_busy_and_poll_are_the_f_state_text(self):
-        source = (Path(studio.__file__)).read_text(encoding='utf-8')
-        tree = ast.parse(source)
-        found = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == 'StudioApp':
-                for function in node.body:
-                    if isinstance(function, ast.FunctionDef) and function.name in PROTECTED:
-                        segment = ast.get_source_segment(source, function)
-                        found[function.name] = hashlib.sha256(segment.encode('utf-8')).hexdigest()
-        self.assertEqual(found, PROTECTED)
-
-    def test_test_visible_constants_keep_their_chinese_values(self):
-        self.assertEqual(studio.TITLE, 'YT-DLP 下载器')
-        self.assertEqual(ui_download.TITLE, 'YT-DLP 下载器')
-        self.assertEqual(ui_download.FINISHED_PREFIX, '任务结束 · ')
-        self.assertEqual(ui_download.CLEARED_TITLE_SUFFIX, '')
-        self.assertEqual(ui_download.STATE_LOOK['unfinished'][2], '未完成')
-        self.assertEqual({state: i18n.CATALOG['zh'][key] for state, key in ui_download.REASON_KEYS.items()},
-                         ui_download.REASON_WORDS)
-        for name, keys in ui_download.FOREIGN_KEYS.items():
-            self.assertEqual(tuple(i18n.CATALOG['zh'][key] for key in keys), ui_download.FOREIGN_TEXT[name])
 
 
 if __name__ == '__main__':

@@ -13,6 +13,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socketserver
 import sqlite3
@@ -27,11 +28,30 @@ from unittest import mock
 import applog
 import engine
 import formats
+import i18n
 import library
 import paths
 import procutil
 import unfinished
 from engine import MODES, Options, Runner
+
+
+# (2.0.0 S3 W4) the zh text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import zh_t
+
+
+def head(key, name):
+    """The zh text of a template before its placeholder ``name``: how a log line of that key starts."""
+    return zh_t(key, **{name: '\0'}).split('\0')[0]
+
+
+KEPT_EXISTING = head('core.engine.kept_existing', 'name')
+OTHER_FORMAT = head('core.engine.other_format_source', 'name')
+PICTURE_EXISTS = head('core.engine.picture_exists', 'name')
+CANNOT_START_ENGINE = head('core.engine.cannot_start_engine', 'error')
+# every "the save folder already has ..." notice of the engine
+PRESENT_NOTICES = (KEPT_EXISTING, OTHER_FORMAT, PICTURE_EXISTS, head('core.engine.present_skipped', 'name'),
+                   head('core.engine.present_untagged', 'count'))
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'verification' / 'fixture' / 'fixture.mp4'
@@ -100,7 +120,7 @@ def make_site(folder):
     if not (folder / 'cover.jpg').exists():
         subprocess.run([str(paths.BIN / 'ffmpeg.exe'), '-y', '-v', 'error', '-i', str(folder / 'fixture.mp4'),
                         '-frames:v', '1', '-vf', 'scale=320:180', str(folder / 'cover.jpg')],
-                       check=True, creationflags=engine.HIDDEN, env=engine.process_environment(), timeout=60)
+                       check=True, creationflags=procutil.HIDDEN, env=procutil.process_environment(), timeout=60)
     (folder / 'song.html').write_text(
         '<!doctype html><html><head><meta charset="utf-8">'
         f'<title>{SONG_TITLE}</title><meta property="og:title" content="{SONG_TITLE}">'
@@ -335,7 +355,7 @@ class StopAfterTheFileTests(EngineCase):
                 runner.cancel()     # the file is moved and renamed; the engine is still running
 
         runner.emit = emit
-        runner.download([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').mode))
+        runner.download([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').id))
         done = self.done()
         item_done = self.of('item_done')[0]
         final = self.of('media')[0]['filepath']
@@ -385,7 +405,7 @@ class ExistingFileTests(EngineCase):
             for style in ('title', 'title_id'):
                 with self.subTest(preset=preset_id, style=style):
                     out = self.root / f'{preset_id}-{style}'
-                    mode = formats.by_id(preset_id).mode
+                    mode = formats.by_id(preset_id).id
                     self.events = []
                     Runner.reset_pacing()
                     self.run_links([self.base + '/song.html'], Options(out, mode, naming='title_id'))
@@ -403,7 +423,7 @@ class ExistingFileTests(EngineCase):
                     self.assertEqual((item_done['success'], item_done['path']), (True, old))
                     self.assertEqual([value['filepath'] for value in self.of('media')], [old])
                     self.assertEqual(self.of('file'), [old])
-                    self.assertTrue(any(str(line).startswith('保存位置已有这个文件') for line in self.of('log')))
+                    self.assertTrue(any(str(line).startswith(KEPT_EXISTING) for line in self.of('log')))
                     self.assertEqual(media_files(paths.work_dir()), work_before, 'no cover picture is left in the work folder')
                     self.assertEqual(unfinished.load(), [])
 
@@ -430,7 +450,7 @@ class OtherFormatTests(EngineCase):
                 out = self.root / f'from-mp4-{preset_id}'
                 self.events = []
                 Runner.reset_pacing()
-                self.run_links([link], Options(out, formats.by_id('video_mp4').mode, naming='title_id'))
+                self.run_links([link], Options(out, formats.by_id('video_mp4').id, naming='title_id'))
                 before = snapshot(out)
                 self.assertEqual([Path(name).suffix for name in before], ['.mp4'], before)
                 with unfinished.LOCK:
@@ -439,7 +459,7 @@ class OtherFormatTests(EngineCase):
                 work_before = media_files(paths.work_dir())
                 self.events = []
                 Runner.reset_pacing()
-                Runner(emit, library=store).download([link], Options(out, formats.by_id(preset_id).mode, naming='title'))
+                Runner(emit, library=store).download([link], Options(out, formats.by_id(preset_id).id, naming='title'))
                 after = snapshot(out)
                 done = self.done()
                 item_done = self.of('item_done')[0]
@@ -455,8 +475,8 @@ class OtherFormatTests(EngineCase):
                 row = store.find_download([engine.QueueItem(1, link, Options(out)).key], preset_id)
                 self.assertEqual((row or {}).get('path'), final, 'the history holds the requested file')
                 logs = [str(line) for line in self.of('log')]
-                self.assertTrue(any(line.startswith('保存位置已有这个链接的另一种格式') for line in logs), logs)
-                self.assertFalse(any(line.startswith('保存位置已有这个文件') for line in logs), logs)
+                self.assertTrue(any(line.startswith(OTHER_FORMAT) for line in logs), logs)
+                self.assertFalse(any(line.startswith(KEPT_EXISTING) for line in logs), logs)
                 self.assertEqual(media_files(paths.work_dir()), work_before, 'nothing is left in the work folder')
 
     def test_stop_during_audio_extraction_then_retry_gives_the_requested_format(self):
@@ -472,7 +492,7 @@ class OtherFormatTests(EngineCase):
                 runner.cancel()
 
         runner.emit = emit
-        runner.download([link], Options(out, formats.by_id('audio_mp3').mode, naming='title_id'))
+        runner.download([link], Options(out, formats.by_id('audio_mp3').id, naming='title_id'))
         self.assertTrue(stopped, 'the run reached the audio extraction')
         entries = unfinished.load()
         self.assertEqual([entry['reason'] for entry in entries], ['stopped'])
@@ -494,7 +514,7 @@ class OtherFormatTests(EngineCase):
         self.assertEqual(unfinished.load(), [])
         probe = subprocess.run([str(paths.BIN / 'ffprobe.exe'), '-v', 'error', '-show_entries', 'stream=codec_name',
                                 '-of', 'csv=p=0', item_done['path']], capture_output=True, text=True,
-                               creationflags=engine.HIDDEN, env=engine.process_environment(), timeout=60)
+                               creationflags=procutil.HIDDEN, env=procutil.process_environment(), timeout=60)
         self.assertIn('mp3', probe.stdout)
 
     def test_which_reported_files_are_the_requested_file(self):
@@ -522,7 +542,7 @@ class OtherFormatTests(EngineCase):
         for path in (part, final):
             path.write_bytes(b'data')
         runner = Runner(self.emit)
-        runner._current = engine.QueueItem(1, 'https://example.com/a', Options(out, formats.by_id('video_mp4').mode))
+        runner._current = engine.QueueItem(1, 'https://example.com/a', Options(out, formats.by_id('video_mp4').id))
         runner._existing = {engine._normal(part), engine._normal(final)}
         stops = []
         runner._stop_engine = lambda: stops.append(1)
@@ -578,7 +598,7 @@ class KeepFromTheStartTests(EngineCase):
 
                 self.events = []
                 with mock.patch.object(Runner, '_run_once', run_once):
-                    runner = self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').mode))
+                    runner = self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').id))
                 self.assertEqual(len(commands), 1, 'one run, no stop and rerun')
                 self.assertEqual(commands[0].count('-k'), 1 if keep else 0)
                 self.assertEqual(commands[0][-2:], ['--', self.base + '/song.html'], 'the link stays last')
@@ -593,7 +613,7 @@ class KeepFromTheStartTests(EngineCase):
         for early, stopped in ((True, []), (False, [1])):
             with self.subTest(early=early):
                 runner = Runner(self.emit)
-                runner._current = engine.QueueItem(1, self.base + '/song.html', Options(out, formats.by_id('audio_mp3').mode))
+                runner._current = engine.QueueItem(1, self.base + '/song.html', Options(out, formats.by_id('audio_mp3').id))
                 runner._existing = {engine._normal(source)}
                 runner._keep_source = runner._keep_early = early
                 stops = []
@@ -602,7 +622,7 @@ class KeepFromTheStartTests(EngineCase):
                 runner._intercept('title', 'Artist - Song')
                 self.assertEqual(runner._intercept('log', line), ('log', line))
                 self.assertEqual((runner._source, runner._kept, stops), (str(source), None, stopped))
-                said = [value for value in self.of('log') if str(value).startswith('保存位置已有这个链接的另一种格式')]
+                said = [value for value in self.of('log') if str(value).startswith(OTHER_FORMAT)]
                 self.assertEqual(len(said), 1 if early else 0, said)
 
     def test_what_keep_kept_of_a_new_download_is_removed(self):
@@ -619,7 +639,7 @@ class KeepFromTheStartTests(EngineCase):
         runner._existing = engine._listing(out)
         for name in new_removed + new_kept:
             (out / name).write_bytes(b'new')
-        item = engine.QueueItem(1, self.base + '/song.html', Options(out, formats.by_id('audio_mp3').mode))
+        item = engine.QueueItem(1, self.base + '/song.html', Options(out, formats.by_id('audio_mp3').id))
         item.path = str(out / 'Artist - Song.mp3')
         runner._discard_kept(item, out, [item.path])
         self.assertEqual(media_files(out), sorted(old + new_kept))
@@ -629,7 +649,7 @@ class KeepFromTheStartTests(EngineCase):
         # that download's MP4, which is removed; the older file is untouched.
         link = self.base + '/song.html'
         out = self.root / 'renamed'
-        self.run_links([link], Options(out, formats.by_id('video_mp4').mode, naming='title_id'))
+        self.run_links([link], Options(out, formats.by_id('video_mp4').id, naming='title_id'))
         first = snapshot(out)
         self.assertEqual(len(first), 1, first)
         older = out / 'Old Title [song].mp4'
@@ -646,7 +666,7 @@ class KeepFromTheStartTests(EngineCase):
             return real(runner, command, *args)
 
         with mock.patch.object(Runner, '_run_once', run_once):
-            self.run_links([link], Options(out, formats.by_id('audio_mp3').mode, naming='title'))
+            self.run_links([link], Options(out, formats.by_id('audio_mp3').id, naming='title'))
         self.assertEqual([command.count('-k') for command in commands], [1], 'one run, with -k from the start')
         done = self.done()
         after = snapshot(out)
@@ -680,11 +700,11 @@ class ForgedAlreadyLineTests(EngineCase):
         done = self.done()
         self.assertEqual((done['success'], done['failed'], done['files']), (0, 1, []))
         self.assertEqual((self.of('media'), self.of('file')), ([], []))
-        self.assertEqual(self.of('item_done')[0]['reason'], '页面不存在或无权访问（404）')
+        self.assertEqual(self.of('item_done')[0]['reason'], zh_t('core.reason.page_404'))
         self.assertIsNone(history.find_download([engine.QueueItem(1, base + '/inject', Options(out)).key], 'audio_best'))
         self.assertEqual([entry['reason'] for entry in unfinished.load()], ['failed'])
         self.assertEqual(victim.read_bytes(), b'owner data')
-        self.assertFalse(any(str(line).startswith('保存位置已有') for line in self.of('log')))
+        self.assertFalse(any(str(line).startswith(PRESENT_NOTICES) for line in self.of('log')))
 
     def test_lines_are_split_as_before_and_text_after_a_bare_cr_is_marked(self):
         import io
@@ -732,7 +752,7 @@ class CleanWorkTests(unittest.TestCase):
         target = file('outside.mp4', 30, root / 'target')
         junction = folder / 'link'
         made = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(root / 'target')],
-                              capture_output=True, creationflags=engine.HIDDEN).returncode == 0
+                              capture_output=True, creationflags=procutil.HIDDEN).returncode == 0
         try:
             self.assertEqual(engine.clean_app_work(folder, now=now), len(removed))
             for path in removed:
@@ -743,7 +763,7 @@ class CleanWorkTests(unittest.TestCase):
                 self.assertTrue(junction.exists(), 'a junction is never removed or followed')
         finally:
             if made:
-                subprocess.run(['cmd', '/c', 'rmdir', str(junction)], capture_output=True, creationflags=engine.HIDDEN)
+                subprocess.run(['cmd', '/c', 'rmdir', str(junction)], capture_output=True, creationflags=procutil.HIDDEN)
         # A folder without the app's marker is never cleaned.
         foreign = root / 'foreign'
         stray = file('A [x].f137.mp4', 30, foreign)
@@ -782,11 +802,11 @@ class OldPartialTests(EngineCase):
         out.mkdir(parents=True)
         partial = out / 'fixture [fixture].mp4.part'
         partial.write_bytes(FIXTURE.read_bytes()[:30000])
-        self.run_links([self.base + '/fixture.mp4'], Options(out, formats.by_id('audio_mp3').mode))
+        self.run_links([self.base + '/fixture.mp4'], Options(out, formats.by_id('audio_mp3').id))
         done = self.done()
         logs = [str(line) for line in self.of('log')]
         self.assertEqual(done['success'], 1)
-        self.assertIn('保存位置有这个链接之前没下载完的部分文件，本条直接在保存位置继续下载。', logs)
+        self.assertIn(zh_t('core.engine.resume_partial'), logs)
         self.assertTrue(any('Resuming download at byte 30000' in line for line in logs), logs)
         self.assertEqual(media_files(out), ['fixture.mp3'], 'no partial file is left behind')
         self.assertEqual(media_files(paths.work_dir()), [])
@@ -810,16 +830,16 @@ class PageErrorTests(EngineCase):
     def test_reasons(self):
         table = {
             '[generic] song: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404>)':
-                '页面不存在或无权访问（404）',
-            '[generic] page: Unable to download webpage: HTTP Error 403: Forbidden': '页面不存在或无权访问（403）',
-            '[generic] page: Unable to download webpage: HTTP Error 410: Gone': '页面不存在或无权访问（410）',
-            '[youtube] AAA: Unable to download API JSON: HTTP Error 404: Not Found': '页面不存在或无权访问（404）',
-            'unable to download video data: HTTP Error 404: Not Found': '链接不存在（404）',
-            'unable to download video data: HTTP Error 403: Forbidden': '网站拒绝访问（403）',
-            '[generic] page: Unable to download webpage: <urlopen error timed out>': '连不上网站，请检查网络或 VPN',
+                zh_t('core.reason.page_404'),
+            '[generic] page: Unable to download webpage: HTTP Error 403: Forbidden': zh_t('core.reason.page_403'),
+            '[generic] page: Unable to download webpage: HTTP Error 410: Gone': zh_t('core.reason.page_410'),
+            '[youtube] AAA: Unable to download API JSON: HTTP Error 404: Not Found': zh_t('core.reason.page_404'),
+            'unable to download video data: HTTP Error 404: Not Found': zh_t('core.reason.http_404'),
+            'unable to download video data: HTTP Error 403: Forbidden': zh_t('core.reason.http_403'),
+            '[generic] page: Unable to download webpage: <urlopen error timed out>': zh_t('core.reason.network'),
             '[generic] page: Unable to download webpage: [WinError 10061] No connection could be made':
-                '连不上网站，请检查网络或 VPN',
-            'Unable to download webpage: Connection refused': '连不上网站，请检查网络或 VPN',
+                zh_t('core.reason.network'),
+            'Unable to download webpage: Connection refused': zh_t('core.reason.network'),
         }
         for text, reason in table.items():
             self.assertEqual(engine.explain_error(text), reason, text)
@@ -828,7 +848,7 @@ class PageErrorTests(EngineCase):
         links = [self.base + '/status/404', self.base + '/status/403', self.base + '/status/410']
         self.run_links(links, Options(self.root / 'out', MODES[0], batch_safe=False))
         reasons = [value['reason'] for value in self.of('item_done')]
-        self.assertEqual(reasons, ['页面不存在或无权访问（404）', '页面不存在或无权访问（403）', '页面不存在或无权访问（410）'])
+        self.assertEqual(reasons, [zh_t('core.reason.page_404'), zh_t('core.reason.page_403'), zh_t('core.reason.page_410')])
         self.assertEqual(sorted(entry['reason'] for entry in unfinished.load()), ['failed'] * 3)
 
 
@@ -946,7 +966,7 @@ class LeftoverChildTests(EngineCase):
             for pid in pids:
                 if procutil.alive(pid):
                     subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True,
-                                   creationflags=engine.HIDDEN, timeout=30)
+                                   creationflags=procutil.HIDDEN, timeout=30)
             runner.cancel()
 
 
@@ -983,7 +1003,7 @@ class ArchiveDatabaseErrorTests(EngineCase):
         done = self.done()
         self.assertEqual((done['success'], done['failed'], len(done['archive_errors'])), (2, 0, 2))
         self.assertEqual([value['success'] for value in self.of('item_done')], [True, True])
-        self.assertTrue(any('归档信息保存失败（媒体已保留）' in str(line) for line in self.of('log')))
+        self.assertTrue(any(head('core.engine.archive_info_failed', 'error') in str(line) for line in self.of('log')))
         self.assertEqual(unfinished.load(), [])
 
 
@@ -1011,7 +1031,7 @@ class StateWorkFolderTests(EngineCase):
 def streams(path):
     probe = subprocess.run([str(paths.BIN / 'ffprobe.exe'), '-v', 'error', '-show_entries', 'stream=codec_name',
                             '-of', 'csv=p=0', str(path)], capture_output=True, text=True,
-                           creationflags=engine.HIDDEN, env=engine.process_environment(), timeout=60)
+                           creationflags=procutil.HIDDEN, env=procutil.process_environment(), timeout=60)
     return probe.stdout.split()
 
 
@@ -1021,7 +1041,7 @@ class OwnerPictureTests(EngineCase):
 
     def work_name(self):
         out = self.root / 'probe-name'
-        self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').mode, naming='title_id',
+        self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').id, naming='title_id',
                                                            batch_safe=False))
         names = media_files(out)
         self.assertEqual(len(names), 1, names)
@@ -1044,7 +1064,7 @@ class OwnerPictureTests(EngineCase):
                 work_before = media_files(paths.work_dir())
                 self.events = []
                 Runner.reset_pacing()
-                self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').mode, naming=style,
+                self.run_links([self.base + '/song.html'], Options(out, formats.by_id('audio_mp3').id, naming=style,
                                                                    batch_safe=False))
                 done = self.done()
                 self.assertEqual((done['success'], done['failed']), (1, 0), self.of('log'))
@@ -1056,7 +1076,7 @@ class OwnerPictureTests(EngineCase):
                 logs = [str(line) for line in self.of('log')]
                 self.assertFalse(any('thumbnail is already present' in line for line in logs), logs)
                 self.assertEqual(media_files(paths.work_dir()), work_before, 'no picture is left in the work folder')
-                notice = any(line.startswith('保存位置已有与本条同名的图片') for line in logs)
+                notice = any(line.startswith(PICTURE_EXISTS) for line in logs)
                 if style == 'title':
                     # With the work folder the cover is fetched there and still embedded.
                     self.assertFalse(notice, logs)
@@ -1079,7 +1099,7 @@ class OwnerPictureTests(EngineCase):
                 runner.cancel()
 
         runner.emit = emit
-        options = Options(out, formats.by_id('audio_mp3').mode, naming='title_id', batch_safe=False)
+        options = Options(out, formats.by_id('audio_mp3').id, naming='title_id', batch_safe=False)
         runner.download([self.base + '/song.html'], options)
         self.assertTrue(stopped, 'the run reached the download')
         self.assertTrue(any(str(line).startswith('[info] Writing video thumbnail') for line in self.of('log')))
@@ -1091,7 +1111,7 @@ class OwnerPictureTests(EngineCase):
         done = self.done()
         self.assertEqual(done['success'], 1)
         logs = [str(line) for line in self.of('log')]
-        self.assertFalse(any(line.startswith('保存位置已有与本条同名的图片') for line in logs), logs)
+        self.assertFalse(any(line.startswith(PICTURE_EXISTS) for line in logs), logs)
         finished = [name for name in media_files(out) if name.endswith('.mp3')]
         self.assertEqual(len(finished), 1, media_files(out))
         self.assertIn('mjpeg', streams(out / finished[0]))
@@ -1111,7 +1131,7 @@ class OwnerPictureTests(EngineCase):
         self.assertEqual(len(engine._owner_pictures(listing, 'https://example.com/')), 3)
         # The thumbnail path goes with the work folder and the cover, never alone.
         out = _sandbox.out('pictures', 'out')
-        mp3 = formats.by_id('audio_mp3').mode
+        mp3 = formats.by_id('audio_mp3').id
         with_work = engine.build_command(self.base + '/song.html', Options(out, mp3))
         work = engine.temp_path(Options(out, mp3))
         self.assertIsNotNone(work)
@@ -1120,7 +1140,7 @@ class OwnerPictureTests(EngineCase):
         for command in (engine.build_command(self.base + '/song.html', Options(out, mp3), temp=False),
                         engine.build_command(self.base + '/song.html', Options(out, mp3, embed_cover=False)),
                         engine.build_command(self.base + '/song.html', Options(out, mp3, naming='title_id')),
-                        engine.build_command(self.base + '/song.html', Options(out, formats.by_id('audio_wav').mode))):
+                        engine.build_command(self.base + '/song.html', Options(out, formats.by_id('audio_wav').id))):
             self.assertFalse(any(word.startswith('thumbnail:') for word in command), command)
 
     def test_a_forged_thumbnail_line_after_a_bare_cr_is_marked(self):
@@ -1137,7 +1157,7 @@ class LongLinkTests(EngineCase):
     def test_an_over_long_link_fails_alone_and_the_queue_goes_on(self):
         out = self.root / 'long'
         long_link = self.base + '/fixture.mp4?pad=' + 'x' * 33000
-        with self.assertRaisesRegex(ValueError, '^链接过长（33'):
+        with self.assertRaisesRegex(ValueError, '^' + re.escape(head('core.links.too_long', 'length')) + '33'):
             engine.build_command(long_link, Options(out))
         # A link just inside the limit is still accepted.
         fitting = self.base + '/fixture.mp4?pad=' + 'x' * 20000
@@ -1151,8 +1171,9 @@ class LongLinkTests(EngineCase):
         self.assertFalse(done.get('engine_error'))
         self.assertNotEqual(items[0]['reason'], engine.ENGINE_ERROR_REASON)
         logs = [str(line) for line in self.of('log')]
-        self.assertTrue(any(line.startswith('此链接无法开始：链接过长') for line in logs), logs)
-        self.assertFalse(any(line.startswith('无法启动下载引擎') for line in logs), logs)
+        too_long = zh_t('core.engine.cannot_start_link', error=head('core.links.too_long', 'length'))
+        self.assertTrue(any(line.startswith(too_long) for line in logs), logs)
+        self.assertFalse(any(line.startswith(CANNOT_START_ENGINE) for line in logs), logs)
         self.assertEqual(media_files(out), ['fixture.m4a'])
         self.assertEqual([entry['reason'] for entry in unfinished.load()], ['failed'])
 
@@ -1163,7 +1184,7 @@ class LongLinkTests(EngineCase):
         out = self.root / 'start-failure'
         with mock.patch.object(Runner, '_run_once', refuse):
             self.run_links([self.base + '/fixture.mp4'], Options(out, MODES[0], batch_safe=False))
-        logs = [str(line) for line in self.of('log') if str(line).startswith('无法启动下载引擎')]
+        logs = [str(line) for line in self.of('log') if str(line).startswith(CANNOT_START_ENGINE)]
         self.assertEqual(len(logs), 1, logs)
         self.assertNotIn('。。', logs[0])
         self.assertEqual(engine._sentence(OSError('x. ')), 'x')

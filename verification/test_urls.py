@@ -1,15 +1,15 @@
+# quick
 """urls.py (1.6.0 WP2 step B): lenient link extraction, YouTube clean-up, link keys, and
 the unchanged identity() of 1.5.1.  Pure functions; nothing is requested from any site."""
 import _sandbox
-import importlib.util
 import unittest
 
 import engine
 import library
 import urls
+from _sandbox import zh_t
 
 WATCH = 'https://www.youtube.com/watch?v=AAA'
-BACKUP = _sandbox.release_src('1.5.1')
 
 
 class ExtractTests(unittest.TestCase):
@@ -53,11 +53,11 @@ class ExtractTests(unittest.TestCase):
                          ['https://a.test/1', 'https://a.test/2'])
         with self.assertRaises(ValueError) as caught:
             urls.parse_download_text('https://a.test/1\n\n只是一句话\nhttps://a.test/2')
-        self.assertEqual(str(caught.exception), '第 3 行没有找到链接。请每行粘贴一个链接。')
+        self.assertEqual(str(caught.exception), zh_t('core.links.no_link_on_line', line=3))
         for empty in ('', '\n\n', '# only a comment\n; another'):
             with self.assertRaises(ValueError) as caught:
                 urls.parse_download_text(empty)
-            self.assertEqual(str(caught.exception), '请先粘贴至少一个视频或音频链接。')
+            self.assertEqual(str(caught.exception), zh_t('core.links.none'))
 
     def test_the_strict_parser_of_1_5_1_is_unchanged(self):
         url = 'https://example.com/watch?v=abc&list=xyz'
@@ -259,30 +259,38 @@ class FixRoundOneTests(unittest.TestCase):
 
 class IdentityTests(unittest.TestCase):
     def test_identity_is_the_function_of_1_5_1(self):
-        """Its results are stored (subscription entries, archive folders): they never change."""
+        """Its results are stored (subscription entries, archive folders): they never change.
+        (2.0.0 S2) The answers below are those of identity() in the 1.5.1 source, frozen as literals
+        when the frozen released sources were removed; test_identity_vectors pins many more."""
         self.assertIs(library.identity, urls.identity)
-        spec = importlib.util.spec_from_file_location('urlparse_only', BACKUP / 'library.py')
-        source = (BACKUP / 'library.py').read_text(encoding='utf-8')
-        start, end = source.index('def identity(url):'), source.index('def safe_name(')
-        namespace = {}
-        exec('import re\nfrom urllib.parse import parse_qs, urlsplit, urlunsplit\n' + source[start:end], namespace)
-        old = namespace['identity']
-        self.assertIsNotNone(spec)
-        inputs = [
+        answers = [
             # the inputs of test_library.py
-            'https://youtu.be/abc', 'https://www.youtube.com/watch?v=abc&utm_source=test',
-            'https://a.test/v.mp4?token=1', 'https://a.test/v.mp4?token=2',
-            'https://www.bilibili.com/video/BV123?p=1', 'https://www.bilibili.com/video/BV123?p=2',
-            'http://127.0.0.1:8123/new.mp4', 'http://127.0.0.1:8123/fixture.mp4', 'http://127.0.0.1:8123/one',
+            ('https://youtu.be/abc', 'youtube:abc'),
+            ('https://www.youtube.com/watch?v=abc&utm_source=test', 'youtube:abc'),
+            ('https://a.test/v.mp4?token=1', 'https://a.test/v.mp4?token=1'),
+            ('https://a.test/v.mp4?token=2', 'https://a.test/v.mp4?token=2'),
+            ('https://www.bilibili.com/video/BV123?p=1', 'bili:BV123:1'),
+            ('https://www.bilibili.com/video/BV123?p=2', 'bili:BV123:2'),
+            ('http://127.0.0.1:8123/new.mp4', 'http://127.0.0.1:8123/new.mp4'),
+            ('http://127.0.0.1:8123/fixture.mp4', 'http://127.0.0.1:8123/fixture.mp4'),
+            ('http://127.0.0.1:8123/one', 'http://127.0.0.1:8123/one'),
             # and the shapes the new code treats differently in link_key
-            'https://www.youtube.com/watch?v=abc&list=RDMMabc&start_radio=1', 'https://music.youtube.com/watch?v=abc',
-            'https://www.youtube.com/shorts/abc', 'https://www.youtube.com/live/abc?si=x', 'https://m.youtube.com/watch?v=abc',
-            'https://www.youtube.com/embed/abc', 'https://www.youtube.com/playlist?list=PLx',
-            'https://www.youtube.com/results?search_query=x', 'https://www.douyin.com/video/123', 'https://v.douyin.com/note/9',
-            'https://www.bilibili.com/video/av170001', 'HTTPS://Example.COM/Path?Q=1#frag', 'https://example.com',
+            ('https://www.youtube.com/watch?v=abc&list=RDMMabc&start_radio=1', 'https://www.youtube.com/watch?v=abc&list=RDMMabc&start_radio=1'),
+            ('https://music.youtube.com/watch?v=abc', 'https://music.youtube.com/watch?v=abc'),
+            ('https://www.youtube.com/shorts/abc', 'youtube:abc'),
+            ('https://www.youtube.com/live/abc?si=x', 'youtube:abc'),
+            ('https://m.youtube.com/watch?v=abc', 'youtube:abc'),
+            ('https://www.youtube.com/embed/abc', 'https://www.youtube.com/embed/abc'),
+            ('https://www.youtube.com/playlist?list=PLx', 'https://www.youtube.com/playlist?list=PLx'),
+            ('https://www.youtube.com/results?search_query=x', 'https://www.youtube.com/results?search_query=x'),
+            ('https://www.douyin.com/video/123', 'douyin:123'),
+            ('https://v.douyin.com/note/9', 'douyin:9'),
+            ('https://www.bilibili.com/video/av170001', 'bili:av170001:1'),
+            ('HTTPS://Example.COM/Path?Q=1#frag', 'https://example.com/Path?Q=1'),
+            ('https://example.com', 'https://example.com/'),
         ]
-        for url in inputs:
-            self.assertEqual(urls.identity(url), old(url), url)
+        for url, answer in answers:
+            self.assertEqual(urls.identity(url), answer, url)
         self.assertEqual(urls.identity('https://youtu.be/abc'), 'youtube:abc')
         self.assertEqual(urls.identity('https://youtu.be/abc'), urls.identity('https://www.youtube.com/watch?v=abc&utm_source=test'))
         self.assertNotEqual(urls.identity('https://a.test/v.mp4?token=1'), urls.identity('https://a.test/v.mp4?token=2'))
@@ -292,13 +300,6 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(urls.identity('https://www.youtube.com/watch?v=abc&list=RDMMabc'),
                          'https://www.youtube.com/watch?v=abc&list=RDMMabc')
         self.assertEqual(urls.identity('https://music.youtube.com/watch?v=abc'), 'https://music.youtube.com/watch?v=abc')
-
-    def test_the_moved_function_is_text_for_text_the_old_one(self):
-        def body(path):
-            source = path.read_text(encoding='utf-8')
-            return source[source.index('def identity(url):'):].split('\n\n\n', 1)[0]
-
-        self.assertEqual(body(_sandbox.SRC / 'urls.py'), body(BACKUP / 'library.py'))
 
 
 if __name__ == '__main__':

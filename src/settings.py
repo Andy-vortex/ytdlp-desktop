@@ -1,9 +1,7 @@
-"""settings.json (1.6.0): typed load, atomic save. Imports paths only.
+"""settings.json: typed load, atomic save. Imports paths only.
 
-load() always returns every known key with a value of the right type; keys this version
-does not know are kept in '_extra' and written back by save(), so another version's
-values survive a round trip.  The file stays readable for 1.5.1 (it shares the file as a
-fallback): plain UTF-8 without BOM, a flat object, the seven 1.5.1 keys unchanged.
+load() always returns every known key with a value of the right type (2.0.0: keys this version does
+not know are not kept).  The file is plain UTF-8 JSON, a flat object.
 """
 from __future__ import annotations
 
@@ -16,8 +14,14 @@ import time
 
 import paths
 
+MODES = ('audio_best', 'audio_wav', 'audio_flac', 'audio_mp3', 'video_mkv', 'audio_m4a', 'video_mp4')  # formats.MODES
+RESOLUTIONS = ('best', '2160p / 4K', '1440p', '1080p', '720p', '480p')   # engine.RESOLUTIONS (the tests compare)
 NAMING = ('title', 'clean', 'title_id')
 APPEARANCE = ('light', 'dark', 'system')
+LANGUAGES = ('system', 'zh', 'en')     # i18n.CHOICES (the tests compare the two)
+# (2.0.0 S4) The schedules of a subscription in seconds, in menu order: every 15 min, hourly, daily, manual only.
+# The one source of the allowed values (library.py checks them, the pages list them).
+SCHEDULES = (900, 3600, 86400, 0)
 BAD_NAME = 'settings.bad.json'
 _log = logging.getLogger('YtDlpDesktop.settings')
 
@@ -27,15 +31,13 @@ def defaults(output=None) -> dict:
     the default archive root depends; the default output is paths.default_output()."""
     output = output or str(paths.default_output())
     return {
-        # --- keys 1.5.1 knows (names and meaning unchanged)
         'output': output,
-        'mode': '音频 · 原始最佳',      # engine.MODES[0]; membership is checked by the window
-        'resolution': '最佳',          # engine.RESOLUTIONS[0]; likewise
+        'mode': MODES[0],              # a preset id
+        'resolution': RESOLUTIONS[0],
         'batch_safe': True,
         'archive_enabled': False,
         'archive_root': str(Path(output) / '资料归档'),
         'cookies': '',                 # the path of the cookies file, never its contents
-        # --- new in 1.6.0 (1.5.1 ignores them and drops them when it saves)
         'naming': 'title',
         'embed_metadata': True,
         'embed_cover': True,
@@ -51,6 +53,10 @@ def defaults(output=None) -> dict:
         'geometry': '',
         'zoomed': False,
         'appearance': 'light',
+        'language': 'system',          # i18n.stored_choice / store_choice
+        'subscription_media_only': True,     # (2.0.0 S4) the defaults of a new subscription
+        'subscription_first_new': True,
+        'subscription_interval': 3600,       # one of SCHEDULES
     }
 
 
@@ -76,6 +82,13 @@ def _seconds(value, default):
     return value if math.isfinite(value) and value >= 0 else default
 
 
+def _schedule(value, default):
+    """One of SCHEDULES (3600.0 is 3600); True, 7200 or nan are not."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return int(value) if value in SCHEDULES else default
+
+
 def _choice(allowed):
     return lambda value, default: value if isinstance(value, str) and value in allowed else default
 
@@ -89,13 +102,14 @@ def _folder(value, default):
 
 
 _CHECKS = {
-    'output': _folder, 'mode': _text, 'resolution': _text, 'batch_safe': _flag,
+    'output': _folder, 'mode': _choice(MODES), 'resolution': _choice(RESOLUTIONS), 'batch_safe': _flag,
     'archive_enabled': _flag, 'archive_root': _text, 'cookies': _text,
     'naming': _choice(NAMING), 'embed_metadata': _flag, 'embed_cover': _flag, 'subtitles': _flag,
     'skip_downloaded': _flag, 'notify_done': _flag, 'clipboard_hint': _flag,
     'check_engine_updates': _flag, 'last_engine_check': _seconds, 'bot_check_at': _seconds,
     'latest_engine': _text, 'last_clip': _text, 'geometry': _text, 'zoomed': _flag,
-    'appearance': _choice(APPEARANCE),
+    'appearance': _choice(APPEARANCE), 'language': _choice(LANGUAGES),
+    'subscription_media_only': _flag, 'subscription_first_new': _flag, 'subscription_interval': _schedule,
 }
 
 
@@ -189,8 +203,17 @@ def _typed(data) -> dict:
     for key, check in _CHECKS.items():
         if key in data:
             values[key] = check(data[key], values[key])
-    values['_extra'] = {key: value for key, value in data.items() if key not in _CHECKS}
     return values
+
+
+def peek() -> dict:
+    """Every known key, typed, read without changing anything (the self-test): a file that cannot be
+    read or parsed gives the defaults and stays where it is.  Never raises."""
+    try:
+        data = json.loads(_read_raw(paths.settings_file()).decode('utf-8-sig'))
+    except Exception:
+        data = {}
+    return _typed(data if isinstance(data, dict) else {})
 
 
 def load() -> dict:
@@ -229,8 +252,7 @@ def _merged(values, held):
 def save(values) -> bool:
     """Write settings.json atomically; False (and a log line) when that fails.
 
-    Keys starting with '_' are not written, except that the contents of '_extra' (the
-    unknown keys load() found) go back to the top level.  Values that load() returned with
+    Keys starting with '_' are not written.  Values that load() returned with
     '_held' (the file could not be read) never replace the stored file: the file is read
     again, and only the values changed in this session are written into it; while it still
     cannot be read, nothing is written (False).
@@ -246,9 +268,6 @@ def save(values) -> bool:
             data = {key: values[key] for key in _CHECKS if key in values}
             data.update({key: value for key, value in values.items()
                          if isinstance(key, str) and not key.startswith('_') and key not in data})
-            extra = values.get('_extra')
-            if isinstance(extra, dict):
-                data.update({key: value for key, value in extra.items() if isinstance(key, str) and key not in data})
         paths.atomic_write_text(paths.settings_file(), json.dumps(data, ensure_ascii=False, indent=2))
         return True
     except (OSError, TypeError, ValueError) as error:

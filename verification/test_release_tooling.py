@@ -1,3 +1,4 @@
+# quick
 """Release tooling (1.6.0 prefix-release): prepare_vendor.py with vendor.lock.json, the manifest-driven vendor checks
 of build.py and verify_release.py, and the per-file release list that install_release.py enforces.
 
@@ -514,7 +515,8 @@ class GateLayout(Base):
 
 class GateMessageEvidence(unittest.TestCase):
     """(1.8.0 WP-6, MESSAGES.md 10.3) Step 5's message-key evidence: msg_guard.violations == 0 on checked test
-    files, no pending_keys, the release sources as pinned."""
+    files, no pending_keys.  (2.0.0 S2 Q4) The check of the frozen released sources against their pins went
+    with those sources."""
 
     REPORT = {'msg_guard': {'files_checked': 51, 'violations': 0, 'exemptions': 49, 'not_guarded': ['x.py']}}
 
@@ -522,20 +524,13 @@ class GateMessageEvidence(unittest.TestCase):
         self.work = Path(tempfile.mkdtemp(prefix='gate-messages-', dir=os.environ['TEMP']))
         self.addCleanup(shutil.rmtree, self.work, True)
 
-    def copy_sources(self):
-        folder = self.work / 'release-sources'
-        shutil.copytree(gate.RELEASE_SOURCES, folder)
-        return folder
-
     def test_the_live_tree_passes_and_the_receipt_fields_are_complete(self):
         evidence = gate.check_message_evidence(self.REPORT)
         self.assertEqual(evidence['msg_guard']['violations'], 0)
         self.assertEqual(evidence['pending_keys'], [])
-        self.assertEqual(sorted(evidence['release_sources']), ['1.5.1', '1.6.0', '1.7.0'])
-        pins = json.loads(gate.RELEASE_PINS.read_text(encoding='utf-8'))['releases']
-        for version, item in evidence['release_sources'].items():
-            self.assertEqual(item['files'], len(pins[version]['files']), version)
-            self.assertRegex(item['sha256'], '^[0-9a-f]{64}$')
+        self.assertEqual(set(evidence), {'msg_guard', 'pending_keys'})
+        self.assertEqual(evidence['msg_guard'], self.REPORT['msg_guard'])
+        self.assertFalse(hasattr(gate, 'release_sources'))
         self.assertEqual(gate.pending_keys(), [])
 
     def test_a_guard_violation_or_a_missing_guard_refuses(self):
@@ -559,17 +554,194 @@ class GateMessageEvidence(unittest.TestCase):
         path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
         self.assertEqual(gate.pending_keys(allow), ['engine: 新文字 (category pending)'])
 
-    def test_a_changed_missing_or_added_release_source_refuses(self):
-        folder = self.copy_sources()
-        changed = folder / '1.7.0' / 'src' / 'engine.py'
-        changed.write_bytes(changed.read_bytes() + b'\n# changed\n')
-        (folder / '1.6.0' / 'src' / 'urls.py').unlink()
-        (folder / '1.5.1' / 'src' / 'extra.py').write_text('X = 1\n', encoding='utf-8')
-        found = gate.release_sources(folder)
-        self.assertEqual((found['1.7.0']['changed'], found['1.6.0']['missing'], found['1.5.1']['added']),
-                         (['engine.py'], ['urls.py'], ['extra.py']))
-        with self.assertRaisesRegex(gate.GateError, 'release-sources differs from its pins'):
-            gate.check_message_evidence(self.REPORT, folder=folder)
+
+class GateTestEvidence(unittest.TestCase):
+    """(2.0.0 S1) Step 5 takes the pair "source report + exe report".  The pair is made here by run_tests.main with
+    the very arguments build.py passes, over a throwaway test folder (one file per tier), then altered one way at a
+    time: each way the old single report.json was refused has its counterpart."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = Path(tempfile.mkdtemp(prefix='gate-evidence-', dir=os.environ['TEMP']))
+        cls.runner = load('run_tests_for_gate_evidence', ROOT / 'verification' / 'run_tests.py')
+        tests = cls.work / 'verification'
+        tests.mkdir()
+        (tests / 'test_a.py').write_text('print("default")\n', encoding='utf-8')
+        (tests / 'test_b.py').write_text('# tier: all\nprint("all")\n', encoding='utf-8')
+        (tests / 'test_p.py').write_text('# tier: exe\nimport os\nassert os.path.isfile(os.environ["VERIFY_EXE"])\n',
+                                         encoding='utf-8')
+        (tests / 'test_n.py').write_text('# tier: net\nprint("SKIPPED: never part of a release run")\n',
+                                         encoding='utf-8')
+        (tests / 'golden').mkdir()
+        (tests / 'golden' / 'g.json').write_text('{"golden": 1}\n', encoding='utf-8')
+        (cls.work / 'manifest.json').write_text('[{"repository": "yt-dlp/yt-dlp"}]\n', encoding='utf-8')
+        (cls.work / 'real-state').mkdir()
+        cls.stage = cls.work / 'stage'
+        cls.stage.mkdir()
+        cls.exe = cls.stage / gate.EXE_NAME
+        cls.exe.write_bytes(b'MZ staged exe')
+        cls.patchers = [patch.object(cls.runner, name, value) for name, value in (
+            ('VERIFICATION', tests), ('REPORT', cls.work / 'verify' / 'report.json'), ('LEAK_SIGNATURES', ()),
+            ('VENDOR_MANIFEST', cls.work / 'manifest.json'),
+            ('real_state_dir', lambda: cls.work / 'real-state'))]
+        for patcher in cls.patchers:
+            patcher.start()
+        cls.source_command = build.source_tests_command()
+        cls.exe_command = build.exe_tests_command(cls.exe)
+        for command in (cls.source_command, cls.exe_command):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = cls.runner.main([str(part) for part in command[5:]])     # after python -X utf8 -B run_tests.py
+            assert code == 0, output.getvalue()
+        cls.good = {name: (cls.work / 'verify' / name).read_text(encoding='utf-8')
+                    for name in ('report-source.json', 'report-exe.json')}
+        cls.record = cls.work / 'build.json'
+        cls.record.write_text(json.dumps({'source_sha256': cls.runner.source_sha256(),
+                                          'exe_sha256': sha(cls.exe.read_bytes())}), encoding='utf-8')
+
+    @classmethod
+    def tearDownClass(cls):
+        for patcher in cls.patchers:
+            patcher.stop()
+        shutil.rmtree(cls.work, True)
+
+    def reports(self, source=None, exe=None):
+        """Copies of the good pair with the changes given as functions of the parsed report (or 'missing')."""
+        folder = Path(tempfile.mkdtemp(prefix='pair-', dir=self.work))
+        paths = {}
+        for name, change in (('report-source.json', source), ('report-exe.json', exe)):
+            paths[name] = folder / name
+            if change == 'missing':
+                continue
+            data = json.loads(self.good[name])
+            if change:
+                change(data)
+            paths[name].write_text(json.dumps(data), encoding='utf-8')
+        return paths['report-source.json'], paths['report-exe.json']
+
+    def gate(self, source=None, exe=None, record=None):
+        source_report, exe_report = self.reports(source, exe)
+        return gate.check_evidence(self.stage, self.runner, source_report, exe_report, record or self.record)
+
+    def test_build_makes_the_pair_and_the_gate_takes_it(self):
+        self.assertEqual([str(part) for part in self.exe_command[4:]],
+                         [str(ROOT / 'verification' / 'run_tests.py'), '--only-tier', 'exe', '--exe', str(self.exe)])
+        self.assertEqual([str(part) for part in self.source_command[4:]], [str(ROOT / "verification" / "run_tests.py"), "--all"])
+        evidence = self.gate()
+        self.assertEqual([item['file'] for item in evidence['report']['results']], ['test_a.py', 'test_b.py'])
+        self.assertEqual([(item['file'], item['status']) for item in evidence['exe_report']['results']],
+                         [('test_p.py', 'passed')])
+        self.assertEqual(evidence['exe_report']['tiers'], ['exe'])
+        self.assertEqual((evidence['sources'], evidence['exe_hash']),
+                         (self.runner.source_sha256(), sha(self.exe.read_bytes())))
+        self.assertFalse((self.work / 'verify' / 'report.json').read_text(encoding='utf-8') == self.good['report-source.json'],
+                         'report.json is the last run (the exe pass); the gate does not read it')
+
+    def test_a_missing_report_refuses(self):
+        with self.assertRaisesRegex(gate.GateError, r'missing .*report-source\.json; run build\.py'):
+            self.gate(source='missing')
+        with self.assertRaisesRegex(gate.GateError, r'missing .*report-exe\.json; run build\.py'):
+            self.gate(exe='missing')
+
+    def test_reports_of_other_sources_or_another_exe_refuse(self):
+        def other_sources(data):
+            data['source_sha256'] = '0' * 64
+        with self.assertRaisesRegex(gate.GateError, 'report-source.json was produced from other sources'):
+            self.gate(source=other_sources)
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json was produced from other sources'):
+            self.gate(exe=other_sources)
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json was produced with another exe'):
+            self.gate(exe=lambda data: data['exe'].update(sha256='0' * 64))
+        with self.assertRaisesRegex(gate.GateError, 'app_version'):
+            self.gate(exe=lambda data: data.update(app_version='0.0.1'))
+        record = self.work / 'other-build.json'
+        record.write_text(json.dumps({'source_sha256': self.runner.source_sha256(), 'exe_sha256': '0' * 64}),
+                          encoding='utf-8')
+        with self.assertRaisesRegex(gate.GateError, 'build.json: the staged exe is not the one'):
+            self.gate(record=record)
+
+    def test_an_incomplete_exe_report_refuses(self):
+        def without_files(data):
+            data['results'] = [item for item in data['results'] if item['file'] != 'test_p.py']
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json (has no results|lacks test files)'):
+            self.gate(exe=without_files)
+        with self.assertRaisesRegex(gate.GateError, 'tier exe was not really exercised: test_p.py'):
+            self.gate(exe=lambda data: data['results'][0].update(status='skipped'))
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json has results that did not pass'):
+            self.gate(exe=lambda data: data['results'][0].update(status='failed'))
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json tiers are'):
+            self.gate(exe=lambda data: data.update(tiers=['default']))
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json is a partial run'):
+            self.gate(exe=lambda data: data.update(filter='packaged'))
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json msg_guard.violations is 2'):
+            self.gate(exe=lambda data: data['msg_guard'].update(violations=2))
+
+    def test_an_incomplete_or_parallel_source_report_refuses(self):
+        def without(name):
+            return lambda data: data.update(results=[item for item in data['results'] if item['file'] != name])
+        with self.assertRaisesRegex(gate.GateError, 'report-source.json lacks test files that exist now: test_b.py'):
+            self.gate(source=without('test_b.py'))
+        with self.assertRaisesRegex(gate.GateError, 'report-source.json tiers are'):
+            self.gate(source=lambda data: data.update(tiers=['default']))
+        for change, pattern in ((lambda data: data.update(filter='a'), 'partial run'),
+                                (lambda data: data.update(quick=True), '--quick run'),
+                                (lambda data: data.update(jobs=4), 'parallel run'),
+                                (lambda data: data.update(jobs=None), 'parallel run'),
+                                (lambda data: data.update(exe={'path': 'x', 'sha256': 'y'}), 'run of the sources'),
+                                (lambda data: data.update(only_tier='all'), 'run of the sources'),
+                                (lambda data: data['results'][1].update(status='failed'), 'did not pass: test_b.py'),
+                                (lambda data: data['results'].append({'file': 'isolation', 'tier': 'default',
+                                                                      'status': 'failed'}), 'did not pass: isolation'),
+                                (lambda data: data.update(msg_guard={}), 'checked no test file')):
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(gate.GateError, pattern):
+                self.gate(source=change)
+
+    def test_a_new_test_file_needs_a_new_run(self):
+        """A test file added after the reports were written: the report of its tier no longer covers the tree.
+        (S1 review fix) A new file also changes tests_sha256 (refused for that first); the file-list check is
+        exercised on its own with tests_sha256 held at the reports' value."""
+        digest = json.loads(self.good['report-source.json'])['tests_sha256']
+        for name, tier, report in (('test_c.py', '', 'report-source.json'), ('test_q.py', '# tier: exe\n', 'report-exe.json')):
+            path = self.runner.VERIFICATION / name
+            path.write_text(tier + 'print(1)\n', encoding='utf-8')
+            try:
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(gate.GateError, 'report-source.json was produced with other tests'):
+                        self.gate()
+                    with patch.object(self.runner, 'tests_sha256', lambda: digest), \
+                            self.assertRaisesRegex(gate.GateError, f'{report} lacks test files.*{name}'):
+                        self.gate()
+            finally:
+                path.unlink()
+
+    def test_changed_tests_or_vendor_need_a_new_run(self):
+        """(S1 review fix) The sources are the same, but a test file, a golden file or the vendor manifest changed
+        after the reports were written: a green report of the old tests is not taken (build.py --skip-tests runs
+        no default / all test itself)."""
+        for path, report in ((self.runner.VERIFICATION / 'test_a.py', 'report-source.json'),
+                             (self.runner.VERIFICATION / 'test_p.py', 'report-source.json'),
+                             (self.runner.VERIFICATION / 'golden' / 'g.json', 'report-source.json'),
+                             (self.work / 'manifest.json', 'report-source.json')):
+            original = path.read_bytes()
+            path.write_bytes(b'raise SystemExit("now failing")\n')
+            try:
+                with self.subTest(file=path.name), self.assertRaisesRegex(
+                        gate.GateError, f'{report} was produced with other tests or vendor files'):
+                    self.gate()
+            finally:
+                path.write_bytes(original)
+        self.gate()     # restored: taken again
+        with self.assertRaisesRegex(gate.GateError, 'report-exe.json was produced with other tests'):
+            self.gate(exe=lambda data: data.update(tests_sha256='0' * 64))
+        with self.assertRaisesRegex(gate.GateError, 'report-source.json was produced with other tests'):
+            self.gate(source=lambda data: data.pop('tests_sha256'))
+        self.assertEqual(json.loads(self.good['report-source.json'])['tests_sha256'], self.runner.tests_sha256())
+
+    def test_the_report_roles_match_what_the_gate_takes(self):
+        source, exe = (json.loads(self.good[name]) for name in ('report-source.json', 'report-exe.json'))
+        self.assertEqual((self.runner.report_roles(source), self.runner.report_roles(exe)), (['source'], ['exe']))
+        self.assertEqual(self.runner.report_roles(dict(source, jobs=4)), [])
+        self.assertEqual(self.runner.report_roles(dict(exe, filter='p')), [])
 
 
 # ---------------------------------------------------------------------------------------------- the installer

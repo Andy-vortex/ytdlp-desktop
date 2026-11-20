@@ -1,62 +1,8 @@
 {
  "module": "ui_log",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
- "literals": {
-  "下载完成": {
-   "category": "internal",
-   "reason": "not user-visible (line.startswith in ui_log.py classify); never translated"
-  },
-  "任务结束": {
-   "category": "internal",
-   "reason": "not user-visible (line.startswith in ui_log.py classify); never translated"
-  },
-  "文件已保存": {
-   "category": "internal",
-   "reason": "not user-visible (line.startswith in ui_log.py classify); never translated"
-  },
-  "无法启动下载引擎": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "更新失败": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "未完成": {
-   "category": "internal",
-   "reason": "not user-visible (value in ui_log.py classify); never translated"
-  },
-  "此链接无法开始": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "此链接未完成": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "界面错误": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "网页采集未完成": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "订阅检查失败": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "设置未保存": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  },
-  "错误：": {
-   "category": "internal",
-   "reason": "not user-visible (module constant in ui_log.py); never translated"
-  }
- },
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
+ "literals": {},
  "raises": {},
  "composed": {},
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

@@ -1,6 +1,17 @@
 """Sandboxed test runner (1.6.0 WP0).
 
-    .venv\\Scripts\\python.exe -B verification\\run_tests.py [--all] [--exe PATH] [--net] [-k SUBSTRING] [--keep] [--list]
+    .venv\\Scripts\\python.exe -X utf8 -B verification\\run_tests.py [--all] [--exe PATH] [--net] [--only-tier TIER]
+                                                                   [-k NAME[,NAME...]] [--quick] [-j N] [--keep] [--list]
+
+(2.0.0 S1) Selection and speed:
+  -k a,b      only files whose name contains one of the comma-separated substrings
+  --quick     only files marked ``# quick`` (fast, no window, no engine): the check to run after every edit
+  --only-tier only that tier (``--only-tier exe --exe PATH`` is build.py's exe pass: no file except the exe tier
+              reads VERIFY_EXE, so the other tiers would only run again on the same sources)
+  -j N        N files at a time; files marked ``# serial`` (timing, the foreground window, screenshots) run
+              one by one after the parallel batch.  Without -j the run is serial, as before.  The release gate
+              takes serial runs only.
+Markers (``# serial`` / ``# quick``, like ``# tier:``) are comments within the first five lines of a file.
 
 Every verification/test_*.py runs as its own process inside a private sandbox
 (LOCALAPPDATA, application folder, TEMP, output folder) that this runner builds,
@@ -21,13 +32,22 @@ written to build\\verify\\report.json:
   app_version, source_sha256 (one SHA256 over the bytes of src/*.py sorted by file
   name, then app.spec), exe, tiers, filter (-k, null for a full run), not_run,
   started, finished, results [{file, tier, status, seconds, tail, leftover_processes}],
-  reports {"<test stem>/<path inside its out folder>": parsed JSON}.
+  reports {"<test stem>/<path inside its out folder>": parsed JSON},
+  (2.0.0) quick (--quick), only_tier (--only-tier or null), jobs (-j, 1 when serial),
+  tests_sha256 (one SHA256 over the test code and data the run used: every *.py under verification/ and
+  every file under verification/golden and verification/fixture, by relative path and content, then
+  vendor/manifest.json; taken when the run starts -- the isolation check fails a run during which
+  verification/ changes).
+The results are in the order of the selection whatever -j is, so a parallel report has the content of a serial one.
+(2.0.0) The release gate reads two copies of a report, written beside report.json only by serial runs without
+-k and --quick: report-source.json by a run of the tiers default and all without --exe and --only-tier;
+report-exe.json by a run with --exe that includes the tier exe.
 Every test file starts with YTDLP_DESKTOP_LANG=zh (1.7.0: the tests run in Chinese).
 (1.8.0, MESSAGES.md 7.3) Every test file except those of GUARD_OFF also runs with
 YTDLP_DESKTOP_MSG_GUARD=1: the G2 message guard writes each violation as a JSON line to
 msg-guard-<pid>.jsonl in the file's output folder; any such line fails the file (its first five
 violations go to the tail), and the report gets msg_guard {files_checked, violations,
-exemptions}.  A __pycache__ appearing under verification/release-sources is an isolation failure.
+exemptions}.
 Exit code 0 only when nothing failed.  The sandbox is removed after a green run
 (--keep keeps it) and kept, with its path printed, after a failure; the captured
 output of every file is in <sandbox>\\_logs.
@@ -36,6 +56,7 @@ No third-party imports and no src imports in this process.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ctypes
 import datetime
 import hashlib
@@ -47,15 +68,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFICATION = ROOT / 'verification'
 REPORT = ROOT / 'build' / 'verify' / 'report.json'
+VENDOR_MANIFEST = ROOT / 'vendor' / 'manifest.json'
+TEST_DATA_FOLDERS = ('golden', 'fixture')      # under VERIFICATION: every file counts in tests_sha256
+# (2.0.0) the copies of report.json the release gate reads (see the docstring); beside REPORT
+SOURCE_REPORT_NAME = 'report-source.json'
+EXE_REPORT_NAME = 'report-exe.json'
 STATE_NAME = 'YtDlpDesktop'
 APP_IMAGE = 'YT-DLP下载器.exe'
 TIER_ORDER = ('default', 'all', 'exe', 'net')
 TIER_PATTERN = re.compile(r'^#\s*tier:\s*(all|exe|net)\b')
+# (2.0.0) "# serial" (with an optional reason after it) and "# quick" in the first five lines
+MARK_PATTERN = re.compile(r'^#\s*(serial|quick)\b')
 TIMEOUT = {'default': 900, 'all': 1800, 'exe': 900, 'net': 900}
 TAIL_LINES = 40
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -65,8 +94,8 @@ LEAK_SIGNATURES = (ROOT / 'data', ROOT / '下载文件', ROOT / 'build' / 'colle
 # (1.8.0, MESSAGES.md 7.3) The G2 message guard: on for every test file except these (a file is added
 # only by a spec change).
 MSG_GUARD = 'YTDLP_DESKTOP_MSG_GUARD'
-GUARD_OFF = {'test_golden_ui.py': 'replays recorded 1.5.1 / 1.6.0 events with plain strings',
-             'test_golden_runonce.py': 'byte-identical golden test; its FakeArchive raises the 1.5.1 plain text '
+GUARD_OFF = {'test_golden_ui.py': 'replays the recorded events of golden/ui.json with plain strings',
+             'test_golden_runonce.py': 'byte-identical golden test; its FakeArchive raises a plain Chinese text '
                                        'that becomes a raw param'}
 GUARD_FILES = 'msg-guard-*.jsonl'
 GUARD_TAIL = 5
@@ -90,9 +119,7 @@ def snapshot_tree() -> dict:
     found = {}
     for folder, folders, files in os.walk(VERIFICATION):
         relative = Path(folder).relative_to(VERIFICATION)
-        # (1.8.0) the frozen release sources must not get a __pycache__ either (H7)
-        if relative.parts[:1] != ('release-sources',):
-            folders[:] = [name for name in folders if name != '__pycache__']
+        folders[:] = [name for name in folders if name != '__pycache__']
         for name in folders:
             found[(relative / name).as_posix()] = None
         for name in files:
@@ -119,16 +146,31 @@ def snapshot_state(real: Path) -> dict:
     return found
 
 
-def tier_of(path: Path) -> str:
+def head_lines(path: Path) -> list:
+    """The first five lines of a file, stripped ([] when it cannot be read)."""
     try:
         with path.open(encoding='utf-8', errors='replace') as handle:
-            for _ in range(5):
-                match = TIER_PATTERN.match(handle.readline().strip())
-                if match:
-                    return match.group(1)
+            return [handle.readline().strip() for _ in range(5)]
     except OSError:
-        pass
+        return []
+
+
+def tier_of(path: Path) -> str:
+    for line in head_lines(path):
+        match = TIER_PATTERN.match(line)
+        if match:
+            return match.group(1)
     return 'default'
+
+
+def marks_of(path: Path) -> set:
+    """(2.0.0) {'serial', 'quick'} or a part of it: the markers in the first five lines."""
+    return {match.group(1) for match in map(MARK_PATTERN.match, head_lines(path)) if match}
+
+
+def name_filters(text) -> list:
+    """(2.0.0) -k 'a,b' -> ['a', 'b'] (empty parts dropped); None -> []."""
+    return [part.strip() for part in (text or '').split(',') if part.strip()]
 
 
 def discover() -> list:
@@ -142,6 +184,26 @@ def source_sha256() -> str:
     for path in sorted((ROOT / 'src').glob('*.py'), key=lambda item: item.name):
         digest.update(path.read_bytes())
     digest.update((ROOT / 'app.spec').read_bytes())
+    return digest.hexdigest()
+
+
+def tests_sha256() -> str:
+    """(2.0.0, S1 review fix) One SHA256 over what decides the results besides src: the test code and data
+    (every *.py under VERIFICATION, every file under its golden/ and fixture/ folders; relative path and the
+    SHA256 of the bytes, sorted by path) and VENDOR_MANIFEST (the engine and tools the tests run).  The
+    release gate takes a report only when this is still the value of the tree."""
+    names = set()
+    for path in VERIFICATION.rglob('*'):
+        relative = path.relative_to(VERIFICATION)
+        if not path.is_file() or '__pycache__' in relative.parts:
+            continue
+        if path.suffix == '.py' or relative.parts[0] in TEST_DATA_FOLDERS:
+            names.add(relative.as_posix())
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        digest.update(f'verification/{name}\0{file_sha256(VERIFICATION / name)}\n'.encode('utf-8'))
+    manifest = file_sha256(VENDOR_MANIFEST) if VENDOR_MANIFEST.is_file() else 'missing'
+    digest.update(f'vendor/manifest.json\0{manifest}\n'.encode('utf-8'))
     return digest.hexdigest()
 
 
@@ -334,6 +396,11 @@ def read_text(path: Path) -> str:
         return ''
 
 
+# (2.0.0) the test processes running now; with -j an interrupt ends every one of them
+RUNNING = set()
+RUNNING_LOCK = threading.Lock()
+
+
 def run_file(path: Path, tier: str, base: Path, real: Path, exe, net: bool) -> dict:
     sandbox = base / path.stem
     for name in ('localappdata', 'app', 'tmp', 'out', 'cache'):
@@ -353,6 +420,8 @@ def run_file(path: Path, tier: str, base: Path, real: Path, exe, net: bool) -> d
                                    stdin=subprocess.DEVNULL, stdout=out_file, stderr=err_file,
                                    creationflags=NO_WINDOW)
         job.assign(process)
+        with RUNNING_LOCK:
+            RUNNING.add(process)
         try:
             code = process.wait(timeout)
         except subprocess.TimeoutExpired:
@@ -363,6 +432,9 @@ def run_file(path: Path, tier: str, base: Path, real: Path, exe, net: bool) -> d
             kill_tree(process)
             job.close()
             raise
+        finally:
+            with RUNNING_LOCK:
+                RUNNING.discard(process)
     stray = job.close()
     seconds = round(time.monotonic() - started, 1)
     stdout, stderr = read_text(out_path), read_text(err_path)
@@ -484,11 +556,96 @@ def now() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec='seconds')
 
 
-def write_report(data: dict) -> None:
-    REPORT.parent.mkdir(parents=True, exist_ok=True)
-    temporary = REPORT.with_name(REPORT.name + f'.{os.getpid()}.tmp')
+def write_report(data: dict, path=None) -> None:
+    path = Path(path) if path is not None else REPORT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f'.{os.getpid()}.tmp')
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    os.replace(temporary, REPORT)
+    os.replace(temporary, path)
+
+
+def report_roles(report: dict) -> list:
+    """(2.0.0) The release-gate copies a report qualifies for: 'source' and/or 'exe' (see the docstring).
+
+    Only serial, unfiltered runs qualify; the gate checks the content (hashes, every file, every result) again."""
+    if report.get('jobs') != 1 or report.get('filter') is not None or report.get('quick'):
+        return []
+    tiers = report.get('tiers') or []
+    roles = []
+    if not report.get('only_tier') and report.get('exe') is None and 'default' in tiers and 'all' in tiers:
+        roles.append('source')
+    if report.get('exe') is not None and 'exe' in tiers:
+        roles.append('exe')
+    return roles
+
+
+def role_path(role: str) -> Path:
+    return REPORT.with_name(SOURCE_REPORT_NAME if role == 'source' else EXE_REPORT_NAME)
+
+
+def previous_seconds() -> dict:
+    """{file: seconds} of the last report, to start the slowest files first under -j (empty when unknown)."""
+    try:
+        results = json.loads(REPORT.read_text(encoding='utf-8')).get('results') or []
+        return {item['file']: float(item['seconds']) for item in results if isinstance(item, dict)}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+def show_result(number: int, total: int, path: Path, tier: str, result: dict, whole_line: bool) -> None:
+    note = ('   (leftover processes killed: ' + ', '.join(result['leftover_processes']) + ')'
+            if result['leftover_processes'] else '')
+    if whole_line:
+        print(f'[{number:2}/{total}] {path.name} ({tier}) ...', end=' ')
+    print(f'{result["status"]}  {result["seconds"]} s{note}', flush=True)
+    if result['status'] != 'passed':
+        for line in result['tail']:
+            print('      | ' + line)
+
+
+def end_running() -> None:
+    with RUNNING_LOCK:
+        running = list(RUNNING)
+    for process in running:
+        kill_tree(process)
+
+
+def run_selected(selected: list, jobs: int, base: Path, real: Path, exe, net: bool) -> list:
+    """Run the selected files; the results come back in the order of ``selected``.
+
+    jobs 1: one after the other, as always.  jobs > 1: the files without ``# serial`` run ``jobs`` at a time
+    (the slowest of the last report first), then the ``# serial`` files one by one."""
+    total = len(selected)
+    numbered = list(enumerate(selected, 1))
+    results = {}
+    if jobs > 1:
+        parallel = [item for item in numbered if 'serial' not in marks_of(item[1][0])]
+        serial = [item for item in numbered if 'serial' in marks_of(item[1][0])]
+        last = previous_seconds()
+        parallel.sort(key=lambda item: -last.get(item[1][0].name, float('inf')))
+        print(f'parallel {len(parallel)} files, {jobs} at a time; then {len(serial)} serial: '
+              + (', '.join(path.name for _number, (path, _tier) in serial) or 'none'), flush=True)
+        pool = ThreadPoolExecutor(max_workers=jobs)
+        try:
+            pending = {pool.submit(run_file, path, tier, base, real, exe, net): (number, path, tier)
+                       for number, (path, tier) in parallel}
+            while pending:
+                done, _ = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in done:
+                    number, path, tier = pending.pop(future)
+                    results[number] = future.result()
+                    show_result(number, total, path, tier, results[number], True)
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            end_running()
+            raise
+        pool.shutdown(wait=True)
+        numbered = serial
+    for number, (path, tier) in numbered:
+        print(f'[{number:2}/{total}] {path.name} ({tier}) ...', end=' ', flush=True)
+        results[number] = run_file(path, tier, base, real, exe, net)
+        show_result(number, total, path, tier, results[number], False)
+    return [results[number] for number in sorted(results)]
 
 
 def remove_tree(path: Path) -> bool:
@@ -510,15 +667,27 @@ def main(argv=None) -> int:
     parser.add_argument('--all', action='store_true', help='also run tier "all" (fixture server, yt-dlp, Chrome)')
     parser.add_argument('--exe', metavar='PATH', help='also run tier "exe" against this packaged exe')
     parser.add_argument('--net', action='store_true', help='also run tier "net" (real websites)')
-    parser.add_argument('-k', metavar='SUBSTRING', help='only files whose name contains SUBSTRING')
+    parser.add_argument('--only-tier', choices=TIER_ORDER, metavar='TIER',
+                        help='only this tier (default, all, exe or net); exe still needs --exe PATH')
+    parser.add_argument('-k', metavar='NAME[,NAME...]',
+                        help='only files whose name contains one of these comma-separated substrings')
+    parser.add_argument('--quick', action='store_true',
+                        help='only the files marked "# quick" (fast, no window): the check after every edit')
+    parser.add_argument('-j', type=int, default=1, metavar='N',
+                        help='run N files at a time; "# serial" files run alone afterwards (default 1: serial)')
     parser.add_argument('--keep', action='store_true', help='keep the sandbox folder after a green run')
-    parser.add_argument('--list', action='store_true', help='list the test files with their tiers and exit')
+    parser.add_argument('--list', action='store_true',
+                        help='list the test files with their tiers (and markers) and exit')
     options = parser.parse_args(argv)
+    if options.j < 1:
+        print('-j: N must be 1 or more')
+        return 2
 
     tests = discover()
     if options.list:
         for path, tier in tests:
-            print(f'{tier:8} {path.name}')
+            marks = sorted(marks_of(path))
+            print(f'{tier:8} {path.name}' + (f'  [{", ".join(marks)}]' if marks else ''))
         return 0
     exe = None
     if options.exe:
@@ -526,9 +695,19 @@ def main(argv=None) -> int:
         if not exe.is_file():
             print(f'--exe: file not found: {exe}')
             return 2
-    tiers = ['default'] + [name for name, wanted in (('all', options.all), ('exe', exe), ('net', options.net)) if wanted]
+    if options.only_tier == 'exe' and exe is None:
+        print('--only-tier exe needs --exe PATH')
+        return 2
+    if options.only_tier:
+        tiers = [options.only_tier]
+    else:
+        tiers = ['default'] + [name for name, wanted in (('all', options.all), ('exe', exe), ('net', options.net))
+                               if wanted]
+    net = options.net or options.only_tier == 'net'
+    names = name_filters(options.k)
     selected = [(path, tier) for path, tier in tests
-                if tier in tiers and (not options.k or options.k in path.name)]
+                if tier in tiers and (not names or any(name in path.name for name in names))
+                and (not options.quick or 'quick' in marks_of(path))]
     selected.sort(key=lambda item: (TIER_ORDER.index(item[1]), item[0].name))
     if not selected:
         print('no test file selected')
@@ -537,24 +716,15 @@ def main(argv=None) -> int:
     started = now()
     clock = time.monotonic()
     sources = source_sha256()
+    tests_digest = tests_sha256()
     real = real_state_dir()
     tree_before, state_before = snapshot_tree(), snapshot_state(real)
     leaks_before = {path for path in LEAK_SIGNATURES if path.exists()}
     base = Path(tempfile.mkdtemp(prefix='ytdlp-verify-')).resolve()
     print(f'sandbox  {base}')
     print(f'tiers    {", ".join(tiers)}' + (f'   exe {exe}' if exe else ''))
-    results = []
     try:
-        for number, (path, tier) in enumerate(selected, 1):
-            print(f'[{number:2}/{len(selected)}] {path.name} ({tier}) ...', end=' ', flush=True)
-            result = run_file(path, tier, base, real, exe, options.net)
-            results.append(result)
-            note = ('   (leftover processes killed: ' + ', '.join(result['leftover_processes']) + ')'
-                    if result['leftover_processes'] else '')
-            print(f'{result["status"]}  {result["seconds"]} s{note}', flush=True)
-            if result['status'] != 'passed':
-                for line in result['tail']:
-                    print('      | ' + line)
+        results = run_selected(selected, options.j, base, real, exe, net)
     except KeyboardInterrupt:
         print('\ninterrupted; the sandbox is kept: ' + str(base))
         return 130
@@ -586,18 +756,22 @@ def main(argv=None) -> int:
                  'exemptions': sum(item['exemptions'] for item in guarded),
                  'not_guarded': sorted(result['file'] for result in results
                                        if 'msg_guard' in result and not result['msg_guard']['guarded'])}
-    report = {'app_version': app_version(), 'source_sha256': sources,
+    report = {'app_version': app_version(), 'source_sha256': sources, 'tests_sha256': tests_digest,
               'exe': {'path': str(exe), 'sha256': file_sha256(exe)} if exe else None,
               'tiers': tiers, 'filter': options.k or None, 'not_run': not_run,
               'started': started, 'finished': now(), 'results': results, 'msg_guard': msg_guard,
-              'reports': collect_reports(base, results)}
+              'reports': collect_reports(base, results),
+              'quick': options.quick, 'only_tier': options.only_tier, 'jobs': options.j}
     write_report(report)
+    roles = report_roles(report)
+    for role in roles:
+        write_report(report, role_path(role))
     if not_run:
         print('not selected: ' + ', '.join(not_run))
-    print(f'report   {REPORT}')
+    print(f'report   {REPORT}' + ''.join(f'   (also {role_path(role).name})' for role in roles))
     print(f'SUMMARY: {count["passed"]} passed, {count["failed"]} failed, {count["skipped"]} skipped; '
           f'isolation {"FAILED" if problems else "ok"}; tiers {"+".join(tiers)}; '
-          f'{time.monotonic() - clock:.1f} s')
+          f'{time.monotonic() - clock:.1f} s' + (f' with -j {options.j}' if options.j > 1 else ''))
     print(f'MSG_GUARD: {msg_guard["files_checked"]} files checked, {msg_guard["violations"]} violations, '
           f'{msg_guard["exemptions"]} exemptions; not guarded: {", ".join(msg_guard["not_guarded"]) or "none"}')
     if failed:

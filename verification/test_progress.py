@@ -1,3 +1,4 @@
+# quick
 import _sandbox
 import queue
 import unittest
@@ -55,7 +56,7 @@ class ProgressTests(unittest.TestCase):
                           unittest.mock.call('progress', {'fraction': .3}),
                           unittest.mock.call('done', {'cancelled': True})])
 
-    # --- the time budget of StudioApp.poll (a protected block, hard rule H3; fix round 1) ---
+    # --- the time budget of StudioApp.poll (fix round 1; test_poll_order tests the order of a tick) ---
 
     def poll_once(self, events, clock):
         """One poll() on a stand-in app; returns (handle calls, events left in the queue)."""

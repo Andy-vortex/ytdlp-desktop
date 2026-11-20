@@ -291,7 +291,6 @@ FLOWS = (
     _f('Path().name', (), 'Path({s}).name', forms=('F11 Path().name',), neutral=True),
     _f('parameter default', (), None, needs='constant', forms=('F10 parameter default',)),
 )
-FLOW_NAMES = tuple(flow.name for flow in FLOWS)
 ROTATE = tuple(flow for flow in FLOWS if not flow.needs)        # the flows crossed with the wrappers
 
 
@@ -381,18 +380,11 @@ THEME_SPELLINGS = (
      "ui_theme.segmented(self.box, ['a'], labels=[{x}])"),
     ('tabs labels', 'theme', None, "ui_theme.tabs(self.box, ['a'], labels=[{x}])"),
     ('tabs names', 'theme unlabelled', 'ui_theme.tabs(self.box, [{x}])', 'ui_theme.tabs(self.box, names=[{x}])'),
-    ('setting_row title', 'theme', 'ui_theme.setting_row(self.box, {x})', 'ui_theme.setting_row(self.box, title={x})'),
-    ('setting_row description', 'theme', "ui_theme.setting_row(self.box, 'T', {x})",
-     'ui_theme.setting_row(self.box, description={x})'),
     ('empty_state text', 'theme', 'ui_theme.empty_state(self.box, {x})', 'ui_theme.empty_state(self.box, text={x})'),
     ('table empty', 'theme', "ui_theme.table(self.box, [], 'browse', {x})", 'ui_theme.table(self.box, [], empty={x})'),
     ('table columns', 'theme columns', "ui_theme.table(self.box, [('k', {x}, 80)])",
      "ui_theme.table(self.box, columns=[('k', {x}, 80)])"),
     ('fit text', 'theme', 'ui_theme.fit(self.status, {x})', 'ui_theme.fit(self.status, text={x})'),
-    ('fit_alternatives text', 'theme', 'ui_theme.fit_alternatives(self.status, {x})',
-     'ui_theme.fit_alternatives(self.status, text={x})'),
-    ('fit_alternatives alternatives', 'theme', "ui_theme.fit_alternatives(self.status, 'x', [{x}])",
-     "ui_theme.fit_alternatives(self.status, 'x', alternatives=[{x}])"),
 )
 
 MENU_SPELLINGS = ('add_command', 'add_checkbutton', 'add_radiobutton', 'add_cascade', 'insert_command',
@@ -1496,10 +1488,10 @@ def write_g1(folder, cases):
 def _context(tool, folder):
     context = tool.GuardContext(folder, enum_src=folder)
     for text in FORMATS_ALLOWED:
-        context.allow('formats')['literals'][text] = {'category': 'stored', 'reason': 'contract self-test'}
+        context.allow('formats')['literals'][text] = {'category': 'internal', 'reason': 'contract self-test'}
     for text in G1_ALLOWED + PROBE_G1_ALLOWED:
-        context.allow('collector')['literals'][text] = {'category': 'stored', 'reason': 'contract self-test'}
-        context.allow('naming')['literals'][text] = {'category': 'h4', 'reason': 'contract self-test'}
+        context.allow('collector')['literals'][text] = {'category': 'internal', 'reason': 'contract self-test'}
+        context.allow('naming')['literals'][text] = {'category': 'internal', 'reason': 'contract self-test'}
     context._enum = None
     return context
 

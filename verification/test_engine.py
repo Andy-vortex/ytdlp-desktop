@@ -1,5 +1,7 @@
+# quick
 import _sandbox
 import json
+import re
 from pathlib import Path
 import unittest
 import tempfile
@@ -7,11 +9,21 @@ import tempfile
 from unittest import mock
 
 import engine
+import procutil
+import updater
 import formats
+import i18n
+import messages
 import paths
+from messages import Message, msg
 from engine import MODES, Options, build_command, parse_line, parse_urls, read_url_file
 
 URL = 'https://example.com/video'
+CJK = re.compile(r'[㐀-䶿一-鿿　-〿！-～]')
+
+
+# (2.0.0 S3 W4) the zh text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import zh_t
 
 
 def values(command, flag):
@@ -48,7 +60,7 @@ class EngineTests(unittest.TestCase):
         self.assertIn('--no-plugin-dirs', command)
 
     def test_invalid_url_is_rejected_with_line_number(self):
-        with self.assertRaisesRegex(ValueError, '第 2 行'):
+        with self.assertRaisesRegex(ValueError, re.escape(zh_t('core.links.bad_line', line=2))):
             parse_urls('https://example.com/video\n--exec cmd.exe')
 
     def test_audio_and_video_commands(self):
@@ -73,8 +85,9 @@ class EngineTests(unittest.TestCase):
             command = build_command(url, Options(Path('D:/test'), cookies=str(cookies)))
             self.assertEqual(command[command.index('--cookies') + 1], str(cookies))
             self.assertEqual(command[-2:], ['--', url])
-            with self.assertRaisesRegex(ValueError, '找不到 cookies 文件'):
-                build_command(url, Options(Path('D:/test'), cookies=str(Path(directory) / 'missing.txt')))
+            missing = str(Path(directory) / 'missing.txt')
+            with self.assertRaisesRegex(ValueError, re.escape(zh_t('core.cookies.missing', file=missing))):
+                build_command(url, Options(Path('D:/test'), cookies=missing))
             exported_json = Path(directory) / 'cookies.json'
             exported_json.write_text('[{"domain": ".youtube.com"}]', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'Netscape'):
@@ -164,11 +177,11 @@ class EngineTests(unittest.TestCase):
         base = ['--embed-metadata', '--parse-metadata', ':(?P<meta_synopsis>)', '--parse-metadata', ':(?P<meta_description>)']
         artist = ['--parse-metadata', '%(artist|)s<>%(title)s:^<>(?P<artist>.+?)\\s+-\\s+(?P<track>.+)$']
         for preset in formats.PRESETS:
-            command = build_command(URL, Options(out, preset.mode, embed_cover=False))
-            words = formats.format_args(preset, '最佳')
+            command = build_command(URL, Options(out, preset.id, embed_cover=False))
+            words = formats.format_args(preset, 'best')
             after = command[command.index('-f') + len(words):-2]
             self.assertEqual(after, base + (artist if preset.kind == 'audio' else []), preset.id)
-            off = build_command(URL, Options(out, preset.mode, embed_metadata=False, embed_cover=False))
+            off = build_command(URL, Options(out, preset.id, embed_metadata=False, embed_cover=False))
             self.assertEqual(off[off.index('-f') + len(words):-2], [], preset.id)
             self.assertNotIn('--embed-metadata', off)
             self.assertNotIn('--parse-metadata', off)
@@ -176,7 +189,7 @@ class EngineTests(unittest.TestCase):
     def test_cover_block(self):
         out = same_drive_folder()
         for preset in formats.PRESETS:
-            command = build_command(URL, Options(out, preset.mode, embed_metadata=False))
+            command = build_command(URL, Options(out, preset.id, embed_metadata=False))
             tail = command[-5:-2]
             if preset.cover:
                 self.assertEqual(tail, ['--embed-thumbnail', '--convert-thumbnails', 'jpg'], preset.id)
@@ -184,24 +197,24 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(preset.id, 'audio_wav')
                 self.assertNotIn('--embed-thumbnail', command)
                 self.assertNotIn('--convert-thumbnails', command)
-            self.assertNotIn('--embed-thumbnail', build_command(URL, Options(out, preset.mode, embed_cover=False)))
+            self.assertNotIn('--embed-thumbnail', build_command(URL, Options(out, preset.id, embed_cover=False)))
         both = build_command(URL, Options(out, MODES[0]))
         self.assertLess(both.index('--embed-metadata'), both.index('--embed-thumbnail'))
 
     def test_subtitle_block(self):
         out = same_drive_folder()
         for preset in formats.PRESETS:
-            command = build_command(URL, Options(out, preset.mode, subtitles=True))
+            command = build_command(URL, Options(out, preset.id, subtitles=True))
             if preset.kind == 'video':
                 self.assertEqual(command[-7:-2], ['--embed-subs', '--sub-langs', 'zh.*,en.*,-live_chat', '--sleep-subtitles', '1'])
-                unsafe = build_command(URL, Options(out, preset.mode, subtitles=True, batch_safe=False))
+                unsafe = build_command(URL, Options(out, preset.id, subtitles=True, batch_safe=False))
                 self.assertEqual(unsafe[-5:-2], ['--embed-subs', '--sub-langs', 'zh.*,en.*,-live_chat'])
                 self.assertNotIn('--sleep-subtitles', unsafe)
             else:
                 for flag in ('--embed-subs', '--sub-langs', '--sleep-subtitles'):
                     self.assertNotIn(flag, command, preset.id)
             for flag in ('--embed-subs', '--sub-langs', '--sleep-subtitles', '--write-subs', '--write-auto-subs'):
-                self.assertNotIn(flag, build_command(URL, Options(out, preset.mode)), preset.id)
+                self.assertNotIn(flag, build_command(URL, Options(out, preset.id)), preset.id)
 
     def test_block_order_of_a_full_command(self):
         out = same_drive_folder()
@@ -217,46 +230,46 @@ class EngineTests(unittest.TestCase):
         positions = [command.index(flag) for flag in order]
         self.assertEqual(positions, sorted(positions))
         self.assertEqual(command[-2:], ['--', URL])
-        self.assertEqual(command[0], str(engine.engine_path()))
+        self.assertEqual(command[0], str(updater.engine_path()))
 
     # --- 1.6.0 WP2 step F: what the Runner reads from the engine's output
 
     def test_explain_error_table(self):
         table = [
             (dict(text='[youtube] abc: Sign in to confirm you’re not a bot.', bot_check=True),
-             'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）'),
-            (dict(text='', bot_check=True), 'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）'),
-            (dict(text='[youtube] abc: Video unavailable'), '视频不存在或已设为私享'),
-            (dict(text='[youtube] abc: Private video. Sign in if you\'ve been granted access'), '视频不存在或已设为私享'),
-            (dict(text='[youtube] abc: This video has been removed by the uploader'), '视频不存在或已设为私享'),
+             zh_t('core.reason.bot_check')),
+            (dict(text='', bot_check=True), zh_t('core.reason.bot_check')),
+            (dict(text='[youtube] abc: Video unavailable'), zh_t('core.reason.unavailable')),
+            (dict(text='[youtube] abc: Private video. Sign in if you\'ve been granted access'), zh_t('core.reason.unavailable')),
+            (dict(text='[youtube] abc: This video has been removed by the uploader'), zh_t('core.reason.unavailable')),
             (dict(text='[youtube] abc: Video unavailable. The uploader has not made this video available in your country'),
-             '该地区不可观看，可更换网络节点'),
-            (dict(text='[x] 1: This video is not available in your country'), '该地区不可观看，可更换网络节点'),
-            (dict(text='[x] 1: This video is geo-restricted'), '该地区不可观看，可更换网络节点'),
-            (dict(text='[x] 1: content is georestricted'), '该地区不可观看，可更换网络节点'),
-            (dict(text='[generic] Unable to download webpage: <urlopen error timed out>'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='<urlopen error [Errno 11001] getaddrinfo failed>'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='[youtube] abc: Unable to download webpage: HTTP Error 500'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='Connection reset by peer'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='[WinError 10061] Connection refused'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='[WinError 10060] A connection attempt failed'), '连不上网站，请检查网络或 VPN'),
-            (dict(text='unable to download video data: HTTP Error 403: Forbidden'), '网站拒绝访问（403）'),
-            (dict(text='[generic] abc: HTTP Error 404: Not Found'), '链接不存在（404）'),
-            (dict(text='[youtube] abc: Requested format is not available. Use --list-formats'), '没有可用的所选格式或画质'),
-            (dict(text='Unsupported URL: https://example.org/'), '不支持这个链接'),
-            (dict(text='[youtube] abc: Some new failure', stale=True), '解析失败，下载引擎可能已过期'),
-            (dict(text='', stale=True), '解析失败，下载引擎可能已过期'),
+             zh_t('core.reason.region')),
+            (dict(text='[x] 1: This video is not available in your country'), zh_t('core.reason.region')),
+            (dict(text='[x] 1: This video is geo-restricted'), zh_t('core.reason.region')),
+            (dict(text='[x] 1: content is georestricted'), zh_t('core.reason.region')),
+            (dict(text='[generic] Unable to download webpage: <urlopen error timed out>'), zh_t('core.reason.network')),
+            (dict(text='<urlopen error [Errno 11001] getaddrinfo failed>'), zh_t('core.reason.network')),
+            (dict(text='[youtube] abc: Unable to download webpage: HTTP Error 500'), zh_t('core.reason.network')),
+            (dict(text='Connection reset by peer'), zh_t('core.reason.network')),
+            (dict(text='[WinError 10061] Connection refused'), zh_t('core.reason.network')),
+            (dict(text='[WinError 10060] A connection attempt failed'), zh_t('core.reason.network')),
+            (dict(text='unable to download video data: HTTP Error 403: Forbidden'), zh_t('core.reason.http_403')),
+            (dict(text='[generic] abc: HTTP Error 404: Not Found'), zh_t('core.reason.http_404')),
+            (dict(text='[youtube] abc: Requested format is not available. Use --list-formats'), zh_t('core.reason.format')),
+            (dict(text='Unsupported URL: https://example.org/'), zh_t('core.reason.unsupported')),
+            (dict(text='[youtube] abc: Some new failure', stale=True), zh_t('core.reason.stale')),
+            (dict(text='', stale=True), zh_t('core.reason.stale')),
             # A known reason wins over the stale flag; the bot check wins over everything.
-            (dict(text='[youtube] abc: Video unavailable', stale=True), '视频不存在或已设为私享'),
+            (dict(text='[youtube] abc: Video unavailable', stale=True), zh_t('core.reason.unavailable')),
             (dict(text='[youtube] abc: Video unavailable', bot_check=True, stale=True),
-             'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）'),
+             zh_t('core.reason.bot_check')),
             (dict(text='[youtube] abc: Something nobody has a rule for'), 'Something nobody has a rule for'),
             (dict(text='plain text without a prefix'), 'plain text without a prefix'),
-            (dict(text='代理地址应以 http://、https:// 或 socks5:// 开头。'), '代理地址应以 http://、https:// 或 socks5:// 开头。'),
-            (dict(text=''), '下载未完成（退出码 1）'),
-            (dict(text='', code=2), '下载未完成（退出码 2）'),
-            (dict(text=None, code=-1), '下载未完成（退出码 -1）'),
-            (dict(text='   '), '下载未完成（退出码 1）'),
+            (dict(text=zh_t('core.proxy.scheme')), zh_t('core.proxy.scheme')),
+            (dict(text=''), zh_t('core.reason.exit_code', code=1)),
+            (dict(text='', code=2), zh_t('core.reason.exit_code', code=2)),
+            (dict(text=None, code=-1), zh_t('core.reason.exit_code', code=-1)),
+            (dict(text='   '), zh_t('core.reason.exit_code', code=1)),
         ]
         for arguments, expected in table:
             self.assertEqual(engine.explain_error(**arguments), expected, arguments)
@@ -273,9 +286,9 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn('--', arguments)
         self.assertNotIn('--cookies', arguments, 'no cookies file is needed for the probe')
         self.assertFalse(any('example.invalid/probe' == word for word in arguments))
-        self.assertNotIn(str(engine.engine_path()), arguments)
+        self.assertNotIn(str(updater.engine_path()), arguments)
         for preset in formats.PRESETS:
-            words = formats.format_args(preset, '最佳')
+            words = formats.format_args(preset, 'best')
             self.assertTrue(any(arguments[i:i + len(words)] == words for i in range(len(arguments))), preset.id)
         self.assertEqual(arguments, engine.probe_args(), 'the same list every time')
 
@@ -334,11 +347,8 @@ class EngineTests(unittest.TestCase):
                          [{'index': 1, 'total': 2}, {'index': 2, 'total': 2}])
 
     def test_wording_constants(self):
-        self.assertEqual(engine.BOT_CHECK_HINT,
-                         'YouTube 暂时拒绝了当前网络出口（Sign in to confirm you’re not a bot）。这通常在 30 分钟左右自行解除，'
-                         '链接已保留在“未完成”列表，稍后重试即可；也可以在“偏好设置 → 网络”选择已登录 YouTube 的 cookies.txt 后重试。')
-        self.assertEqual(engine.BOT_CHECK_STALE_HINT,
-                         'YouTube 仍要求验证：所选 cookies 可能已过期或导出时未登录。可以稍后重试，或重新导出 cookies.txt。')
+        self.assertEqual(engine.BOT_CHECK_HINT, zh_t('core.engine.bot_check_hint'))
+        self.assertEqual(engine.BOT_CHECK_STALE_HINT, zh_t('core.engine.bot_check_stale'))
         self.assertEqual(engine.PACE_SECONDS, (10, 20))
 
 
@@ -346,7 +356,7 @@ def make_junction(link, target) -> bool:
     """A directory junction (no privilege needed); False when this system cannot make one."""
     import subprocess
     result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(target)], capture_output=True,
-                            stdin=subprocess.DEVNULL, creationflags=engine.HIDDEN)
+                            stdin=subprocess.DEVNULL, creationflags=procutil.HIDDEN)
     return result.returncode == 0 and Path(link).is_dir()
 
 
@@ -453,6 +463,93 @@ class FixRoundOneTests(unittest.TestCase):
             self.assertTrue((outside / 'theirs.part').is_file())
             __import__('os').rmdir(work / 'link')
         self.assertEqual(engine.clean_app_work(self.root / 'missing'), 0)
+
+
+class SentenceTests(unittest.TestCase):
+    """(moved from test_english_replay in 2.0.0 S2 P1; MESSAGES.md 15 A11.5) engine._sentence keeps
+    the Message an OSError carries: its key, the 1.7.0 zh text, the whole English text."""
+
+    def test_an_os_error_with_a_message(self):
+        error = OSError(msg('core.unfinished.cannot_set_aside', path='x.json'))
+        shown = engine._sentence(error)
+        line = msg('core.engine.cannot_start_engine', error=shown)
+        self.assertIsInstance(shown, Message)
+        self.assertEqual(shown.key, 'core.unfinished.cannot_set_aside')
+        zh = messages.zh(msg('core.unfinished.cannot_set_aside', path='x.json'))
+        self.assertEqual(messages.zh(shown), zh.rstrip().rstrip('。.．').rstrip(), 'the 1.7.0 zh text')
+        with _sandbox.language('en'):
+            self.assertEqual(messages.show(shown), i18n.t('core.unfinished.cannot_set_aside', path='x.json'))
+            self.assertIsNone(CJK.search(messages.show(line)))
+        plain = OSError(2, '系统找不到指定的文件。')
+        self.assertEqual(engine._sentence(plain), str(plain).rstrip().rstrip('。.．').rstrip())
+        self.assertIs(type(engine._sentence(plain)), str)
+
+
+class ExplainErrorTests(unittest.TestCase):
+    """(moved from test_english_replay in 2.0.0 S2 P1; final review 1, ZH-1) explain_error's fallback
+    for a Message: the zh text is the 1.7.0 one (stripped, the extractor prefix removed, 70
+    characters), the key is kept (unless the engine is stale) and English shows the message whole.
+    The same text as plain or raw text gives the same zh text.  (2.0.0 S3 W4) The texts are the
+    catalog's zh texts (zh_t), so a reworded catalog text changes them too; the expected results are the
+    1.7.0 rule applied to them (computed by the 1.7.0 explain_error of the release sources for the
+    1.7.0 texts): trailing spaces stripped, the one leading "[extractor] id: " part removed, the
+    stale-engine reason when the engine is stale."""
+
+    STALE = zh_t('core.reason.stale')
+    PREFIX = '[youtube] abcdefghijk: '
+    FAILED = 'Something failed here'
+    # (zh text, the message that has it, explain_error(text, code, False, stale) for
+    #  (1, False), (2, False), (1, True))
+    CASES = (
+        (zh_t('core.archive.unwritable', error='disk I/O error  '), ('core.archive.unwritable', {'error': 'disk I/O error  '}),
+         (zh_t('core.archive.unwritable', error='disk I/O error'), zh_t('core.archive.unwritable', error='disk I/O error'),
+          STALE)),
+        (zh_t('core.engine.waiting', reason=PREFIX + FAILED, seconds='3'),
+         ('core.engine.waiting', {'reason': PREFIX + FAILED, 'seconds': '3'}),
+         (zh_t('core.engine.waiting', reason=FAILED, seconds='3'), zh_t('core.engine.waiting', reason=FAILED, seconds='3'),
+          STALE)),
+        (zh_t('core.engine.waiting', reason='  ' + PREFIX + FAILED, seconds='3'),
+         ('core.engine.waiting', {'reason': '  ' + PREFIX + FAILED, 'seconds': '3'}),
+         (zh_t('core.engine.waiting', reason=FAILED, seconds='3'), zh_t('core.engine.waiting', reason=FAILED, seconds='3'),
+          STALE)),
+        (zh_t('core.update.start_timeout', timeout=PREFIX + FAILED),
+         ('core.update.start_timeout', {'timeout': PREFIX + FAILED}),
+         (zh_t('core.update.start_timeout', timeout=FAILED), zh_t('core.update.start_timeout', timeout=FAILED), STALE)),
+        (zh_t('core.update.start_timeout', timeout='  ' + PREFIX + FAILED),
+         ('core.update.start_timeout', {'timeout': '  ' + PREFIX + FAILED}),
+         (zh_t('core.update.start_timeout', timeout=FAILED), zh_t('core.update.start_timeout', timeout=FAILED), STALE)),
+        (zh_t('value.job_title.multi', title=PREFIX + FAILED, count='3'),
+         ('value.job_title.multi', {'title': PREFIX + FAILED, 'count': '3'}),
+         (zh_t('value.job_title.multi', title=FAILED, count='3'), zh_t('value.job_title.multi', title=FAILED, count='3'),
+          STALE)),
+        (zh_t('value.job_title.multi', title='  ' + PREFIX + FAILED, count='3'),
+         ('value.job_title.multi', {'title': '  ' + PREFIX + FAILED, 'count': '3'}),
+         (zh_t('value.job_title.multi', title=FAILED, count='3'), zh_t('value.job_title.multi', title=FAILED, count='3'),
+          STALE)),
+        (zh_t('core.archive.unwritable', error='disk I/O error'), ('core.archive.unwritable', {'error': 'disk I/O error'}),
+         (zh_t('core.archive.unwritable', error='disk I/O error'), zh_t('core.archive.unwritable', error='disk I/O error'),
+          STALE)),
+        (PREFIX + FAILED, None, (FAILED, FAILED, STALE)),
+    )
+    FLAGS = ((1, False), (2, False), (1, True))
+
+    def test_messages_keep_their_key_and_the_1_7_0_zh_text(self):
+        for text, made, old in self.CASES:
+            values = [text, messages.raw(text)]
+            if made is not None:
+                message = msg(made[0], **made[1])
+                self.assertEqual(messages.zh(message), text, 'the message has this very zh text')
+                values.append(message)
+            for value in values:
+                for (code, stale), expected in zip(self.FLAGS, old, strict=True):
+                    with self.subTest(text=text, value=type(value).__name__, code=code, stale=stale):
+                        reason = engine.explain_error(value, code, False, stale)
+                        self.assertEqual(messages.zh(reason), expected)
+                        if isinstance(value, Message) and not stale:
+                            self.assertIsInstance(reason, Message)
+                            self.assertEqual(reason.key, value.key)
+                            with _sandbox.language('en'):
+                                self.assertEqual(messages.show(reason), messages.show(value), 'en shows it whole')
 
 
 if __name__ == '__main__':

@@ -10,7 +10,10 @@ import threading
 import engine
 import formats
 import paths
-from engine import BIN, HIDDEN, MODES, Options, Runner, process_environment
+from engine import MODES, Options, Runner
+from paths import BIN
+from procutil import HIDDEN, process_environment
+from _sandbox import zh_t
 
 base, _server = _sandbox.fixture_site()
 url = base + '/fixture.mp4'
@@ -87,8 +90,8 @@ try:
         assert not waits, waits
         report['formats'][-1]['interval_waits'] = len(waits)
         print(f'Passed: {mode}', flush=True)
-    assert [formats.by_mode(mode).id for mode in MODES] == ['audio_best', 'audio_wav', 'audio_flac', 'audio_mp3', 'video_mkv',
-                                                           'audio_m4a', 'video_mp4']
+    assert [formats.by_id(mode).id for mode in MODES] == ['audio_best', 'audio_wav', 'audio_flac', 'audio_mp3', 'video_mkv',
+                                                         'audio_m4a', 'video_mp4']
 
     # Two links in one job: the second waits for the spacing interval, the first does not;
     # the second file of the same title gets " (2)" instead of replacing the first.
@@ -129,7 +132,7 @@ try:
         assert done['success'] == 1 and done['files'] == [str(earlier)], (done, media_in(folder))
         assert media_in(folder) == [earlier.name], media_in(folder)
         assert [value['path'] for value in of(events, 'item_done')] == [str(earlier)], of(events, 'item_done')
-        assert f'保存位置已有这个文件（之前下载的），保留原文件名：{earlier.name}' in of(events, 'log'), of(events, 'log')
+        assert zh_t('core.engine.kept_existing', name=earlier.name) in of(events, 'log'), of(events, 'log')
         assert media_in(paths.work_dir()) == [], media_in(paths.work_dir())
         report.setdefault('earlier_work_name_kept', []).append(media_in(folder))
 

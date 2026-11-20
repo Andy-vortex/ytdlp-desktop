@@ -1,3 +1,4 @@
+# quick
 import _sandbox
 import contextlib
 import io
@@ -169,6 +170,148 @@ class BackupNamesInMessages(unittest.TestCase):
         self.assertEqual(installer.backups_to_name(self.target, {'broken': True}),
                          f'{APP}-1.5.0备份.exe、{APP}-旧版备份.exe')
         self.assertEqual(installer.backups_to_name(self.work / 'missing'), '')
+
+
+
+class Killed(BaseException):
+    """Stands in for the process being killed: nothing after it runs (not even an except Exception)."""
+
+
+def die(*_args, **_kwargs):
+    raise Killed
+
+
+class FolderInstallSafety(unittest.TestCase):
+    """(2.0.0 final review, simplicity 3.2) The folder-layout paths that had no test: a failed post-install gate rolls
+    back to the previous program, a run killed half way through the renames is undone by the next run, and an
+    install whose gate never finished is rolled back before the next install.  Each one ends with the previous
+    program's exact files in place (PLAN section 3, item 7)."""
+
+    def setUp(self):
+        self.work = Path(tempfile.mkdtemp(prefix='installer-safety-'))
+        self.addCleanup(shutil.rmtree, self.work, ignore_errors=True)
+        self.target = self.work / APP
+        self.target.mkdir()
+        self.stage = self.work / 'stage'
+        self.stage.mkdir()
+
+    def tree(self, folder=None):
+        """{relative path: bytes} of every file under ``folder`` (default: the target)."""
+        folder = folder or self.target
+        return {str(path.relative_to(folder)): path.read_bytes() for path in sorted(folder.rglob('*')) if path.is_file()}
+
+    def install(self, version, gate=None, **patches):
+        info = {'version': version, 'files': 2, 'size': 4, 'exe_sha256': '0' * 64}
+
+        def copy_new_program(_stage, target, _info):
+            (target / installer.NEW_INTERNAL).mkdir()
+            (target / installer.NEW_INTERNAL / 'lib.bin').write_bytes(f'lib {version}'.encode())
+            (target / installer.NEW_EXE).write_bytes(f'MZ {version} '.encode() + os.urandom(16))
+
+        results = {'self_test_seconds': 1.0, 'download': {'files': ['fixture [fixture].wav']}, 'time_to_window': 1.0}
+        gate_patch = {'side_effect': gate} if gate is not None else {'return_value': results}
+        output = io.StringIO()
+        try:
+            with patch.object(installer, 'check_stage', return_value=info), \
+                    patch.object(installer, 'load_gate', return_value=None), \
+                    patch.object(installer, 'refuse_if_running'), \
+                    patch.object(installer, 'copy_new_program', side_effect=copy_new_program), \
+                    patch.object(installer, 'program_version', return_value=None), \
+                    patch.object(installer, 'post_install_gate', **gate_patch), \
+                    contextlib.ExitStack() as stack, contextlib.redirect_stdout(output):
+                for name, value in patches.items():
+                    stack.enter_context(patch.object(installer, name, value))
+                code = installer.main(['--stage', str(self.stage), '--target', str(self.target),
+                                       '--instance-name', 'Local\\YtDlpDesktop.Test.' + uuid.uuid4().hex[:12]])
+        finally:
+            self.last_output = output.getvalue()
+        return code, output.getvalue()
+
+    def receipt(self):
+        return json.loads((self.target / installer.RECEIPT).read_text(encoding='utf-8'))
+
+    def installed_twice(self):
+        """2.0.0 over nothing, then 2.0.1 over it: a folder build with a kept previous folder build."""
+        for version in ('2.0.0', '2.0.1'):
+            code, text = self.install(version)
+            self.assertEqual(code, 0, text)
+        self.assertEqual(self.receipt()['previous']['layout'], 'onedir')
+        return self.tree()
+
+    def test_a_failed_gate_rolls_back_to_the_previous_program(self):
+        before = self.installed_twice()
+        code, text = self.install('2.0.2', gate=RuntimeError('the self-test window never opened'))
+        self.assertEqual(code, 2, text)
+        self.assertIn('安装后自检失败：the self-test window never opened', text)
+        self.assertIn('已自动回滚到安装前的状态。', text)
+        rolled = '_rolledback-2.0.2'
+        self.assertTrue((self.target / rolled / EXE).read_bytes().startswith(b'MZ 2.0.2 '),
+                        'the unchecked program is set aside')
+        # the active program is exactly 2.0.1 again (its receipt is back too; the 2.0.0 kept behind it was let go
+        # when 2.0.2 was committed: one previous program is kept, PLAN section 3, item 7)
+        def program(tree):
+            return {name: data for name, data in tree.items()
+                    if not name.startswith((rolled, installer.PREVIOUS, 'install-receipt'))}
+        self.assertEqual(program(self.tree()), program(before))
+        self.assertEqual(set(program(before)), {EXE, str(Path(installer.INTERNAL, 'lib.bin'))})
+        self.assertEqual(self.receipt()['installed'], '2.0.1')
+        self.assertIs(self.receipt()['checked'], True)
+        self.assertFalse((self.target / installer.JOURNAL).exists())
+        for leftover in (installer.NEW_INTERNAL, installer.NEW_EXE, installer.PENDING_RECEIPT):
+            self.assertFalse((self.target / leftover).exists(), leftover)
+        # an interrupt (Ctrl+C) during the gate rolls back the same way and says so
+        code, text = self.install('2.0.3', gate=KeyboardInterrupt())
+        self.assertEqual(code, 130, text)
+        self.assertIn('已自动回滚到安装前的状态。', text)
+        self.assertEqual(self.receipt()['installed'], '2.0.1')
+
+    def test_a_run_killed_during_the_renames_is_undone_by_the_next_run(self):
+        before = self.installed_twice()
+        real_save = installer.save_journal
+
+        def save_then_die(target, data):
+            real_save(target, data)
+            if data['direction'] == 'forward' and data['done'] == 4:
+                raise Killed                    # the old program is half moved aside; the new one not yet in
+
+        with self.assertRaises(Killed):
+            self.install('2.0.2', save_journal=save_then_die, reverse=die)
+        self.assertTrue((self.target / installer.JOURNAL).is_file(), 'the journal is left behind')
+        self.assertFalse((self.target / EXE).exists(), 'killed in the middle: no program in place')
+        # the next run first undoes what the killed run did: exactly the files of 2.0.1 again, nothing left over
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            installer.recover(self.target, dry_run=False)
+        self.assertIn('已撤销上次中断的安装', output.getvalue())
+        self.assertEqual(self.tree(), before)
+        # and an install run does the same before it starts, then installs
+        with self.assertRaises(Killed):
+            self.install('2.0.2', save_journal=save_then_die, reverse=die)
+        code, text = self.install('2.0.3')
+        self.assertEqual(code, 0, text)
+        self.assertIn('已撤销上次中断的安装', text)
+        self.assertEqual(self.receipt()['installed'], '2.0.3')
+        kept = self.tree(self.target / installer.PREVIOUS)
+        self.assertEqual(kept[EXE], before[EXE], 'the program set aside is 2.0.1, as it was')
+        self.assertEqual(kept[str(Path(installer.INTERNAL, 'lib.bin'))], b'lib 2.0.1')
+
+    def test_an_install_whose_gate_never_finished_is_rolled_back_first(self):
+        before = self.installed_twice()
+        with self.assertRaises(Killed):         # killed during the gate: 2.0.2 is active, its receipt unchecked
+            self.install('2.0.2', gate=Killed(), abort_install=die)
+        self.assertEqual(self.receipt()['installed'], '2.0.2')
+        self.assertIs(self.receipt()['checked'], False)
+        self.assertEqual(installer.unchecked_install(self.target), '2.0.2')
+        code, text = self.install('2.0.3')
+        self.assertEqual(code, 0, text)
+        self.assertIn('程序目录里的 2.0.2 已经启用，但上次安装没有完成安装后自检', text)
+        self.assertIn('已回滚上次未经自检的安装。', text)
+        receipt = self.receipt()
+        self.assertEqual((receipt['installed'], receipt['checked']), ('2.0.3', True))
+        self.assertEqual(receipt['previous']['version'], '2.0.1', 'the unchecked 2.0.2 is not kept as the previous')
+        kept = self.tree(self.target / installer.PREVIOUS)
+        self.assertEqual(kept[EXE], before[EXE])
+        self.assertTrue((self.target / '_rolledback-2.0.2' / EXE).read_bytes().startswith(b'MZ 2.0.2 '))
 
 
 if __name__ == '__main__':

@@ -11,15 +11,14 @@ review-state-4                         a release-check stamp far in the future c
 review-state-7                         closing while minimised keeps the maximised state
 
 Nothing here touches the network.  Junctions are made inside the test's own temp folder and
-removed with ``cmd /c rmdir`` before the folder is deleted.  The 1.5.1 checks run the untouched
-1.5.1 code from the backup folder (engine.py in this process; library.py, library_ui.py and
-studio.py in a child process whose import path is the backup's src folder).
+removed with ``cmd /c rmdir`` before the folder is deleted.  (2.0.0 S2 P2 / P3) The checks that ran
+the 1.5.1 code against what this version writes are gone with the 1.5.1 layer; the unfinished list is
+format 2 (a file that is not version 2 is set aside: test_unfinished.ForeignListTests).
 """
 import _sandbox
 from dataclasses import replace
 import errno
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -46,7 +45,6 @@ import urls
 from library import Library
 
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
-BACKUP = _sandbox.release_src('1.5.1')
 LOG = 'YtDlpDesktop.unfinished'
 # Only a text inside the stored entries (as the owner's output folder looks); nothing is written there.
 OWNER_OUTPUT = 'D:\\YT-DLP下载器\\下载文件'
@@ -55,21 +53,6 @@ HISTORY_KINDS = ('item', 'title', 'media', 'file', 'queued', 'item_done', 'done'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
-
-
-def old_engine(state):
-    """engine.py of 1.5.1, loaded under another name, with its state folder redirected."""
-    name = 'engine_1_5_1_review'
-    spec = importlib.util.spec_from_file_location(name, BACKUP / 'engine.py')
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(name, None)
-    assert module.APP_VERSION == '1.5.1'
-    module.STATE_DIR = Path(state)
-    return module
 
 
 def dead_pid(case):
@@ -136,9 +119,9 @@ class UnfinishedListTests(TempCase):
         return result
 
     def write_like_wp5(self, entries):
-        """The file as the save of the WP5 state wrote it (indent=2, no size limit)."""
-        links, options = unfinished.legacy_view(entries)
-        data = {'version': 1, 'urls': links, 'options': options or {}, 'entries': entries}
+        """The file as the save of the WP5 state wrote it (indent=2, every option, no size limit); (2.0.0)
+        in format 2."""
+        data = {'version': 2, 'entries': entries}
         paths.failed_file().parent.mkdir(parents=True, exist_ok=True)
         paths.failed_file().write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         return paths.failed_file().read_bytes()
@@ -160,7 +143,7 @@ class UnfinishedListTests(TempCase):
         self.assertEqual([item['url'] for item in unfinished.load()], [new])
         self.assertEqual(done['unfinished'], 1)
         self.assertIn(kept[0].name, logs.output[0])
-        self.assertIn('超过 5 MB', logs.output[0])
+        self.assertIn(_sandbox.zh_t('core.unfinished.problem.too_large', size='\0').split('\0')[0], logs.output[0])
         # The next run reads the new list normally and sets nothing aside.
         self.run_job([B], [1])
         self.assertEqual([item['url'] for item in unfinished.load()], [new, B])
@@ -169,15 +152,19 @@ class UnfinishedListTests(TempCase):
     def test_load_for_merge_sets_aside_every_list_it_cannot_read_completely(self):
         good = unfinished.entry(A, engine._entry_options(self.options), 'failed')
         cases = {
-            'cut off': '{"version": 1, "entries": [',
+            # (2.0.0 S2 P3) the 1.5.1 layer is gone; (S2 Q2, PLAN 3.10) a file that is not version 2 is one
+            # this merge cannot read completely: set aside like any other (test_unfinished.ForeignListTests)
+            'cut off': '{"version": 2, "entries": [',
             'not an object': '[]',
-            'another version': '{"version": 2, "entries": []}',
-            'entries not a list': '{"version": 1, "entries": "x"}',
-            'a line of 1.5.1 that is no link': json.dumps({'version': 1, 'urls': ['not a link'], 'options': {'output': 'D:\\x'}}),
-            'a 1.5.1 list with an unknown mode': json.dumps({'version': 1, 'urls': [A], 'options': {'output': 'D:\\x', 'mode': '?'}}),
-            'urls that are not a list': json.dumps({'version': 1, 'urls': A, 'options': {'output': 'D:\\x'}}),
-            'one entry broken': json.dumps({'version': 1, 'entries': [good, {'key': 'k'}]}),
-            'larger than 5 MB': json.dumps({'version': 1, 'entries': [good], 'padding': 'x' * (5 * 1024 * 1024)}),
+            'another version': '{"version": 3, "entries": []}',
+            'version 1': json.dumps({'version': 1, 'entries': [good]}),
+            'the 1.5.1 shape': json.dumps({'urls': [A, B], 'options': {'output': str(self.out)}}),
+            'entries not a list': '{"version": 2, "entries": "x"}',
+            'no entries': '{"version": 2, "urls": ["https://example.invalid/a"]}',
+            'one entry broken': json.dumps({'version': 2, 'entries': [good, {'key': 'k'}]}),
+            'larger than 5 MB': json.dumps({'version': 2, 'entries': [good], 'padding': 'x' * (5 * 1024 * 1024)}),
+            'a version-1 file larger than 5 MB': json.dumps({'version': 1, 'entries': [good],
+                                                             'padding': 'x' * (5 * 1024 * 1024)}),
         }
         for name, text in cases.items():
             with self.subTest(name):
@@ -196,19 +183,41 @@ class UnfinishedListTests(TempCase):
                 self.assertIn('未完成清单', lines[0])
                 self.assertIn(kept[0].name, lines[0])
                 self.assertEqual(entries, [good] if name == 'one entry broken' else [])
-        # A list that is fine, a list of 1.5.1 and no list at all: nothing is set aside, nothing is said.
+        # A list that is fine and no list at all: nothing is set aside, nothing is said.
         for path in self.set_aside_files():
             path.unlink()
         unfinished.save([good])
         lines = []
         self.assertEqual(unfinished.load_for_merge(lines.append), [good])
-        engine.store_failed_job([A, B], self.options)
-        old = old_engine(self.state)
-        old.store_failed_job([A, C], old.Options(self.out))
+        _sandbox.save_unfinished([A, C], self.options)
         self.assertEqual([item['url'] for item in unfinished.load_for_merge(lines.append)], [A, C])
         paths.failed_file().unlink()
         self.assertEqual(unfinished.load_for_merge(lines.append), [])
         self.assertEqual((lines, self.set_aside_files()), ([], []))
+
+    def test_load_at_start_sets_aside_a_damaged_too_large_or_unreadable_list(self):
+        """(2.0.0 S2 Q2, S2-AMEND.md 2.2) The window's start renames a list that gives no entry, as the
+        merge does (the line is the same core.unfinished.kept_aside)."""
+        good = unfinished.entry(A, engine._entry_options(self.options), 'failed')
+        cases = {'damaged': ('{"version": 2, "entries": [', None),
+                 'too_large': (json.dumps({'version': 2, 'entries': [good], 'padding': 'x' * (5 * 1024 * 1024)}), None),
+                 'unreadable': ('{"version": 2, "entries": []}', OSError(errno.EIO, 'I/O error'))}
+        for problem, (text, failure) in cases.items():
+            with self.subTest(problem):
+                for path in self.set_aside_files():
+                    path.unlink()
+                paths.failed_file().parent.mkdir(parents=True, exist_ok=True)
+                paths.failed_file().write_text(text, encoding='utf-8')
+                lines = []
+                reading = mock.patch.object(paths, 'read_text', side_effect=failure) if failure else mock.patch.object(
+                    paths, 'read_text', wraps=paths.read_text)
+                with reading, self.assertLogs(LOG, 'WARNING'):
+                    self.assertEqual(unfinished.load_at_start(lines.append), [])
+                self.assertFalse(paths.failed_file().exists())
+                kept = self.set_aside_files()
+                self.assertEqual([path.read_text(encoding='utf-8') for path in kept], [text])
+                self.assertEqual([(line.key, line.params['problem'].key, line.params['target']) for line in lines],
+                                 [('core.unfinished.kept_aside', f'core.unfinished.problem.{problem}', kept[0].name)])
 
     def test_the_merge_as_the_engine_will_call_it(self):
         """Runner.download's finally with the one sanctioned change: load_for_merge instead of load."""
@@ -244,7 +253,8 @@ class UnfinishedListTests(TempCase):
                 unfinished.save([])
             done = self.run_job([A], [1])
         self.assertEqual(paths.failed_file().read_text(encoding='utf-8'), '{broken')
-        self.assertTrue([line for kind, line in self.events if kind == 'log' and line.startswith('失败清单未能保存：')])
+        self.assertTrue([line for kind, line in self.events
+                         if kind == 'log' and getattr(line, 'key', None) == 'core.engine.unfinished_not_saved'])
         self.assertEqual((done['failed_path'], done['unfinished']), (None, 0))
 
     def test_clearing_the_list_never_deletes_a_list_it_could_not_read(self):
@@ -255,7 +265,7 @@ class UnfinishedListTests(TempCase):
         self.assertFalse(paths.failed_file().exists())
         self.assertEqual([path.read_text(encoding='utf-8') for path in self.set_aside_files()], ['{broken'])
 
-    def test_a_stopped_queue_of_8000_links_stays_readable_by_both_versions(self):
+    def test_a_stopped_queue_of_8000_links_stays_readable(self):
         """The reproduction of review-compat-2: an 8000-link queue stopped during its first link."""
         links = [f'https://www.youtube.com/watch?v=v{number:010d}' for number in range(8000)]
         options = engine.Options(Path(OWNER_OUTPUT), formats.MODES[3])
@@ -277,11 +287,7 @@ class UnfinishedListTests(TempCase):
         moved = [item for path in self.set_aside_files('overflow')
                  for item in json.loads(path.read_text(encoding='utf-8'))['entries']]
         self.assertEqual(sorted(item['url'] for item in listed + moved), sorted(links))
-        old = old_engine(self.state)
-        job = old.load_failed_job()
-        self.assertIsNotNone(job, 'the loader of 1.5.1 reads the file')
-        self.assertEqual(len(job['urls']), len(listed))
-        self.assertEqual(job['options'].mode, formats.MODES[3])
+        self.assertEqual({item['options']['mode'] for item in listed}, {formats.MODES[3]})
         for path in self.set_aside_files('overflow'):
             path.unlink()
         # The same 8000 entries with the owner's folder, as they would be written for him.
@@ -289,14 +295,14 @@ class UnfinishedListTests(TempCase):
         unfinished.save(owner)
         self.assertLessEqual(paths.failed_file().stat().st_size, unfinished.SAFE_SIZE)
         self.assertEqual(self.set_aside_files('overflow'), [], '8000 stopped links fit without an overflow')
-        self.assertEqual(len(old.load_failed_job()['urls']), 8000)
+        self.assertEqual(len(unfinished.load()), 8000)
         # One more successful job: nothing is lost.
         self.run_job([A], [0])
         self.assertEqual(len(unfinished.load()), 8000)
         _sandbox.write_report('review-state-sizes.json', {
             'bytes_8000_stopped_owner_folder': paths.failed_file().stat().st_size,
             'bytes_8000_stopped_test_folder': size, 'moved_in_test_folder': len(moved),
-            'safe_size': unfinished.SAFE_SIZE, 'max_size_both_versions': unfinished.MAX_SIZE})
+            'safe_size': unfinished.SAFE_SIZE, 'max_size': unfinished.MAX_SIZE})
 
     def test_a_list_beyond_the_safe_size_moves_its_oldest_entries_aside(self):
         entries = self.owner_entries(14000, reason='failed', error='ERROR: [youtube] v: Sign in to confirm ' + 'z' * 60,
@@ -317,34 +323,8 @@ class UnfinishedListTests(TempCase):
         self.assertIn(overflow[0].name, logs.output[-1])
         self.assertEqual(len(lines), 1)
         self.assertIn(f'最早的 {len(moved)} 条', lines[0])
-        # Both loaders read the shorter list.
-        self.assertEqual(len(old_engine(self.state).load_failed_job()['urls']), len(kept))
-
-    def test_compact_json_is_read_by_the_loader_of_1_5_1(self):
-        options = engine.Options(self.out, formats.MODES[2], '720p', True, '', False, {A: 'https://example.org/page'})
-        engine.store_failed_job([A, B], options)
-        text = paths.failed_file().read_text(encoding='utf-8')
-        self.assertTrue(text.startswith('{"version":1,'), text[:40])
-        old = old_engine(self.state)
-        job = old.load_failed_job()
-        self.assertEqual(job['urls'], [A, B])
-        self.assertEqual(job['options'], old.Options(self.out, formats.MODES[2], '720p', True, '', False,
-                                                      {A: 'https://example.org/page'}, '', {}, ''))
 
     # -------------------------------------------------------------- fix round 1
-
-    def load_with_1_5_1(self):
-        """engine.load_failed_job of 1.5.1 (the backup), run in a process of its own."""
-        script = ('import json, sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\nimport engine\n'
-                  'assert engine.APP_VERSION == "1.5.1"\nengine.STATE_DIR = Path(sys.argv[2])\n'
-                  'job = engine.load_failed_job()\n'
-                  'print(json.dumps(None if job is None else {"urls": job["urls"], "mode": job["options"].mode, '
-                  '"resolution": job["options"].resolution, "playlist": job["options"].playlist, '
-                  '"batch_safe": job["options"].batch_safe, "output": str(job["options"].output)}, ensure_ascii=False))\n')
-        child = subprocess.run([sys.executable, '-X', 'utf8', '-B', '-c', script, str(BACKUP), str(self.state)],
-                               capture_output=True, timeout=120, creationflags=procutil.HIDDEN)
-        self.assertEqual(child.returncode, 0, child.stderr.decode('utf-8', 'replace')[-1500:])
-        return json.loads(child.stdout.decode('utf-8').strip().splitlines()[-1])
 
     def test_the_defaults_are_the_options_defaults(self):
         defaults = engine._entry_options(engine.Options(Path(OWNER_OUTPUT)))
@@ -352,7 +332,7 @@ class UnfinishedListTests(TempCase):
         self.assertEqual(unfinished.OPTION_DEFAULTS, defaults)
 
     def test_entries_are_written_without_their_default_options(self):
-        """core-rv-state-1-1: no repeated default options; 1.5.1 still reads the file."""
+        """core-rv-state-1-1: no repeated default options."""
         title = '一首相当长的中文歌曲标题 - 某位歌手【官方 MV】'
         error = 'ERROR: [youtube] v: Sign in to confirm ' + 'z' * 60
         entries = self.owner_entries(5000, reason='failed', error=error, title=title)
@@ -360,15 +340,12 @@ class UnfinishedListTests(TempCase):
         raw = json.loads(paths.failed_file().read_text(encoding='utf-8'))
         self.assertEqual({tuple(sorted(item['options'])) for item in raw['entries']}, {('mode', 'output')})
         self.assertEqual(raw['entries'][0]['options'], {'output': OWNER_OUTPUT, 'mode': formats.MODES[3]})
-        self.assertEqual(raw['options']['resolution'], formats.BEST, 'the view of 1.5.1 is written in full')
         size = paths.failed_file().stat().st_size
         self.assertLessEqual(size, unfinished.SAFE_SIZE * 3 // 4, size)
         self.assertEqual(self.set_aside_files('overflow'), [])
         self.assertEqual(unfinished.load(), entries, 'the defaults come back when the list is read')
         loaded = engine.Options.from_dict(unfinished.load()[0]['options'])
         self.assertEqual(loaded, engine.Options(Path(OWNER_OUTPUT), formats.MODES[3]))
-        legacy = self.load_with_1_5_1()
-        self.assertEqual((len(legacy['urls']), legacy['mode'], legacy['output']), (5000, formats.MODES[3], OWNER_OUTPUT))
         # Values that differ from the defaults are written; an older file with every option still reads the same.
         special = engine.Options(self.out, formats.MODES[4], '1080p', playlist=True, batch_safe=False, naming='title_id',
                                  embed_cover=False, subtitles=True, skip_downloaded=True)
@@ -379,13 +356,12 @@ class UnfinishedListTests(TempCase):
                                    'batch_safe': False, 'naming': 'title_id', 'embed_cover': False, 'subtitles': True,
                                    'skip_downloaded': True})
         self.assertEqual(engine.Options.from_dict(unfinished.load()[0]['options']), replace(special, proxy='', cookies=''))
-        legacy = self.load_with_1_5_1()
-        self.assertEqual((legacy['urls'], legacy['mode'], legacy['resolution'], legacy['playlist'], legacy['batch_safe']),
-                         ([A], formats.MODES[4], '1080p', True, False))
         full = self.owner_entries(2)
         self.write_like_wp5(full)
         self.assertEqual(unfinished.load(), full)
-        self.assertEqual(len(unfinished.newest_group(unfinished.load() + self.owner_entries(1, start=1_800_000_000.0))), 3,
+        # (2.0.0 S2 P4: unfinished.newest_group, used only by a 1.5.1 wrapper, is gone)
+        both = unfinished.load() + self.owner_entries(1, start=1_800_000_000.0)
+        self.assertEqual([item['options'] for item in both], [both[-1]['options']] * 3,
                          'entries of both forms ran with the same options')
 
     def hold(self, seconds):
@@ -440,60 +416,12 @@ class UnfinishedListTests(TempCase):
         self.assertGreaterEqual(time.monotonic() - started, unfinished.READ_RETRY * 0.9, 'the read was retried')
         time.sleep(2.7)
         self.assertEqual(paths.failed_file().read_bytes(), before, 'never replaced by a shorter list')
-        self.assertTrue([line for kind, line in self.events if kind == 'log' and str(line).startswith('失败清单未能保存：')])
+        self.assertTrue([line for kind, line in self.events
+                         if kind == 'log' and getattr(line, 'key', None) == 'core.engine.unfinished_not_saved'])
         self.assertEqual(done['failed_path'], None)
 
 
 # ------------------------------------------------------------------ the history (library.sqlite3)
-
-
-SCRIPT_1_5_1 = r'''
-import json, sys, traceback
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import engine, library
-from library_ui import LibraryUI
-store = library.Library(Path(sys.argv[2]))
-results = {}
-
-
-class Var:
-    def __init__(self, value=None):
-        self.value = value
-
-    def set(self, value):
-        self.value = value
-
-    def get(self):
-        return self.value
-
-
-class Window:
-    def __init__(self):
-        for name in ('output', 'mode', 'format', 'resolution', 'playlist', 'batch_safe', 'archive_enabled', 'archive_root'):
-            setattr(self, name, Var())
-        self.download_referers = {}
-
-    def on_format(self):
-        pass
-
-
-for row in store.history():
-    window = Window()
-    try:
-        record = store.job(row['id'])
-        raw = record['data']['options']
-        pending = [url for url in raw['urls'] if url not in record['data']['completed']]
-        LibraryUI.restore_download_options(window, raw)      # 继续未完成 / 查看结果 of 1.5.1
-        options = engine.Options(Path(window.output.get()).expanduser().resolve(), window.mode.get(),
-                                 window.resolution.get(), window.playlist.get(), '', window.batch_safe.get())
-        command = engine.build_command(pending[0], options)   # what its start() checks ("Unsupported output option")
-        results[row['title']] = {'mode': window.mode.get(), 'format': window.format.get(),
-                                 'pending': pending, 'tail': command[-2:]}
-    except Exception:
-        results[row['title']] = {'error': traceback.format_exc()}
-print('RESULT ' + json.dumps(results, ensure_ascii=False))
-'''
 
 
 class HistoryTests(unittest.TestCase):
@@ -527,63 +455,30 @@ class HistoryTests(unittest.TestCase):
 
     # review-compat-1
 
-    def test_a_format_only_1_6_0_knows_is_stored_as_the_nearest_old_one(self):
-        cases = [(formats.MODES[5], '最佳', formats.MODES[0]), (formats.MODES[6], '1080p', formats.MODES[4]),
-                 (formats.MODES[3], '最佳', None)]
-        for mode, resolution, legacy in cases:
+    def test_every_format_is_stored_as_itself(self):
+        """(2.0.0 S2 P2) Format 2 has one 'mode' (S2-DESIGN.md 1.2): no mode_v2 for the formats 1.5.1 did
+        not know (review-compat-1 kept the 1.5.1 window reading them; that window is not supported)."""
+        cases = [(formats.MODES[5], 'best'), (formats.MODES[6], '1080p'), (formats.MODES[3], 'best')]
+        for mode, resolution in cases:
             with self.subTest(mode=mode):
                 options = engine.Options(self.out, mode, resolution)
                 job = self.launch(options, [A])
                 stored = self.raw(job)['options']
-                if legacy is None:
-                    self.assertEqual(stored['mode'], mode)
-                    self.assertNotIn(library.MODE_KEY, stored)
-                else:
-                    self.assertEqual((stored['mode'], stored[library.MODE_KEY]), (legacy, mode))
+                self.assertEqual(stored['mode'], mode)
+                self.assertNotIn('mode_v2', stored)
                 record = self.store.job(job)
-                self.assertEqual(record['data']['options']['mode'], mode, '1.6.0 reads its own format back')
-                self.assertNotIn(library.MODE_KEY, record['data']['options'])
+                self.assertEqual(record['data']['options']['mode'], mode)
                 self.assertEqual(engine.Options.from_dict(record['data']['options']), options)
                 row = next(row for row in self.store.history() if row['id'] == job)
                 self.assertEqual(row['data']['options']['mode'], mode)
                 # A write of the options through change_job keeps the stored form.
                 self.store.change_job(job, options=record['data']['options'])
-                self.assertEqual(self.raw(job)['options']['mode'], legacy or mode)
+                self.assertEqual(self.raw(job)['options'], stored)
                 self.assertEqual(self.store.job(job)['data']['options']['mode'], mode)
         # Collection jobs (no download format) are stored as before.
         collect = self.store.create_job('collect', '采集', {'urls': [A], 'dynamic': False})
         self.assertEqual(self.raw(collect)['options'], {'urls': [A], 'dynamic': False, 'proxy': ''})
 
-    def test_the_1_5_1_window_restores_every_job_1_6_0_wrote(self):
-        """The untouched 1.5.1 code (library.py, library_ui.py, studio.FORMATS, engine.build_command)
-        runs in a child process against the database 1.6.0 has written."""
-        for mode, resolution in zip(formats.MODES, ('最佳', '最佳', '最佳', '最佳', '1080p', '最佳', '720p')):
-            options = engine.Options(self.out, mode, resolution)
-            job = self.launch(options, [A, B])
-            self.store.download_event(job, 'item', dict(index=1, total=2, url=A, key=urls.link_key(A),
-                                                         format=formats.format_key(formats.by_mode(mode), resolution)))
-            self.store.download_event(job, 'item_done', dict(index=1, success=True, cancelled=False, files=1,
-                                                             bot_check=False, url=A))
-            self.store.download_event(job, 'done', dict(success=1, failed=1, cancelled=False, files=[],
-                                                        pending_urls=[B]))
-            self.store.rename_job(job, mode)
-        child = subprocess.run([sys.executable, '-X', 'utf8', '-B', '-c', SCRIPT_1_5_1, str(BACKUP), str(self.store.path)],
-                               capture_output=True, text=True, encoding='utf-8', timeout=180, cwd=str(self.root),
-                               creationflags=procutil.HIDDEN)
-        line = next((line for line in child.stdout.splitlines() if line.startswith('RESULT ')), None)
-        self.assertIsNotNone(line, child.stdout[-2000:] + child.stderr[-3000:])
-        results = json.loads(line[len('RESULT '):])
-        self.assertEqual(sorted(results), sorted(formats.MODES))
-        labels_1_5_1 = ['原始音频 · 保留源编码', 'WAV · 32 位浮点', 'FLAC · 24 位', 'MP3 · 320 kbps', 'MKV · 保留源画质']
-        for mode, result in results.items():
-            with self.subTest(mode=mode):
-                self.assertNotIn('error', result, result.get('error'))
-                self.assertIn(result['mode'], formats.LEGACY_MODES)
-                self.assertEqual(result['format'], labels_1_5_1[formats.LEGACY_MODES.index(result['mode'])])
-                self.assertEqual(result['pending'], [B])
-                self.assertEqual(result['tail'], ['--', B])
-                expected = mode if mode in formats.LEGACY_MODES else library._legacy_mode(mode)
-                self.assertEqual(result['mode'], expected)
 
     # review-e2e-4
 
@@ -635,8 +530,10 @@ class HistoryTests(unittest.TestCase):
                 for item in library.job_downloads(data):
                     expected = flac if item['format'] == 'audio_flac' else mp3
                     self.assertEqual(engine.Options.from_dict(item['options']), expected)
-                # 1.5.1 keeps reading the link list it knows.
-                self.assertEqual(sorted(data['completed']), sorted([A, B] if (outcome_mp3 == 0 or outcome_flac == 0) else [B]))
+                # (2.0.0) one completion list: the (link, format) pairs that finished
+                self.assertEqual(sorted(map(tuple, data['done'])),
+                                 sorted([(A, 'audio_mp3')] * (outcome_mp3 == 0) + [(B, 'audio_mp3')]
+                                        + [(A, 'audio_flac')] * (outcome_flac == 0)))
 
     def test_the_same_link_in_the_same_format_updates_its_options_as_before(self):
         mp3 = engine.Options(self.out, formats.MODES[3])
@@ -659,12 +556,9 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual([(item['url'], item['format'], item['options']['output']) for item in variants],
                          [(A, 'audio_flac', str(self.root / '新'))])
 
-    def test_completion_of_records_without_formats(self):
-        """Records of 1.5.1 (or from before the list existed) are judged by 'completed'."""
-        data = {'options': {'urls': [A, B], 'output': str(self.out), 'mode': formats.MODES[0]}, 'completed': [A]}
-        self.assertEqual([(item['url'], item['format'], item['done']) for item in library.job_downloads(data)],
-                         [(A, 'audio_best', True), (B, 'audio_best', False)])
-        # skipped as downloaded without a format: the job's only format of that link is taken.
+    def test_completion_of_events_without_formats(self):
+        """(2.0.0) An item_done without a format: the job's only format of that link is taken; a link the
+        job has in two formats is remembered without one (no download of the plan is marked)."""
         mp3 = engine.Options(self.out, formats.MODES[3])
         job = self.launch(mp3, [A, B])
         self.store.download_event(job, 'item_done', dict(index=1, success=False, cancelled=False, files=0,
@@ -673,11 +567,11 @@ class HistoryTests(unittest.TestCase):
         self.store.download_event(job, 'item_done', dict(index=2, success=False, cancelled=False, files=0,
                                                          bot_check=False, url=B, skipped='downloaded'))
         data = self.store.job(job)['data']
-        self.assertEqual(data['completed'], [A, B])
-        self.assertEqual(data['completed_variants'], [[A, 'audio_mp3']], 'B has two formats: which one is unknown')
+        self.assertEqual(data['done'], [[A, 'audio_mp3'], [B, None]], 'B has two formats: which one is unknown')
+        self.assertEqual([item['done'] for item in library.job_downloads(data)], [True, False, False])
         self.store.download_event(job, 'item_done', dict(index=3, success=False, cancelled=False, files=0,
                                                          bot_check=False, url=B, skipped='downloaded', format='audio_flac'))
-        self.assertEqual(self.store.job(job)['data']['completed_variants'], [[A, 'audio_mp3'], [B, 'audio_flac']])
+        self.assertEqual(self.store.job(job)['data']['done'], [[A, 'audio_mp3'], [B, None], [B, 'audio_flac']])
 
 
 # ------------------------------------------------------------------ the purges and links
@@ -756,7 +650,8 @@ class LinkTests(unittest.TestCase):
         make_junction(self, work / 'old.part', part)
         make_junction(self, work / 'clip.webm', part)
         engines = paths.own_dir(paths.engines_dir())
-        make_junction(self, engines / 'yt-dlp.download', engines_target)
+        linked = f'yt-dlp.download.{self.dead}.1.exe'      # (2.0.0 S2 P4) a name the purge removes when it is a file
+        make_junction(self, engines / linked, engines_target)
         symlink = work / 'linked.webm'
         try:
             os.symlink(part / 'keep.txt', symlink)
@@ -769,7 +664,7 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(self.listing(inner), ['keep.txt'], '... without entering the junction inside it')
         self.assertFalse(stale.exists(), 'an old plain file in the work folder is still removed')
         self.assertTrue(paths.is_link(work / 'old.part') and paths.is_link(work / 'clip.webm'))
-        self.assertTrue(paths.is_link(engines / 'yt-dlp.download'))
+        self.assertTrue(paths.is_link(engines / linked))
         self.assertEqual(self.listing(part), ['keep.txt'])
         self.assertEqual(self.listing(engines_target), ['keep.txt'])
         if symlink is not None:
@@ -906,7 +801,7 @@ class UpdaterTests(unittest.TestCase):
         elapsed = self.run_update(self.holder(6.0))
         self.assertEqual(len(self.values('update_error')), 1)
         message = self.values('update_error')[0]
-        self.assertTrue(message.startswith('新版引擎无法写入（') and message.endswith('），已保留现有引擎。'), message)
+        self.assertEqual(getattr(message, 'key', None), 'core.update.write_failed', message)
         self.assertGreaterEqual(elapsed, updater.INSTALL_RETRY - 0.2)
         self.assertLess(elapsed, updater.INSTALL_RETRY + 2.5)
         self.assertEqual((self.engines / 'yt-dlp.exe').read_bytes(), OLD_ENGINE)
@@ -938,7 +833,7 @@ class UpdaterTests(unittest.TestCase):
                 self.events.clear()
                 with self.file_trouble(kind), self.assertLogs('YtDlpDesktop.updater', 'WARNING'):
                     self.run_update()
-                self.assertEqual(self.values('update_error'), [updater.MSG_SAVE.format(reason=reason)])
+                self.assertEqual(self.values('update_error'), [_sandbox.zh_t('core.update.save_failed', reason=reason)])
                 message = self.values('update_error')[0]
                 for part in ('[Errno', 'yt-dlp', str(self.root), '\\'):
                     self.assertNotIn(part, message)

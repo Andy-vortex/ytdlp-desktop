@@ -163,9 +163,12 @@ class A_TokensTest(unittest.TestCase):
         self.assertEqual(ui_theme.FAMILY, 'Microsoft YaHei UI')
         self.assertEqual(ui_theme.SIZES, {'caption': 12, 'body': 13, 'heading': 15, 'title': 22, 'brand': 17})
         self.assertEqual(ui_theme.LABEL_H, {'caption': 18, 'body': 22, 'heading': 22, 'title': 32, 'brand': 24})
-        self.assertEqual((ui_theme.PAGE_PAD, ui_theme.CARD_PAD, ui_theme.GAP), (24, 16, 12))
-        self.assertEqual((ui_theme.RADIUS_CARD, ui_theme.RADIUS, ui_theme.CONTROL_H, ui_theme.CONTROL_H_SM), (12, 8, 36, 28))
-        self.assertEqual((ui_theme.SIDEBAR_W, ui_theme.ROW_H, ui_theme.PAGE_MAX), (184, 52, 1080))
+        self.assertEqual((ui_theme.PAGE_PAD, ui_theme.PAD, ui_theme.GAP), (24, 16, 12))
+        self.assertEqual((ui_theme.RADIUS, ui_theme.CONTROL_H, ui_theme.CONTROL_H_SM), (8, 36, 28))
+        # (2.0.0 S4 stage C, 00-system 3.10) the card pieces and the old settings row are gone for good
+        for name in ('card', 'setting_row', 'fit_alternatives', 'CARD_PAD', 'RADIUS_CARD'):
+            self.assertFalse(hasattr(ui_theme, name), name)
+        self.assertEqual((ui_theme.SIDEBAR_W, ui_theme.ROW_H, ui_theme.PAGE_MAX), (168, 52, 1080))     # (2.0.0 S4) 168
         self.assertTrue(48 <= ui_theme.WHEEL_STEP <= 64)
         self.assertEqual({name: hex(value) for name, value in ICON_CODES.items()},
                          {'ICON_DOWNLOAD': '0xe896', 'ICON_SEARCH': '0xe721', 'ICON_LIBRARY': '0xe8f1',
@@ -173,7 +176,11 @@ class A_TokensTest(unittest.TestCase):
                           'ICON_CLOCK': '0xe823', 'ICON_ERROR': '0xe783', 'ICON_PAUSE': '0xe769',
                           'ICON_FOLDER': '0xe8b7', 'ICON_SKIP': '0xe72a',
                           # WP4 fix round 1 (visual-3): filled stop square, empty circle for "not started"
-                          'ICON_STOP': '0xe73b', 'ICON_PENDING': '0xea3a'})
+                          'ICON_STOP': '0xe73b', 'ICON_PENDING': '0xea3a',
+                          # 2.0.0 S4 A1: the '⋯' of menu_button, the archive folder (in both icon fonts)
+                          'ICON_MORE': '0xe712', 'ICON_ARCHIVE': '0xe7b8',
+                          # 2.0.0 S4 visual fix: the sidebar's 'Update available' arrow
+                          'ICON_UPDATE': '0xe74a'})
 
     def test_tone_colors(self):
         self.assertEqual(ui_theme.tone_colors('idle'), (ui_theme.MUTED, ui_theme.IDLE_SOFT))
@@ -202,17 +209,24 @@ class A_TokensTest(unittest.TestCase):
 
     def test_public_names_do_not_shadow_tkinter_methods(self):
         taken = set(dir(tkinter.Misc)) | set(dir(tkinter.Wm))
-        for name in ('enable_dpi_awareness', 'apply_theme', 'font', 'label', 'button', 'card', 'chip', 'tone_colors',
+        for name in ('enable_dpi_awareness', 'apply_theme', 'font', 'label', 'button', 'chip', 'tone_colors',
                      'resolve', 'on_appearance', 'off_appearance', 'icon', 'entry', 'option_menu', 'checkbox', 'switch', 'textbox',
-                     'scroll_area', 'tabs', 'table', 'empty_state', 'setting_row', 'fit', 'full_text',
-                     'wrap_to_width', 'apply_ttk_styles', 'set_page_cap', 'contrast', 'theme_patch'):
+                     'scroll_area', 'tabs', 'table', 'empty_state', 'fit', 'full_text',
+                     'wrap_to_width', 'apply_ttk_styles', 'set_page_cap', 'contrast', 'theme_patch',
+                     # 2.0.0 S4 A1
+                     'popup', 'menu_button', 'bind_menu', 'menu_items', 'ask_text', 'notice_bar', 'path_button',
+                     'section_label', 'show'):
             self.assertTrue(callable(getattr(ui_theme, name)), name)
             self.assertNotIn(name, taken, name)
 
     def test_class_members_do_not_shadow_their_base_classes(self):
         members = {ui_theme.Tabs: ('add', 'tab', 'set', 'get'), ui_theme.Chip: ('set',),
                    ui_theme.AppTable: ('fill', 'restripe', 'set_empty', 'rescale', 'recolor'),
-                   ui_theme.ScrollArea: ('canvas', 'bar_visible'), ui_theme.AppButton: ('kind',)}
+                   ui_theme.ScrollArea: ('canvas', 'bar_visible'), ui_theme.AppButton: ('kind', 'set_kind'),
+                   ui_theme.NoticeBar: ('show', 'hide', 'shown', 'full_text', 'buttons'),
+                   ui_theme.PathButton: ('path', 'set_path'),
+                   ui_theme.AppTextbox: ('set_dimmed', 'sync_placeholder'),
+                   ui_theme.TextDialog: ('accept', 'cancel')}
         for cls, names in members.items():
             base = cls.__mro__[1]
             for name in names:
@@ -348,12 +362,6 @@ class C_WidgetTest(unittest.TestCase):
         self.assertEqual((legacy.cget('text_color'), legacy.cget('height'), legacy.cget('anchor')), ('#123456', 30, 'w'))
         self.assertEqual(ui_theme.label(self.root).cget('text'), '')
 
-    def test_card(self):
-        card = ui_theme.card(self.root)
-        self.assertEqual((card.cget('fg_color'), card.cget('corner_radius'), card.cget('border_width'), card.cget('border_color')),
-                         (ui_theme.SURFACE, 12, 1, ui_theme.LINE))
-        self.assertEqual(ui_theme.card(self.root, corner_radius=4, fg_color=ui_theme.ROW).cget('corner_radius'), 4)
-
     # ---- buttons
     def test_button_kinds_and_sizes(self):
         looks = {'primary': (ui_theme.ACCENT, ui_theme.ACCENT_HOVER, ui_theme.WHITE),
@@ -372,8 +380,7 @@ class C_WidgetTest(unittest.TestCase):
         self.assertEqual(small.cget('height'), 28)
         self.assertIs(small.cget('font'), ui_theme.font('caption'))
         self.assertEqual(ui_theme.button(self.root, '默认').kind, 'soft')
-        self.assertEqual(ui_theme.button(self.root, '旧式', None, primary=True, width=129).kind, 'primary')
-        self.assertEqual(ui_theme.button(self.root, '旧式', None, primary=True, width=129).cget('width'), 129)
+        self.assertEqual(ui_theme.button(self.root, '宽', None, kind='primary', width=129).cget('width'), 129)
         with self.assertRaises(ValueError):
             ui_theme.button(self.root, 'x', kind='loud')
 
@@ -591,7 +598,7 @@ class C_WidgetTest(unittest.TestCase):
     def test_icon_for_every_code(self):
         if ui_theme.icon_font_path() is None:
             self.skipTest('no Segoe icon font installed: icon() returns None and callers show text only')
-        self.assertEqual(len(ICON_CODES), 13)
+        self.assertEqual(len(ICON_CODES), 16)      # (2.0.0 S4 A1) + ICON_MORE, ICON_ARCHIVE; visual fix + ICON_UPDATE
         for name, code in ICON_CODES.items():
             image = ui_theme.icon(code)
             self.assertIsInstance(image, ctk.CTkImage, name)
@@ -600,7 +607,17 @@ class C_WidgetTest(unittest.TestCase):
             self.assertEqual(light.size, (ui_theme.ICON_PX, ui_theme.ICON_PX))
             box = light.getchannel('A').getbbox()
             self.assertIsNotNone(box, name)
-            self.assertGreater((box[2] - box[0]) * (box[3] - box[1]), 400, name)
+            if code == ui_theme.ICON_MORE:
+                # (2.0.0 S4 A1) '⋯' is three dots on one line: a wide, low strip (about 42 x 9 of 64 px), so its
+                # box is checked for that shape instead of the area of a square glyph
+                alpha = light.getchannel('A')
+                columns = [any(alpha.getpixel((x, y)) for y in range(box[1], box[3])) for x in range(box[0], box[2])]
+                dots = sum(1 for index, inked in enumerate(columns) if inked and (index == 0 or not columns[index - 1]))
+                self.assertGreaterEqual(box[2] - box[0], 36, name)
+                self.assertLessEqual(box[3] - box[1], 14, name)
+                self.assertEqual(dots, 3, name)
+            else:
+                self.assertGreater((box[2] - box[0]) * (box[3] - box[1]), 400, name)
             self.assertNotEqual(light.tobytes(), dark.tobytes(), name)
         self.assertIs(ui_theme.icon(ui_theme.ICON_DONE, 'ok'), ui_theme.icon(ui_theme.ICON_DONE, 'ok'))
         self.assertIsNot(ui_theme.icon(ui_theme.ICON_DONE, 'ok'), ui_theme.icon(ui_theme.ICON_DONE, 'ok', 28))
@@ -763,15 +780,18 @@ class C_WidgetTest(unittest.TestCase):
         tabs = ui_theme.tabs(self.root, ['一', '二', '三'], command=clicked.append)
         self.assertIsInstance(tabs, ui_theme.Tabs)
         self.assertIsInstance(tabs, ctk.CTkFrame)
-        self.assertEqual((tabs.cget('fg_color'), tabs.cget('corner_radius'), tabs.cget('border_width')), (ui_theme.SURFACE, 12, 1))
+        # (2.0.0 S4, 00-system 3.9) no card: transparent, no border, the tab frames without inset
+        self.assertEqual((tabs.cget('fg_color'), tabs.cget('corner_radius'), tabs.cget('border_width')), ('transparent', 0, 0))
+        self.assertIs(tabs.bar, tabs._bar)
+        self.assertIs(tabs.bar.master, tabs)
+        self.assertEqual((tabs.bar.cget('height'), tabs.bar.cget('corner_radius')), (ui_theme.CONTROL_H_SM, ui_theme.RADIUS))
         self.assertEqual(tabs.get(), '一')
         first = tabs.tab('一')
         self.assertIs(tabs.add('一'), first)
         self.assertEqual(first.cget('fg_color'), 'transparent')
         info = first.grid_info()
-        self.assertGreater(int(info['padx']), 0)
         self.assertEqual((int(info['row']), int(info['column']), info['sticky']), (1, 0, 'nesw'))
-        self.assertEqual(int(info['padx']), int(6 * self.scale))
+        self.assertEqual((int(info['padx']), int(info['pady'])), (0, 0))
         tabs.set('二')
         self.assertEqual(tabs.get(), '二')
         self.assertEqual(clicked, [])
@@ -787,6 +807,26 @@ class C_WidgetTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             tabs.tab('无')
         self.assertEqual(ui_theme.tabs(self.root, []).get(), '')
+
+    def test_tabs_with_a_bar_parent(self):
+        """(2.0.0 S4, 00-system 3.9) bar_parent: the bar is packed into that container (the library page's
+        page.header.left), the tab frames stay in the Tabs frame, and a click on the bar still switches."""
+        clicked = []
+        holder = ctk.CTkFrame(self.root, fg_color='transparent', width=0, height=0)
+        tabs = ui_theme.tabs(self.root, ['a', 'b'], labels=['A', 'B'], command=clicked.append, bar_parent=holder)
+        self.assertIs(tabs.bar.master, holder)
+        self.assertEqual(tabs.bar.winfo_manager(), 'pack')
+        self.assertEqual(tabs.bar.pack_info()['side'], 'left')
+        self.assertNotIn(tabs.bar, tabs.winfo_children())
+        self.assertIs(tabs.tab('a').master, tabs)
+        self.assertIs(tabs.add('c').master, tabs)
+        self.assertEqual(tabs.bar.cget('values'), ['A', 'B', 'c'])
+        tabs._clicked('B')                  # what a click on the bar does
+        self.assertEqual((tabs.get(), clicked, tabs.bar.get()), ('b', ['b'], 'B'))
+        tabs.set('c')
+        self.assertEqual((tabs.get(), tabs.bar.get()), ('c', 'c'))
+        holder.destroy()
+        tabs.destroy()
 
     # ---- tables
     def test_table_style_and_size(self):
@@ -936,34 +976,13 @@ class C_WidgetTest(unittest.TestCase):
         self.assertEqual(int(table.column('a', 'width')), round(100 * scale))
 
     # ---- composed pieces and text helpers
-    def test_empty_state_and_setting_row(self):
+    def test_empty_state(self):
         empty = ui_theme.empty_state(self.root, '你的下载任务会显示在这里', ui_theme.ICON_DOWNLOAD)
         self.assertEqual(empty.cget('fg_color'), 'transparent')
         self.assertEqual((empty.hint_label.cget('text'), empty.hint_label.cget('text_color')), ('你的下载任务会显示在这里', ui_theme.MUTED))
         if ui_theme.icon_font_path() is not None:
             self.assertIsNotNone(empty.icon_label)
         self.assertIsNone(ui_theme.empty_state(self.root, '无图标').icon_label)
-        made = []
-
-        def control(parent):
-            made.append(parent)
-            return ui_theme.switch(parent)
-        row = ui_theme.setting_row(self.root, '稳健模式（推荐）', LONG, control)
-        self.assertEqual(row.cget('fg_color'), 'transparent')
-        self.assertEqual(made, [row.control_area])
-        self.assertIsInstance(row.control, ui_theme.AppSwitch)
-        self.assertEqual(row.control.winfo_manager(), 'pack')
-        self.assertEqual((row.title_label.cget('text'), row.title_label.cget('font')), ('稳健模式（推荐）', ui_theme.font('body')))
-        description = row.description_label
-        self.assertEqual((description.cget('text'), description.cget('text_color'), description.cget('font')),
-                         (LONG, ui_theme.MUTED, ui_theme.font('caption')))
-        self.assertEqual((description.cget('anchor'), str(description.cget('justify'))), ('w', 'left'))
-        self.assertEqual(description.grid_info()['sticky'], 'ew')
-        self.assertEqual(int(row.grid_columnconfigure(0)['weight']), 1)
-        self.assertEqual(int(row.control_area.grid_info()['column']), 1)
-        bare = ui_theme.setting_row(self.root, '只有标题')
-        self.assertIsNone(bare.control)
-        self.assertEqual(bare.description_label.winfo_manager(), '')
 
     def test_fit_keeps_the_full_text_without_a_width(self):
         label = ui_theme.label(self.root, anchor='w')
@@ -1175,22 +1194,6 @@ class D_LayoutTest(unittest.TestCase):
         self.assertLessEqual(abs(label.cget('wraplength') - label.winfo_width() / self.scale), 4)
         self.assertLess(len(label._label.cget('text').split('\n')), len(lines))
 
-    def test_setting_row_description_wraps_inside_its_column(self):
-        frame = self.box(520, 300)
-        frame.grid_columnconfigure(0, weight=1)
-        row = ui_theme.setting_row(frame, '稳健模式（推荐）', LONG, lambda parent: ui_theme.switch(parent))
-        row.grid(row=0, column=0, sticky='ew')
-        settle(self.root, 10)
-        description = row.description_label
-        self.assertGreater(description.winfo_height() / self.scale, 2 * 15)
-        right = description.winfo_rootx() + description.winfo_width()
-        self.assertLessEqual(right, row.control_area.winfo_rootx())
-        self.assertLessEqual(row.winfo_width(), frame.winfo_width())
-        self.assertLessEqual(description._label.winfo_reqwidth(), description.winfo_width())
-        # The control sits at the right edge of the row.
-        self.assertAlmostEqual(row.control.winfo_rootx() + row.control.winfo_width(),
-                               row.winfo_rootx() + row.winfo_width(), delta=2)
-
     def test_fit_cuts_to_the_label_width_and_refits(self):
         frame = self.box(260)
         frame.grid_columnconfigure(0, weight=1)
@@ -1386,7 +1389,7 @@ class D_LayoutTest(unittest.TestCase):
             page = ctk.CTkFrame(content, fg_color='transparent', corner_radius=0)
             page.grid(row=0, column=0, sticky='nsew')
             page.grid_columnconfigure(0, weight=1)
-            card = ui_theme.card(page, height=100)
+            card = ctk.CTkFrame(page, height=100)       # the page's content (stage C: no card any more)
             card.grid(row=0, column=0, sticky='ew')
             pages[name], cards[name] = page, card
         ui_theme.set_page_cap(self.root, content, {pages['capped']: ui_theme.PAGE_MAX, pages['free']: None})
@@ -1594,7 +1597,7 @@ class D_LayoutTest(unittest.TestCase):
         self.assertEqual(table.item('x', 'values'), ('a', 'b', 'c'))
         self.assertEqual(table.full_values('x'), ('a', 'b', 'c'))
 
-    def test_tabs_show_one_frame_inside_the_card(self):
+    def test_tabs_show_one_frame_below_the_bar(self):
         frame = self.box(500, 300)
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_rowconfigure(0, weight=1)
@@ -1606,10 +1609,12 @@ class D_LayoutTest(unittest.TestCase):
         settle(self.root)
         scale = self.scale
         inner = tabs.tab('增量订阅')
-        self.assertEqual(inner.winfo_x(), int(6 * scale))
-        self.assertEqual(tabs.winfo_width() - inner.winfo_x() - inner.winfo_width(), int(6 * scale))
-        self.assertEqual(tabs.winfo_height() - inner.winfo_y() - inner.winfo_height(), int(6 * scale))
-        self.assertGreater(inner.winfo_y() / scale, 34 + 14)
+        # (2.0.0 S4) no card around it: the frames fill the width and the bottom; they start below the bar and its gap
+        self.assertEqual(inner.winfo_x(), 0)
+        self.assertEqual(tabs.winfo_width() - inner.winfo_x() - inner.winfo_width(), 0)
+        self.assertEqual(tabs.winfo_height() - inner.winfo_y() - inner.winfo_height(), 0)
+        self.assertEqual(tabs.bar.winfo_y(), 0)
+        self.assertGreaterEqual(inner.winfo_y(), tabs.bar.winfo_height() + int(ui_theme.GAP * scale))
 
         # Both frames fill the same cell; the selected one is the top of the stacking order.
         other = tabs.tab('任务历史与续采')
@@ -1950,6 +1955,366 @@ class Z_ChevronTest(unittest.TestCase):
             self.assertEqual(self.fill(menu, 'app_chevron'), ui_theme.MUTED[1].upper())
         finally:
             menu.destroy()
+
+
+class F_SharedPiecesTest(unittest.TestCase):
+    """(2.0.0 S4 A1, 00-system 3.1-3.8) The shared pieces of the pages: menus, ask_text, empty_state(action),
+    NoticeBar, set_kind, PathButton, textbox with a placeholder, section_label and show.  A mapped invisible root:
+    menus, dialogs and right clicks need real screen positions."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = laid_out_root('900x600')
+        cls.root.grid_columnconfigure(0, weight=1)
+        cls.scale = scaling(cls.root)
+        cls.words = dict(ui_theme.WORDS)
+        ui_theme.WORDS.update(cancel='取消', save='保存', choose='选择…')
+        settle(cls.root, 2)
+
+    @classmethod
+    def tearDownClass(cls):
+        ui_theme.WORDS.clear()
+        ui_theme.WORDS.update(cls.words)
+        ctk.set_appearance_mode('light')
+        close(cls.root)
+
+    def setUp(self):
+        self.stage = ctk.CTkFrame(self.root, fg_color='transparent', corner_radius=0)
+        self.stage.grid(row=0, column=0, sticky='nsew')
+        self.stage.grid_columnconfigure(0, weight=1)
+        self.shown = []         # (menu, x, y) of every tk_popup
+        patcher = mock.patch.object(tkinter.Menu, 'tk_popup', autospec=True,
+                                    side_effect=lambda menu, x, y, entry='': self.shown.append((menu, x, y)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        self.stage.destroy()
+        settle(self.root, 1)
+
+    @staticmethod
+    def entries(menu):
+        """[(type, label, state)] of a tk.Menu."""
+        last = menu.index('end')
+        found = []
+        for index in range(0 if last is None else last + 1):
+            kind = menu.type(index)
+            if kind == 'separator':
+                found.append(('separator', None, None))
+            else:
+                found.append((kind, menu.entrycget(index, 'label'), str(menu.entrycget(index, 'state'))))
+        return found
+
+    def test_word_defaults_and_new_constants(self):
+        self.assertEqual(set(self.words), {'cancel', 'save', 'choose'})
+        self.assertEqual((ui_theme.INLINE, ui_theme.PAD, ui_theme.SECTION), (8, 16, 24))
+        self.assertEqual((ui_theme.SETTINGS_MAX, ui_theme.PATH_W), (560, 320))
+        self.assertIsNone(ui_theme.SEPARATOR)
+        for fg in (ui_theme.SIDE_OK, ui_theme.SIDE_INFO, ui_theme.SIDE_WARN, ui_theme.SIDE_DANGER):
+            self.assertIn((fg, ui_theme.SIDE), ui_theme.TEXT_PAIRS)
+        self.assertIn((ui_theme.SIDE_WARN, ui_theme.SIDE_HOVER), ui_theme.TEXT_PAIRS)
+
+    def test_popup_builds_the_menu_when_it_opens(self):
+        calls = []
+
+        def items():
+            calls.append(1)
+            return [ui_theme.MenuItem('打开', lambda: None),
+                    ui_theme.MenuItem('不可用', lambda: None, enabled=False),
+                    ui_theme.SEPARATOR,
+                    ui_theme.MenuItem('计划', children=(ui_theme.MenuItem('每小时', lambda: None, checked=False),
+                                                         ui_theme.MenuItem('每天', lambda: None, checked=True))),
+                    ui_theme.MenuItem('删除', lambda: None, danger=True)]
+        anchor = ui_theme.button(self.stage, '锚')
+        anchor.grid(row=0, column=0, sticky='w')
+        settle(self.root, 2)
+        self.assertEqual(calls, [], 'nothing is built before the menu opens')
+        menu = ui_theme.popup(anchor, items)
+        self.assertEqual(calls, [1])
+        self.assertEqual(len(self.shown), 1)
+        self.assertIs(self.shown[0][0], menu)
+        self.assertEqual(self.shown[0][1:], (anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height()))
+        self.assertEqual(self.entries(menu), [('command', '打开', 'normal'), ('command', '不可用', 'disabled'),
+                                              ('separator', None, None), ('cascade', '计划', 'normal'),
+                                              ('command', '删除', 'normal')])
+        self.assertEqual(str(menu.entrycget(4, 'foreground')).upper(), ui_theme.DANGER[0].upper())
+        self.assertEqual(str(menu.cget('background')).upper(), ui_theme.SURFACE[0].upper())
+        self.assertEqual(str(menu.cget('disabledforeground')).upper(), ui_theme.FAINT[0].upper())
+        self.assertIn(str(-round(ui_theme.SIZES['body'] * self.scale)), str(menu.cget('font')))
+        submenu = menu.nametowidget(menu.entrycget(3, 'menu'))
+        self.assertEqual([kind for kind, _label, _state in self.entries(submenu)], ['radiobutton', 'radiobutton'])
+        self.assertEqual(submenu.choice.get(), int(submenu.entrycget(1, 'value')), 'the checked choice is marked')
+        # one menu at a time; an empty list opens nothing
+        second = ui_theme.popup(anchor, [ui_theme.MenuItem('a')], 10, 20)
+        self.assertFalse(menu.winfo_exists())
+        self.assertEqual(self.shown[-1][1:], (10, 20))
+        self.assertIsNone(ui_theme.popup(anchor, []))
+        self.assertFalse(second.winfo_exists())
+        self.assertEqual(len(self.shown), 2)
+
+    def test_dark_menu_colours_are_resolved_when_it_opens(self):
+        ctk.set_appearance_mode('dark')
+        try:
+            menu = ui_theme.popup(self.stage, [ui_theme.MenuItem('x', danger=True)], 0, 0)
+            self.assertEqual(str(menu.cget('background')).upper(), ui_theme.SURFACE[1].upper())
+            self.assertEqual(str(menu.entrycget(0, 'foreground')).upper(), ui_theme.DANGER[1].upper())
+        finally:
+            ctk.set_appearance_mode('light')
+
+    def test_menu_button_opens_below_itself_right_aligned(self):
+        items = [ui_theme.MenuItem('一个比按钮宽得多的菜单项', lambda: None)]
+        more = ui_theme.menu_button(self.stage, items)
+        more.grid(row=0, column=0, sticky='e')
+        small = ui_theme.menu_button(self.stage, lambda: items, size='sm')
+        small.grid(row=1, column=0, sticky='e')
+        settle(self.root, 3)
+        self.assertEqual((more.kind, more.cget('width'), more.cget('height')),
+                         ('ghost', ui_theme.CONTROL_H, ui_theme.CONTROL_H))
+        self.assertEqual((small.cget('width'), small.cget('height')), (ui_theme.CONTROL_H_SM, ui_theme.CONTROL_H_SM))
+        self.assertIs(more.menu_items, items)
+        if ui_theme.icon_font_path() is not None:
+            self.assertIsNotNone(more.cget('image'))
+        more.invoke()
+        menu, x, y = self.shown[-1]
+        self.assertEqual(self.entries(menu), [('command', items[0].label, 'normal')])
+        self.assertEqual(x, more.winfo_rootx() + more.winfo_width() - menu.winfo_reqwidth())
+        self.assertEqual(y, more.winfo_rooty() + more.winfo_height())
+        self.assertGreater(menu.winfo_reqwidth(), more.winfo_width())
+
+    def test_bind_menu_selects_the_row_under_the_mouse_and_keeps_other_bindings(self):
+        table = ui_theme.table(self.stage, [('title', '标题', 200, True)], selectmode='extended', height=6)
+        table.container.grid(row=0, column=0, sticky='nsew')
+        table.fill([('a', ('第一行',)), ('b', ('第二行',)), ('c', ('第三行',))])
+        earlier = []
+        table.bind('<Button-3>', lambda event: earlier.append(event.y), add='+')
+        opened = []
+        with mock.patch.object(ui_theme, 'popup', side_effect=lambda widget, items, x=None, y=None, **kw:
+                               opened.append((widget, ui_theme.menu_items(items), x, y))):
+            ui_theme.bind_menu(table, lambda: ['菜单'])
+            settle(self.root, 3)
+            box = table.bbox('b')
+            table.selection_set('a')
+            table.event_generate('<Button-3>', x=box[0] + 10, y=box[1] + box[3] // 2)
+            settle(self.root, 1)
+            self.assertEqual(table.selection(), ('b',), 'an unselected row becomes the selection')
+            self.assertEqual(len(opened), 1)
+            self.assertIs(opened[0][0], table)
+            self.assertEqual(opened[0][1], ['菜单'])
+            self.assertEqual(len(earlier), 1, 'the binding made before stays')
+            table.selection_set(('b', 'c'))
+            table.event_generate('<Button-3>', x=box[0] + 10, y=box[1] + box[3] // 2)
+            settle(self.root, 1)
+            self.assertEqual(table.selection(), ('b', 'c'), 'a selected row keeps the selection')
+            self.assertEqual(len(opened), 2)
+            table.event_generate('<Button-3>', x=box[0] + 10, y=table.winfo_height() - 2)     # below the rows
+            settle(self.root, 1)
+            self.assertEqual(len(opened), 2, 'no menu over empty space')
+            table.focus_set()
+            table.event_generate('<Shift-F10>')
+            settle(self.root, 1)
+            self.assertEqual(len(opened), 3, 'Shift+F10 opens the same menu')
+            box = ui_theme.textbox(self.stage)
+            box.grid(row=1, column=0)
+            ui_theme.bind_menu(box, ['x'])
+            settle(self.root, 2)
+            box._textbox.event_generate('<Button-3>', x=5, y=5)     # (CTkTextbox binds its inner Text)
+            settle(self.root, 1)
+            self.assertEqual(opened[-1][1], ['x'])
+
+    def test_text_dialog(self):
+        dialog = ui_theme.TextDialog(self.root, '改名', '  旧名称  ')
+        try:
+            settle(self.root, 2)
+            self.assertEqual(dialog.title(), '改名')
+            self.assertEqual(dialog.entry.get(), '  旧名称  ')
+            self.assertEqual(dialog.ok_button.cget('text'), '保存', 'ok defaults to WORDS["save"]')
+            self.assertEqual(dialog.cancel_button.cget('text'), '取消')
+            self.assertEqual((dialog.ok_button.kind, dialog.cancel_button.kind), ('primary', 'ghost'))
+            self.assertEqual(dialog.ok_button.cget('state'), 'normal')
+            dialog.value.set('   ')
+            self.assertEqual(dialog.ok_button.cget('state'), 'disabled', 'a blank entry greys OK')
+            self.assertEqual(dialog.accept(), 'break')
+            self.assertTrue(dialog.winfo_exists(), 'OK on a blank entry does nothing')
+            self.assertIsNone(dialog.result)
+            dialog.value.set('  新名称 ')
+            self.assertEqual(dialog.ok_button.cget('state'), 'normal')
+            dialog.accept()
+            self.assertEqual(dialog.result, '新名称')
+            self.assertFalse(dialog.winfo_exists())
+        finally:
+            if dialog.winfo_exists():
+                dialog.destroy()
+        other = ui_theme.TextDialog(self.root, 'x', 'y')
+        self.assertEqual(other.ok_button.cget('text'), ui_theme.WORDS['save'])
+        other.cancel()
+        self.assertIsNone(other.result)
+        self.assertFalse(other.winfo_exists())
+
+    def test_ask_text_waits_and_returns_the_stripped_text_or_none(self):
+        def answer(text, key):
+            def act():
+                dialogs = [child for child in self.root.winfo_children() if isinstance(child, ui_theme.TextDialog)]
+                self.assertEqual(len(dialogs), 1)
+                dialogs[0].value.set(text)
+                dialogs[0].event_generate(key)
+            self.root.after(300, act)
+        answer('  订阅 A ', '<Return>')
+        self.assertEqual(ui_theme.ask_text(self.root, '改名', '订阅'), '订阅 A')
+        answer('写了也不要', '<Escape>')
+        self.assertIsNone(ui_theme.ask_text(self.root, '改名', '订阅'))
+        answer('   ', '<Return>')
+        self.root.after(600, lambda: [child.cancel() for child in self.root.winfo_children()
+                                      if isinstance(child, ui_theme.TextDialog)])
+        self.assertIsNone(ui_theme.ask_text(self.root, '改名'), 'Enter on a blank entry keeps the dialog open')
+
+    def test_notice_bar(self):
+        bar = ui_theme.notice_bar(self.stage)
+        bar.grid(row=0, column=0, sticky='ew')
+        bar.hide()
+        self.assertIsInstance(bar, ui_theme.NoticeBar)
+        self.assertFalse(bar.shown)
+        self.assertEqual((bar.full_text, bar.buttons), ('', ()))
+        done = []
+        bar.show('剪贴板发现 3 条链接 · ' + '很长的标题' * 40,
+                 [('添加', lambda: done.append('add')), ('忽略', lambda: done.append('ignore')), ('第三个', None)])
+        settle(self.root, 3)
+        self.assertTrue(bar.shown)
+        self.assertEqual(bar.grid_info()['row'], 0, 'show() puts it back where the caller gridded it')
+        self.assertTrue(bar.full_text.endswith('很长的标题'))
+        self.assertNotEqual(bar.label.cget('text'), bar.full_text, 'the shown text is cut to the width')
+        self.assertEqual([button.cget('text') for button in bar.buttons], ['添加', '忽略'], 'at most two, in order')
+        self.assertEqual({(button.kind, button.cget('height')) for button in bar.buttons},
+                         {('ghost', ui_theme.CONTROL_H_SM)})
+        bar.buttons[1].invoke()
+        self.assertEqual(done, ['ignore'])
+        self.assertEqual(bar.cget('fg_color'), ui_theme.SURFACE_ALT)
+        bar.show('YouTube 验证', [('知道了', None)], tone='warn')
+        self.assertEqual((bar.cget('fg_color'), bar.label.cget('text_color')), (ui_theme.WARN_SOFT, ui_theme.WARN))
+        self.assertEqual(len(bar.buttons), 1)
+        bar.show('就绪')
+        self.assertEqual((bar.cget('fg_color'), bar.label.cget('text_color')), (ui_theme.SURFACE_ALT, ui_theme.INK))
+        self.assertEqual(bar.buttons, ())
+        bar.hide()
+        self.assertFalse(bar.shown)
+        warn = ui_theme.notice_bar(self.stage, 'warn')
+        self.assertEqual(warn.cget('fg_color'), ui_theme.WARN_SOFT)
+
+    def test_set_kind(self):
+        start = ui_theme.button(self.stage, '开始下载', kind='primary',
+                                image=ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white'))
+        start.grid(row=0, column=0)
+        start.set_kind('soft')
+        self.assertEqual(start.kind, 'soft')
+        self.assertEqual((start.cget('fg_color'), start.cget('hover_color'), start.cget('text_color')),
+                         (ui_theme.ACCENT_SOFT, ui_theme.ACCENT_SOFT_HOVER, ui_theme.ACCENT_TEXT))
+        start.configure(state='disabled')
+        self.assertEqual(start.cget('fg_color'), ui_theme.DISABLED_SOFT)
+        start.set_kind('primary')
+        self.assertEqual(start.cget('fg_color'), ui_theme.ACCENT_DISABLED, 'a disabled button keeps the disabled look')
+        self.assertEqual(start.cget('text_color_disabled'), ui_theme.ACCENT_DISABLED_TEXT)
+        start.configure(state='normal')
+        self.assertEqual(start.cget('fg_color'), ui_theme.ACCENT)
+        with mock.patch.object(ui_theme.AppButton, 'configure') as configure:
+            start.set_kind('primary')
+        configure.assert_not_called()
+        retry = ui_theme.icon(ui_theme.ICON_CLOCK, 'white')
+        start.set_kind('primary', image=retry)
+        self.assertIs(start.cget('image'), retry)
+        with self.assertRaises(KeyError):
+            start.set_kind('purple')
+
+    def test_path_button(self):
+        chosen = []
+        path = ui_theme.path_button(self.stage, lambda: chosen.append(1))
+        path.grid(row=0, column=0, sticky='w')
+        self.assertIsInstance(path, ui_theme.PathButton)
+        self.assertEqual((path.kind, path.cget('width'), path.cget('text_color'), path.cget('anchor')),
+                         ('ghost', ui_theme.PATH_W, ui_theme.INK, 'w'))
+        self.assertEqual((path.path, path.cget('text')), ('', '选择…'), 'an empty path shows WORDS["choose"]')
+        long = 'D:\\Media\\' + '很长的文件夹名称\\' * 12 + 'Downloads'
+        path.set_path(long)
+        settle(self.root, 2)
+        shown = path.cget('text')
+        self.assertEqual(path.path, long)
+        self.assertNotEqual(shown, long)
+        self.assertIn('…', shown)
+        self.assertTrue(shown.startswith('D:\\'), shown)
+        self.assertTrue(shown.endswith('\\Downloads'), shown)
+        self.assertEqual(path.winfo_width(), round(ui_theme.PATH_W * self.scale), 'the width stays fixed')
+        path.set_path('D:\\Music')
+        self.assertEqual(path.cget('text'), 'D:\\Music')
+        path.set_path('D:\\Music', ui_theme.ICON_ARCHIVE)
+        if ui_theme.icon_font_path() is not None:
+            self.assertIs(path.cget('image'), ui_theme.icon(ui_theme.ICON_ARCHIVE, 'muted', 16))
+        path.invoke()
+        self.assertEqual(chosen, [1])
+        own = ui_theme.path_button(self.stage, None, width=200)
+        self.assertEqual((own.cget('text'), own.cget('width')), (ui_theme.WORDS['choose'], 200))
+        measure = lambda text: 10 * len(text)      # noqa: E731
+        self.assertEqual(ui_theme._middle_cut('D:\\a\\b\\c\\Downloads', measure, 1000), 'D:\\a\\b\\c\\Downloads')
+        self.assertEqual(ui_theme._middle_cut('D:\\aaaa\\bbbb\\cccc\\Downloads', measure, 220), 'D:\\aaaa\\…\\Downloads')
+        self.assertEqual(ui_theme._middle_cut('D:\\aaaa\\bbbb\\cccc\\Downloads', measure, 150), 'D:\\…\\Downloads')
+        self.assertEqual(ui_theme._middle_cut('D:\\aaaa\\bbbb\\cccc\\Downloads', measure, 100), 'D:\\…\\Down…')
+        self.assertTrue(measure(ui_theme._middle_cut('averyveryverylongfilename', measure, 80)) <= 80)
+
+    def test_textbox_placeholder_dimmed_and_undo(self):
+        plain = ui_theme.textbox(self.stage, height=40)
+        self.assertIsInstance(plain, ui_theme.AppTextbox)
+        self.assertIsNone(plain.placeholder_label)
+        box = ui_theme.textbox(self.stage, placeholder='粘贴链接，每行一条', undo=True, height=72)
+        box.grid(row=0, column=0, sticky='ew')
+        settle(self.root, 2)
+        hint = box.placeholder_label
+        self.assertEqual((hint.cget('text'), hint.cget('text_color')), ('粘贴链接，每行一条', ui_theme.FAINT))
+        self.assertEqual(hint.winfo_manager(), 'place')
+        box.insert('1.0', 'https://example.org/a')
+        self.assertEqual(hint.winfo_manager(), '')
+        box.delete('1.0', 'end')
+        self.assertEqual(hint.winfo_manager(), 'place')
+        box.insert('1.0', 'https://example.org/b')
+        box.edit_separator()
+        box.delete('1.0', 'end')
+        box.edit_undo()
+        box.sync_placeholder()
+        self.assertEqual(box.get('1.0', 'end-1c'), 'https://example.org/b', 'undo=True brings cleared text back')
+        self.assertEqual(hint.winfo_manager(), '')
+        box.delete('1.0', 'end')
+        box.set_dimmed(True)
+        self.assertTrue(box.dimmed)
+        self.assertEqual((box.cget('state'), box.cget('fg_color'), box.cget('text_color')),
+                         ('disabled', ui_theme.SURFACE, ui_theme.FAINT))
+        self.assertEqual(hint.winfo_manager(), '', 'no placeholder while dimmed')
+        box.set_dimmed(False)
+        self.assertEqual((box.cget('state'), box.cget('fg_color'), box.cget('text_color')),
+                         ('normal', ui_theme.SURFACE_ALT, ui_theme.INK))
+        self.assertEqual((hint.winfo_manager(), hint.cget('fg_color')), ('place', ui_theme.SURFACE_ALT))
+        self.assertEqual(box._hint_clicked(), 'break', 'a click on the placeholder goes to the box')
+
+    def test_empty_state_action_section_label_and_show(self):
+        pasted = []
+        empty = ui_theme.empty_state(self.stage, '还没有下载', ui_theme.ICON_DOWNLOAD, action=('粘贴', lambda: pasted.append(1)))
+        self.assertEqual(empty.hint_label.cget('text'), '还没有下载')
+        self.assertEqual((empty.action_button.cget('text'), empty.action_button.kind), ('粘贴', 'soft'))
+        empty.action_button.invoke()
+        self.assertEqual(pasted, [1])
+        self.assertIsNone(ui_theme.empty_state(self.stage, '还没有任务').action_button)
+        group = ui_theme.section_label(self.stage, '下载')
+        self.assertEqual((group.cget('text'), group.cget('text_color'), group.cget('font'), group.cget('anchor')),
+                         ('下载', ui_theme.MUTED, ui_theme.font('caption'), 'w'))
+        group.grid(row=3, column=0, sticky='w')
+        self.assertTrue(ui_theme.show(group, False))
+        self.assertEqual(group.winfo_manager(), '')
+        self.assertFalse(ui_theme.show(group, False), 'no change, nothing done')
+        self.assertTrue(ui_theme.show(group, True))
+        self.assertEqual((group.winfo_manager(), int(group.grid_info()['row'])), ('grid', 3))
+        self.assertFalse(ui_theme.show(group, True))
+        area = ui_theme.scroll_area(self.stage)
+        area.grid(row=4, column=0, sticky='ew')
+        self.assertTrue(ui_theme.show(area, False))
+        self.assertEqual(area._parent_frame.winfo_manager(), '')
+        self.assertFalse(ui_theme.show(area, False))
+        self.assertTrue(ui_theme.show(area, True), 'the outer frame comes back')
+        self.assertEqual(area._parent_frame.winfo_manager(), 'grid')
 
 
 if __name__ == '__main__':

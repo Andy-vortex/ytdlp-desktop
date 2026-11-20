@@ -1,3 +1,4 @@
+# serial: the window-latency probe (LATENCY 0.3 s between two after() ticks) and 0.15 s lock timings
 """1.7.0 fix-ui: the issues deferred from 1.6.0 (docs/1.7.0/handoff/fix-ui.md).
 
 U1  A library.sqlite3 locked by ANOTHER PROCESS (a child holding BEGIN EXCLUSIVE, or BEGIN
@@ -31,6 +32,7 @@ from unittest import mock
 import customtkinter as ctk
 import collection_ui
 import engine
+import i18n
 import library
 import library_ui
 import settings
@@ -39,7 +41,8 @@ import ui_theme
 import updater
 from collector import MAX_LINKS, CollectOptions
 from engine import MODES
-from studio import SETTINGS_HELD_NOTICE, StudioApp
+from studio import StudioApp
+from _sandbox import zh_t
 
 LATENCY = 0.3        # s: the largest gap between two after() ticks the owner may see
 LOCKER = r'''
@@ -53,6 +56,10 @@ sys.stdin.readline()
 db.execute('ROLLBACK')
 db.close()
 '''
+
+
+def pump(app, condition=None, timeout=5.0):
+    return _sandbox.pump(app, condition, timeout, step=0.005)
 
 
 class Lock:
@@ -161,7 +168,7 @@ class FakeCollectionRunner:
     def run(self, options):
         store = library.Library(options.history_path)
         page = {'url': options.urls[0], 'title': '列表', 'text': '', 'markdown': '',
-                'links': [{'url': 'https://media.example.org/a.mp3', 'title': 'a', 'kind': '媒体地址',
+                'links': [{'url': 'https://media.example.org/a.mp3', 'title': 'a', 'kind': 'media',
                            'source': options.urls[0]}]}
         store.collection_event(options.job_id, 'collect_page', dict(page, _checkpoint=None))
         store.change_job(options.job_id, status='completed')
@@ -170,16 +177,6 @@ class FakeCollectionRunner:
 
     def cancel(self):
         pass
-
-
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.005)
-    return condition is None
 
 
 def click(app, action):
@@ -272,23 +269,23 @@ class U1_LockTests(Base):
         lock = Lock(self, app.library.path, 'exclusive')
         probe = Probe(app)
         click(app, app.refresh_library)
-        self.assertEqual(ui_theme.full_text(app.library_warning_label), library_ui.LIBRARY_BUSY)
-        self.assertEqual(app.library_warning_bar.winfo_manager(), 'grid')
-        self.assertEqual((app.notice_kind, ui_theme.full_text(app.notice_text)), ('library', library_ui.LIBRARY_BUSY))
+        self.assertEqual(app.library_notice.full_text, i18n.t('library.busy'))
+        self.assertTrue(app.library_notice.shown)
+        self.assertEqual((app.notice_kind, app.notice_bar.full_text), ('library', i18n.t('library.busy')))
         click(app, app.view_history)            # a click that needs the record: a hint, no dialog
-        self.assertEqual(ui_theme.full_text(app.history_note), library_ui.LIBRARY_BUSY_CLICK)
+        self.assertEqual(ui_theme.full_text(app.history_note), i18n.t('library.busy_click'))
         click(app, app.subscription_tick)       # quietly skipped; the next tick looks again
         click(app, app.check_subscription)      # a hint on the tab, no dialog
-        self.assertEqual(ui_theme.full_text(app.subscription_note), library_ui.LIBRARY_BUSY_CLICK)
+        self.assertEqual(ui_theme.full_text(app.subscription_note), i18n.t('library.busy_click'))
         app.archive_search.set('x')             # the archive list is read on every keystroke
         pump(app, timeout=2.5)                  # library_watch tries again while the lock is held
         self.assertTrue(app.library_waiting)
         self.assertLess(probe.worst(), LATENCY, 'the window stalled while the library was locked')
         self.assertEqual([line for line in lines if '资料库' in line],
-                         [library_ui.LIBRARY_BUSY_LOG.format(error='database is locked')])
+                         [i18n.t('log.library.busy', error='database is locked')])
         lock.release()
         self.assertTrue(self.wait_settled(app), 'the notice goes once the lock is gone')
-        self.assertEqual(app.library_warning_bar.winfo_manager(), '')
+        self.assertFalse(app.library_notice.shown)
         self.assertIsNone(app.notice_kind)
         self.assertIn(job, app.history_tree.get_children())
         self.assertLess(probe.worst(), LATENCY)
@@ -326,10 +323,11 @@ class U1_LockTests(Base):
         kind, status, data = rows[job]
         self.assertEqual((kind, status), ('download', 'completed'))
         self.assertEqual(data['options']['urls'], [first, added])
-        self.assertEqual(data['completed'], [first, added])
+        self.assertEqual([url for url, _format in data['done']], [first, added])
         self.assertEqual(len(data['files']), 2)
-        self.assertIn(library_ui.LIBRARY_BUSY_LOG.format(error='database is locked'), lines)
-        self.assertTrue(any(line.startswith('资料库已恢复') for line in lines), lines)
+        self.assertIn(i18n.t('log.library.busy', error='database is locked'), lines)
+        back = i18n.CATALOG['zh']['log.library.back'].partition('{')[0]     # the text before {count}
+        self.assertTrue(any(line.startswith(back) for line in lines), lines)
         self.assertIn(job, [row['id'] for row in app.library.history()])
         return app
 
@@ -380,13 +378,13 @@ class U1_LockTests(Base):
             click(app, app.start_collection)
             self.assertEqual(boxes, [], 'no dialog for a lock')
             self.assertFalse(app.busy)
-            self.assertEqual(ui_theme.full_text(app.collect_status), collection_ui.COLLECT_WAITING)
+            self.assertEqual(ui_theme.full_text(app.collect_status), i18n.t('collect.status.waiting_library'))
             self.assertIsNotNone(app.collect_pending)
             pump(app, timeout=2.5)              # one retry while the lock is still held
             self.assertIsNotNone(app.collect_pending)
             lock.release()
             self.assertTrue(pump(app, lambda: app.collect_pending is None and not app.busy
-                                 and ui_theme.full_text(app.collect_status).startswith('采集结束'), 10))
+                                 and ui_theme.full_text(app.collect_status).startswith(zh_t('collect.status.finished')), 10))
         self.assertLess(probe.worst(), LATENCY)
         self.assertEqual(list(app.collected_links), ['https://media.example.org/a.mp3'])
         collects = [row for row in self.rows(app.library.path).values()
@@ -398,14 +396,14 @@ class U1_LockTests(Base):
         options = CollectOptions(['https://example.org/v170/list']).validate()
         app.collect_pending = (options, None, None, None, time.monotonic() - 1)
         app.retry_collection()
-        self.assertEqual(ui_theme.full_text(app.collect_status), collection_ui.COLLECT_GAVE_UP)
+        self.assertEqual(ui_theme.full_text(app.collect_status), i18n.t('collect.status.library_gave_up'))
         app.collect_pending = (options, None, None, None, time.monotonic() + 60)
         app.busy = True
         try:
             app.retry_collection()
         finally:
             app.busy = False
-        self.assertEqual(ui_theme.full_text(app.collect_status), collection_ui.COLLECT_DROPPED)
+        self.assertEqual(ui_theme.full_text(app.collect_status), i18n.t('collect.status.library_dropped'))
         self.assertIsNone(app.collect_pending)
 
     def test_the_window_thread_gives_up_quickly_and_workers_wait(self):
@@ -516,27 +514,28 @@ class U2_HistoryTests(Base):
         self.fill(app.library, 650)
         app.refresh_library()
         self.assertEqual(len(app.history_tree.get_children()), 300)
-        self.assertEqual(app.history_count.cget('text'), '共 650 条，显示最近 300 条')
+        self.assertEqual(app.history_count.cget('text'), zh_t('library.history.count', total=650))
         self.assertEqual(app.history_more.winfo_manager(), 'grid')
-        self.assertEqual(app.history_more.cget('text'), '加载更多 300 条')
+        self.assertEqual(app.history_more.cget('text'), zh_t('library.history.more'))
         app.history_more.invoke()
-        self.assertEqual(len(app.history_tree.get_children()), 600)
-        self.assertEqual(app.history_more.cget('text'), '加载更多 50 条')
+        self.assertEqual(len(app.history_tree.get_children()), 300 + library.HISTORY_PAGE)
+        self.assertEqual(app.history_more.winfo_manager(), 'grid', 'shown while fewer rows than the total are shown')
         app.history_more.invoke()
         self.assertEqual(len(app.history_tree.get_children()), 650)
-        self.assertEqual(app.history_count.cget('text'), '共 650 条')
+        self.assertEqual(app.history_count.cget('text'), zh_t('library.history.count', total=650))
         self.assertEqual(app.history_more.winfo_manager(), '')
         # A refresh keeps what was loaded.
         app.refresh_library()
         self.assertEqual(len(app.history_tree.get_children()), 650)
         # The search runs after a pause in typing, from the newest page again.
         app.history_search.set('song/5')
-        self.assertTrue(pump(app, lambda: app.history_count.cget('text').startswith('找到'), 3))
-        self.assertEqual(app.history_count.cget('text'), '找到 111 条')
+        found = i18n.CATALOG['zh']['library.history.found'].partition('{')[0]     # the text before {total}
+        self.assertTrue(pump(app, lambda: app.history_count.cget('text').startswith(found), 3))
+        self.assertEqual(app.history_count.cget('text'), zh_t('library.history.found', total=111))
         self.assertEqual(app.history_limit, library.HISTORY_PAGE)
         # An old job (beyond the newest 300) is found and can be resumed again.
         app.history_search.set('song/12')
-        self.assertTrue(pump(app, lambda: app.history_count.cget('text') == '找到 11 条', 3))
+        self.assertTrue(pump(app, lambda: app.history_count.cget('text') == zh_t('library.history.found', total=11), 3))
         old = [iid for iid in app.history_tree.get_children() if app.history_tree.full_values(iid)[1] == '第 12 首歌']
         self.assertEqual(old, ['job0012'])
         app.history_tree.selection_set(old)
@@ -544,11 +543,12 @@ class U2_HistoryTests(Base):
         self.assertEqual(app.history_resume.cget('state'), 'normal')
         app.history_search.set('没有这样的任务')
         self.assertTrue(pump(app, lambda: not app.history_tree.get_children(), 3))
-        self.assertEqual(app.history_count.cget('text'), '找到 0 条')
-        self.assertEqual(app.history_tree._empty, library_ui.HISTORY_NONE_FOUND.format(term='没有这样的任务'))
+        self.assertEqual(app.history_count.cget('text'), zh_t('library.history.found', total=0))
+        self.assertEqual(app.history_tree._empty, i18n.t('common.no_match'))
         app.history_search.set('')
         self.assertTrue(pump(app, lambda: len(app.history_tree.get_children()) == 300, 3))
-        self.assertEqual(app.history_tree._empty, library_ui.HISTORY_EMPTY)
+        self.assertEqual(app.history_empty.winfo_manager(), '', 'a history with tasks: no empty state')
+        self.assertEqual(app.history_tree._empty, i18n.t('common.no_match'))
 
     def test_the_tab_fits_at_the_minimum_size(self):
         app = self.make_app(smoke=True, visible=True)
@@ -567,7 +567,7 @@ class U2_HistoryTests(Base):
 class U3_CollectionCapTests(Base):
     def pages(self, count=10, links=1000):
         return [{'url': f'https://example.org/list?p={p}', 'title': f'第 {p} 页', 'text': '', 'markdown': '',
-                 'links': [{'url': f'https://media.example.org/{p}/{n}.mp3', 'title': f'{p}-{n}', 'kind': '媒体地址',
+                 'links': [{'url': f'https://media.example.org/{p}/{n}.mp3', 'title': f'{p}-{n}', 'kind': 'media',
                             'source': f'https://example.org/list?p={p}'} for n in range(links)]}
                 for p in range(count)]
 
@@ -589,15 +589,17 @@ class U3_CollectionCapTests(Base):
         app.handle('collect_done', {'cancelled': False})
         self.assertEqual(list(app.collected_links), live, 'the same first 2,000 links as during the run')
         self.assertEqual(ui_theme.full_text(app.collect_status),
-                         f'采集结束：10 页 / {MAX_LINKS} 条链接；已达 {MAX_LINKS} 条上限，请分批采集')
-        self.assertEqual(app.collect_count.cget('text'), f'显示 {MAX_LINKS} / 共 {MAX_LINKS} · 已选 0')
+                         zh_t('collect.status.summary', status=zh_t('collect.status.finished'), pages=10, links=MAX_LINKS,
+                              suffix=zh_t('collect.status.limit_suffix', limit=MAX_LINKS)))
+        self.assertEqual(app.collect_count.cget('text'), zh_t('collect.count', shown=MAX_LINKS, total=MAX_LINKS))
         record = app.library.job(job)
         self.assertEqual(sum(len(page['links']) for page in record['pages']), 10_000, 'the record stays whole')
         # Opened again from the history: the same cap and a status line that says so.
         app.load_collection_record(record)
         self.assertEqual(list(app.collected_links), live)
         self.assertEqual(ui_theme.full_text(app.collect_status),
-                         f'历史结果：10 页，{MAX_LINKS} 条链接；已达 {MAX_LINKS} 条上限')
+                         zh_t('collect.status.from_history', pages=10, links=MAX_LINKS)
+                         + zh_t('library.cap_note', limit=MAX_LINKS))
 
     def test_a_small_record_is_shown_whole_without_a_cap_note(self):
         app = self.make_app(smoke=True)
@@ -605,7 +607,7 @@ class U3_CollectionCapTests(Base):
         record = {'pages': pages, 'data': {'options': {'urls': ['https://example.org/list?p=0']}}}
         app.load_collection_record(record)
         self.assertEqual(len(app.collected_links), 6)
-        self.assertEqual(ui_theme.full_text(app.collect_status), '历史结果：3 页，6 条链接')
+        self.assertEqual(ui_theme.full_text(app.collect_status), zh_t('collect.status.from_history', pages=3, links=6))
         self.assertEqual(library_ui.capped_links(self.pages(3, 1000)).keys(),
                          {f'https://media.example.org/{p}/{n}.mp3': 0 for p in range(2) for n in range(1000)}.keys())
 
@@ -635,10 +637,10 @@ class U4_HeldSettingsTests(Base):
             kernel.CloseHandle(ctypes.c_void_p(handle))
         self.assertIn(settings.HELD, app.prefs)
         self.assertEqual(app.notice_kind, 'settings')
-        self.assertEqual(ui_theme.full_text(app.notice_text), SETTINGS_HELD_NOTICE)
+        self.assertEqual(app.notice_bar.full_text, i18n.t('shell.notice.settings_held'))
         self.assertEqual(app.notice_bar.winfo_manager(), 'grid')
-        self.assertEqual(len([line for line in lines if line.startswith('设置文件暂时无法读取')]), 1, lines)
-        app.notice_buttons[0].invoke()          # 知道了
+        self.assertEqual(lines.count(zh_t('log.settings_held')), 1, lines)
+        app.notice_bar.buttons[0].invoke()      # 知道了
         self.assertIsNone(app.notice_kind)
         self.assertEqual(app.notice_bar.winfo_manager(), '')
 
@@ -669,9 +671,10 @@ class U5_ClearedHeaderTests(Base):
                 mock.patch.object(engine, 'save_unfinished'):
             app.clear_unfinished()
         pump(app, timeout=0.3)
-        self.assertEqual(ui_theme.full_text(app.current_title), '任务结束 · 1 条成功')
-        self.assertEqual(app.current_title.cget('text'), '任务结束 · 1 条成功', 'no ellipsis at 1000x740')
-        self.assertEqual(ui_theme.full_text(app.metrics), ui_download.CLEARED_METRICS)
+        self.assertEqual(ui_theme.full_text(app.current_title), zh_t('download.title.finished_n', success=1))
+        self.assertEqual(app.current_title.cget('text'), zh_t('download.title.finished_n', success=1),
+                         'no ellipsis at 1000x740')
+        self.assertEqual(ui_theme.full_text(app.metrics), '')
         app.smoke_mode = True
 
 
@@ -681,7 +684,7 @@ class U6_BusySwitchTests(Base):
         app = self.make_app(smoke=True)
         self.assertEqual(app.current_page, 'download')
         app.collect_urls.insert('1.0', 'https://example.org/list')
-        with mock.patch.object(app, '_dim_collect_box', wraps=app._dim_collect_box) as dim, \
+        with mock.patch.object(app.collect_urls, 'set_dimmed', wraps=app.collect_urls.set_dimmed) as dim, \
                 mock.patch.object(app.collect_add, 'configure', wraps=app.collect_add.configure) as add:
             app.operation = 'download'
             app.set_busy(True)
@@ -813,11 +816,12 @@ class FixRound1Tests(Base):
             db.execute("INSERT INTO jobs VALUES('bad','download','坏记录 badjson','completed',1,'{not json')")
         app.refresh_library()
         self.assertEqual(len(app.history_tree.get_children()), 300)
-        self.assertEqual(app.history_more.cget('text'), '加载更多 1 条')
+        self.assertEqual(app.history_more.cget('text'), zh_t('library.history.more'))
+        self.assertEqual(app.history_more.winfo_manager(), 'grid')
         app.history_more.invoke()
         self.assertEqual(len(app.history_tree.get_children()), 301)
         self.assertEqual(app.history_tree.full_values('bad')[1], '坏记录 badjson')
-        self.assertEqual(app.history_count.cget('text'), '共 301 条')
+        self.assertEqual(app.history_count.cget('text'), zh_t('library.history.count', total=301))
 
     def test_the_downloaded_check_under_a_lock_does_not_hold_the_start(self):
         store = library.Library(_sandbox.out('v170-fix1-find', 'library.sqlite3'))
@@ -839,7 +843,8 @@ class FixRound1Tests(Base):
         self.assertTrue(items, events)
         self.assertLess(items[0] - started, 5, 'the item starts after FIND_TIMEOUT, not the worker timeout')
         logs = [str(value) for _moment, kind, value in events if kind == 'log']
-        self.assertTrue(any(line.startswith('下载记录无法读取，照常下载') for line in logs), logs)
+        self.assertTrue(any(getattr(value, 'key', None) == 'core.engine.record_unreadable'
+                            for _moment, kind, value in events if kind == 'log'), logs)
         seen = {}
         worker = threading.Thread(target=lambda: seen.setdefault('timeout', library._timeout()))
         worker.start()

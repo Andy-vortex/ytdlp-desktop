@@ -1,6 +1,7 @@
+# quick
 """1.7.0 merge of fix-core and fix-ui (docs/1.7.0/handoff/fix-merge.md): the cross-team requests.
 
-R1  恢复内置引擎: when updater.restore_bundled() raises (MSG_RESTORE, the updated engine is still in
+R1  恢复内置引擎: when updater.restore_bundled() raises (core.update.restore_failed, the updated engine is still in
     use), the window shows the warning, refreshes the engine labels and says nothing else; the
     success path is as in 1.6.0.
 R2  on_queued uses the additive 'items' of the queued event (fix-core C4): a link queued in two
@@ -27,6 +28,7 @@ import updater
 from engine import Options
 from ui_download import DownloadUI
 from ui_settings import SettingsUI
+from _sandbox import zh_t
 
 
 def settings_window():
@@ -40,14 +42,14 @@ def settings_window():
 class RestoreEngineTests(unittest.TestCase):
     def test_a_failed_restore_shows_the_warning_and_refreshes_the_labels_only(self):
         window = settings_window()
-        # (1.8.0) what restore_bundled raises: the message of MSG_RESTORE (C-F46, MESSAGES.md 3.3)
+        # (1.8.0) what restore_bundled raises: the message of core.update.restore_failed (C-F46, MESSAGES.md 3.3)
         error = updater.UpdateError(messages.msg('core.update.restore_failed'))
         with mock.patch.object(ui_settings.messagebox, 'askyesno', return_value=True), \
                 mock.patch.object(ui_settings.messagebox, 'showwarning') as warning, \
                 mock.patch.object(updater, 'restore_bundled', side_effect=error):
             SettingsUI.restore_engine(window)
         warning.assert_called_once()
-        self.assertEqual(warning.call_args.args[:2], ('恢复未完成', updater.MSG_RESTORE))
+        self.assertEqual(warning.call_args.args[:2], (zh_t('dialog.restore.failed'), zh_t('core.update.restore_failed')))
         self.assertEqual(window.calls, ['labels'])
         window.update_status.configure.assert_not_called()
 
@@ -59,8 +61,8 @@ class RestoreEngineTests(unittest.TestCase):
                 mock.patch.object(ui_settings, 'engine_version', return_value='2026.10.21'):
             SettingsUI.restore_engine(window)
         warning.assert_not_called()
-        self.assertEqual(window.calls, ['labels', ('log', '已恢复内置引擎：yt-dlp 2026.10.21')])
-        self.assertEqual(window.update_status.configure.call_args.kwargs['text'], '已改用内置引擎。')
+        self.assertEqual(window.calls, ['labels', ('log', zh_t('log.engine_restored', version='2026.10.21'))])
+        self.assertEqual(window.update_status.configure.call_args.kwargs['text'], zh_t('settings.update.restored'))
 
     def test_no_is_still_no(self):
         window = settings_window()

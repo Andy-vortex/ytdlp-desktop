@@ -2,8 +2,7 @@
 
 The shell owns the window, the sidebar, the shared state, the event loop (poll, handle,
 set_busy, watchdog) and closing; the pages are mixins (DownloadUI, SettingsUI, LogUI,
-LibraryUI, CollectionUI).  FORMATS, bytes_text, time_text and the 1.5.1 colour names are
-re-exported from ui_download for older callers (library_ui: from studio import FORMATS).
+LibraryUI, CollectionUI).
 """
 from __future__ import annotations
 
@@ -29,14 +28,14 @@ import paths
 import settings
 import ui_theme
 from collection_ui import CollectionUI
-from ui_download import (DownloadUI, FORMATS, bytes_text, time_text, BG, WHITE, INK, MUTED,  # noqa: F401 (re-exports)
-                         BLUE, BLUE_LIGHT, LINE, SIDE, GREEN, ORANGE)
+from ui_download import DownloadUI, time_text
 from ui_settings import SettingsUI
 from ui_log import LogUI
 from library_ui import LibraryUI
-from engine import APP_VERSION, MODES, RESOLUTIONS, RESOURCE_ROOT, engine_version
+from engine import MODES, RESOLUTIONS
+from paths import RESOURCE_ROOT
+from updater import engine_version
 
-TITLE = 'YT-DLP 下载器'
 DEFAULT_SIZE = (1120, 810)
 MIN_SIZE = (1000, 740)
 # Events handled through self.handlers (kind -> bound method on_<kind>); collect_* go to handle_collection.
@@ -46,10 +45,8 @@ HANDLED_KINDS = ('log', 'item', 'title', 'waiting', 'resuming', 'progress', 'med
 # Tk variables written to settings.json 400 ms after a change (SPEC 3.2).
 PERSISTED = ('output', 'mode', 'resolution', 'batch_safe', 'archive_enabled', 'archive_root', 'cookies', 'naming',
              'embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded', 'notify_done', 'clipboard_hint',
-             'check_engine_updates')
+             'check_engine_updates', 'subscription_media_only', 'subscription_first_new', 'subscription_interval')
 _GEOMETRY = re.compile(r'^(\d+)x(\d+)\+(-?\d+)\+(-?\d+)$')
-# (1.7.0 U4) settings.json could not be read at start (held or locked): said once on the download page.
-SETTINGS_HELD_NOTICE = '设置文件暂时无法读取，本次先用默认设置；原文件不会被覆盖。'
 
 
 def virtual_screen():
@@ -125,12 +122,12 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         ui_theme.enable_dpi_awareness()
         ctk.set_appearance_mode(getattr(arguments, 'appearance', None) or 'light')
         ui_theme.apply_theme()
-        super().__init__(fg_color=ui_theme.BG)
+        super().__init__(fg_color=ui_theme.SURFACE)      # (2.0.0 S4) one sheet: the pages sit on SURFACE
         applog.setup()
         self.report_callback_exception = self.report_error
         self.logger = applog.get()
         # 2. window basics
-        self.title(i18n.t('app.title'))       # TITLE in zh (I18N.md 8.5)
+        self.title(i18n.t('app.title'))
         self.geometry(f'{DEFAULT_SIZE[0]}x{DEFAULT_SIZE[1]}')
         self.minsize(*MIN_SIZE)
         self.protocol('WM_DELETE_WINDOW', self.on_close)
@@ -182,8 +179,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         resolution = prefs['resolution'] if prefs['resolution'] in RESOLUTIONS else RESOLUTIONS[0]
         # 5. Tk variables
         self.output = tk.StringVar(value=arguments.smoke_output or prefs['output'] or str(paths.default_output()))
-        self.mode = tk.StringVar(value=mode)
-        self.format = tk.StringVar(value=formats.by_mode(mode).label)
+        self.mode = tk.StringVar(value=mode)        # a preset id; the format menu shows i18n.t('format.' + id)
         self.resolution = tk.StringVar(value=resolution)
         self.proxy = tk.StringVar(value='')
         self.cookies = tk.StringVar(value=prefs['cookies'] if isinstance(prefs['cookies'], str) else '')
@@ -191,13 +187,21 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.batch_safe = tk.BooleanVar(value=prefs['batch_safe'] is not False)
         self.naming = tk.StringVar(value=prefs['naming'] if prefs['naming'] in naming.NAMING else 'title')
         for name in ('embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded', 'notify_done', 'clipboard_hint',
-                     'check_engine_updates'):
+                     'check_engine_updates', 'subscription_media_only', 'subscription_first_new'):
             value = prefs[name]
             setattr(self, name, tk.BooleanVar(value=value if isinstance(value, bool) else defaults[name]))
+        # (2.0.0 S4) The schedule of a new subscription (settings.SCHEDULES, seconds) and the archive switch and
+        # folder: every persisted variable is made here.  The default archive folder follows the output folder.
+        interval = prefs['subscription_interval']
+        self.subscription_interval = tk.IntVar(
+            value=interval if interval in settings.SCHEDULES else defaults['subscription_interval'])
+        self.archive_enabled = tk.BooleanVar(value=self.prefs.get('archive_enabled', False) is True)
+        self.archive_root = tk.StringVar(
+            value=self.prefs.get('archive_root', settings.defaults(self.output.get())['archive_root']))
         # 6. history, collection state, unfinished list
         self.init_library(self.prefs)
         self.init_collection()
-        self.unfinished = [] if self.smoke_mode else engine.load_unfinished()
+        self.unfinished = [] if self.smoke_mode else engine.load_unfinished(self.append_log)
         for kind in HANDLED_KINDS:
             handler = getattr(self, f'on_{kind}', None)
             if handler is not None:
@@ -214,6 +218,9 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.font = ui_theme.font('body')
         self.small = ui_theme.font('caption')
         self.bold = ui_theme.font('heading')
+        # (2.0.0 S4) the words the shared pieces of ui_theme show themselves (ask_text, path_button, empty_state)
+        ui_theme.WORDS.update(cancel=i18n.t('common.cancel'), save=i18n.t('common.save'),
+                              choose=i18n.t('common.choose_ellipsis'))
         self.build_sidebar()
         self.content = ctk.CTkFrame(self, fg_color='transparent', corner_radius=0)
         self.content.grid(row=0, column=1, sticky='nsew', padx=ui_theme.PAGE_PAD, pady=16)
@@ -239,7 +246,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.on_format()
         if arguments.smoke_url:
             self.urls.insert('1.0', arguments.smoke_url)
-            self.format.set(FORMATS[1])
+            self.mode.set(formats.PRESETS[1].id)
             self.on_format()
         self.links_changed()
         self.append_log(i18n.t('log.ready', version=messages.show(engine_version())))
@@ -270,7 +277,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         self.collected_pages = []
         self.collection_errors = 0
         self.download_referers = {}
-        # The stored (compared) values of 1.6.0, shown through i18n.label by the collect page (I18N.md 7).
+        # Codes (compared, never stored), shown through i18n.label by the collect page.
         self.collect_mode = tk.StringVar(value=collection_ui.MODE_STATIC)
         self.collect_scrolls = tk.StringVar(value='0')
         self.collect_pages_limit = tk.StringVar(value='1')
@@ -297,17 +304,6 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
                 pass
         self.save_after = self.after(400, self.save_settings)
 
-    # ------------------------------------------------------------ shell factories (compatibility surface)
-    def label(self, parent, text='', **kwargs):
-        kwargs.setdefault('font', self.font)
-        return ui_theme.label(parent, text, **kwargs)
-
-    def button(self, parent, text, command, primary=False, **kwargs):
-        return ui_theme.button(parent, text, command, kind='primary' if primary else kwargs.pop('kind', 'soft'), **kwargs)
-
-    def card(self, parent, **kwargs):
-        return ui_theme.card(parent, **kwargs)
-
     def report_error(self, kind, value, trace):
         """Tk callback errors: the traceback goes to the log file, one line to the log page."""
         try:
@@ -317,20 +313,23 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             pass
 
     def build_sidebar(self):
-        side = ctk.CTkFrame(self, width=ui_theme.SIDEBAR_W, fg_color=ui_theme.SIDE, corner_radius=0)
+        """(2.0.0 S4, 00-system 4.1-4.4) The mark and 'YT-DLP', five one-word pages, and at the bottom the
+        status (a dot and one word) with the 'Update available' link above it while a newer engine is offered."""
+        side = self.sidebar = ctk.CTkFrame(self, width=ui_theme.SIDEBAR_W, fg_color=ui_theme.SIDE, corner_radius=0)
         side.grid(row=0, column=0, sticky='ns')
         side.grid_propagate(False)
         side.grid_columnconfigure(0, weight=1)
         side.grid_rowconfigure(6, weight=1)
         brand = ctk.CTkFrame(side, fg_color='transparent', corner_radius=0)
-        brand.grid(row=0, column=0, sticky='ew', padx=16, pady=(24, 24))
-        mark = ctk.CTkLabel(brand, text='', image=ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white', 18), width=36,
-                            height=36, corner_radius=10, fg_color=ui_theme.ACCENT)
-        mark.grid(row=0, column=0, rowspan=2, padx=(0, 10))
+        brand.grid(row=0, column=0, sticky='ew', padx=16, pady=(20, 20))
+        mark = ctk.CTkLabel(brand, text='', image=ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white', 16), width=32,
+                            height=32, corner_radius=ui_theme.RADIUS, fg_color=ui_theme.ACCENT)
+        mark.grid(row=0, column=0, padx=(0, 10))
         ui_theme.label(brand, 'YT-DLP', role='brand', text_color=ui_theme.WHITE, anchor='w').grid(row=0, column=1, sticky='w')
-        caption, wrapped = self._brand_caption(brand)
-        ui_theme.label(brand, caption, role='caption', text_color=ui_theme.SIDE_MUTED, anchor='w',
-                       **({'justify': 'left'} if wrapped else {})).grid(row=1, column=1, sticky='w')
+        # One icon column and one text column for the whole sidebar (00-system 4.4): a nav button sits `edge` from
+        # the side, draws its 16 px icon `inset` further in (a `cell` 18 wide with Tk's label pad, at 200 %), then
+        # CTk's `gap`; the update arrow and the status dot take the same cell, so every text starts at one x.
+        edge, inset, cell, gap = 12, 10, 18, 6
         self.nav_icons = {}
         for row, key, code, title in [(1, 'download', ui_theme.ICON_DOWNLOAD, i18n.t('nav.download')),
                                       (2, 'collect', ui_theme.ICON_SEARCH, i18n.t('nav.collect')),
@@ -338,70 +337,52 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
                                       (4, 'logs', ui_theme.ICON_LOG, i18n.t('nav.logs')),
                                       (5, 'settings', ui_theme.ICON_SETTINGS, i18n.t('nav.settings'))]:
             self.nav_icons[key] = (ui_theme.icon(code, 'side'), ui_theme.icon(code, 'white'))
-            button = ctk.CTkButton(side, text=title, image=self.nav_icons[key][0], compound='left', anchor='w',
-                                   border_spacing=10, height=40, corner_radius=8, font=self.font,
-                                   fg_color='transparent', hover_color=ui_theme.SIDE_HOVER,
-                                   text_color=ui_theme.SIDE_TEXT,
-                                   command=lambda selected=key: self.show_page(selected))
-            button.grid(row=row, column=0, sticky='ew', padx=12, pady=2)
+            button = ctk.CTkButton(side, text=title, image=self.nav_icons[key][0], compound='left',
+                                   anchor='w', border_spacing=inset, height=ui_theme.CONTROL_H, corner_radius=ui_theme.RADIUS,
+                                   font=self.font, fg_color='transparent', hover_color=ui_theme.SIDE_HOVER,
+                                   text_color=ui_theme.SIDE_TEXT, command=lambda selected=key: self.show_page(selected))
+            button.grid(row=row, column=0, sticky='ew', padx=edge, pady=2)
             self.nav_buttons[key] = button
-        status = ctk.CTkFrame(side, fg_color=ui_theme.SIDE_CARD, corner_radius=10)
-        status.grid(row=7, column=0, sticky='ew', padx=12, pady=(12, 16))
-        status.grid_columnconfigure(1, weight=1)
-        self.side_dot = ui_theme.label(status, '●', role='caption', text_color=ui_theme.SIDE_OK, width=10)
-        self.side_dot.grid(row=0, column=0, sticky='w', padx=(12, 6), pady=(10, 0))
-        self.side_status = ui_theme.label(status, '', role='caption', text_color=ui_theme.SIDE_OK, anchor='w')
-        self.side_status.grid(row=0, column=1, sticky='ew', padx=(0, 12), pady=(10, 0))
-        # (1.7.0, I18N.md 10.4) A safety net: a status longer than its 120 px is cut with '…'.
-        ui_theme.fit(self.side_status, i18n.t('shell.status.ready'))
-        # The engine version, or the shown 已内置 (updater.BUILTIN) when the built-in version is not known.
-        self.engine_badge = ui_theme.label(status, f'yt-dlp {messages.show(engine_version())}', role='caption',
-                                           text_color=ui_theme.SIDE_MUTED, anchor='w')
-        self.engine_badge.grid(row=1, column=0, columnspan=2, sticky='ew', padx=12)
-        self.app_badge = ui_theme.label(status, '', role='caption', text_color=ui_theme.SIDE_MUTED, anchor='w')
-        self.app_badge.grid(row=2, column=0, columnspan=2, sticky='ew', padx=12, pady=(0, 10))
-        self.show_app_badge(False)
+        # Shown only while a newer yt-dlp is offered (show_engine_notice); it opens the engine group of Settings.
+        # It is 28 high, so its border spacing is 2 and its corner radius sets the inner margin instead of `inset`;
+        # the outer margin makes up the difference.
+        self.engine_notice = ctk.CTkButton(side, text=i18n.t('shell.engine_update'), anchor='w', height=ui_theme.CONTROL_H_SM,
+                                           image=ui_theme.icon(ui_theme.ICON_UPDATE, 'side_warn', 16), compound='left',
+                                           corner_radius=ui_theme.RADIUS, border_spacing=2, font=self.small,
+                                           fg_color='transparent', hover_color=ui_theme.SIDE_HOVER,
+                                           text_color=ui_theme.SIDE_WARN, command=lambda: self.show_settings('engine'))
+        self.engine_notice.grid(row=7, column=0, sticky='ew', padx=(edge + inset - ui_theme.RADIUS, edge), pady=(0, 4))
+        self.engine_notice.grid_remove()
+        status = ctk.CTkFrame(side, fg_color='transparent', corner_radius=0)
+        status.grid(row=8, column=0, sticky='ew', padx=(edge + inset, edge), pady=(0, 16))
+        self.side_dot = ui_theme.label(status, '●', role='caption', text_color=ui_theme.SIDE_OK, width=cell)
+        self.side_dot.grid(row=0, column=0, sticky='w', padx=(0, gap))
+        self.side_status = ui_theme.label(status, i18n.t('shell.status.ready'), role='caption',
+                                          text_color=ui_theme.SIDE_OK, anchor='w')
+        self.side_status.grid(row=0, column=1, sticky='w')
 
-    @staticmethod
-    def _brand_caption(brand):
-        """(1.7.0, I18N.md 10.4) The caption under the brand, on two lines when one line is wider than
-        its column (en 'Desktop Downloader'; the zh text fits and stays one line): (text, wrapped)."""
-        text = i18n.t('shell.brand_caption')
-        try:
-            scale = ui_theme._scaling(brand) or 1.0
-            measure = ui_theme._measure_font(brand, ui_theme.font('caption')).measure
-            room = (ui_theme.SIDEBAR_W - 2 * 16 - 36 - 10) * scale      # sidebar, brand padding, mark and its gap
-            if measure(text) <= room or ' ' not in text.strip():
-                return text, False
-            words = text.split(' ')
-            splits = [(' '.join(words[:cut]), ' '.join(words[cut:])) for cut in range(1, len(words))]
-            first, rest = min(splits, key=lambda pair: max(measure(pair[0]), measure(pair[1])))
-            return f'{first}\n{rest}', True
-        except (tk.TclError, AttributeError, ValueError):
-            return text, False
+    def show_engine_notice(self, shown):
+        """The sidebar's 'Update available' link: shown while a newer yt-dlp than the running one is offered."""
+        ui_theme.show(self.engine_notice, bool(shown))
 
-    def show_app_badge(self, engine_new):
-        """(1.7.0) The app badge of the sidebar: the version, and ' · 引擎有新版' (en ' · new engine')
-        while a newer yt-dlp is offered.  The texts are the shell's (catalog i18n_shell)."""
-        if engine_new:
-            self.app_badge.configure(text=i18n.t('shell.badge.engine_new', version=APP_VERSION),
-                                     text_color=ui_theme.SIDE_WARN)
-        else:
-            self.app_badge.configure(text=f'v{APP_VERSION}', text_color=ui_theme.SIDE_MUTED)
-
-    def page(self, name, title, subtitle, max_width=None):
+    def page(self, name, title, max_width=None):
+        """A page with its header: the title, then ``header.left`` (page-level controls packed from the left,
+        SECTION after the title) and ``header.right`` (packed from the right edge).  The content starts in row 1."""
         page = ctk.CTkFrame(self.content, fg_color='transparent', corner_radius=0)
         page.grid(row=0, column=0, sticky='nsew')
         page.grid_columnconfigure(0, weight=1)
-        header = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
-        header.grid(row=0, column=0, sticky='ew', pady=(0, ui_theme.GAP))
-        header.grid_columnconfigure(1, weight=1)
-        ui_theme.label(header, title, role='title', anchor='w').grid(row=0, column=0, sticky='w')
-        subtitle_label = ui_theme.label(header, subtitle, role='caption', text_color=ui_theme.MUTED, anchor='w')
-        subtitle_label.grid(row=0, column=1, sticky='ew', padx=(12, 0), pady=(8, 0))
-        ui_theme.fit(subtitle_label, subtitle)
+        header = page.header = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
+        header.grid(row=0, column=0, sticky='ew', pady=(0, ui_theme.PAD))
+        header.grid_rowconfigure(0, minsize=40)
+        header.grid_columnconfigure(2, weight=1)
+        header.title = ui_theme.label(header, title, role='title', anchor='w')
+        header.title.grid(row=0, column=0, sticky='w')
+        header.left = ctk.CTkFrame(header, fg_color='transparent', corner_radius=0, width=0, height=0)
+        header.left.grid(row=0, column=1, sticky='w', padx=(ui_theme.SECTION, 0))
+        header.right = ctk.CTkFrame(header, fg_color='transparent', corner_radius=0, width=0, height=0)
+        header.right.grid(row=0, column=3, sticky='e')
         self.pages[name] = page
-        if max_width is None and name in ('download', 'settings'):
+        if max_width is None and name == 'download':
             max_width = ui_theme.PAGE_MAX
         self.page_caps[name] = max_width
         return page
@@ -428,8 +409,8 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         page.tkraise()
         ui_theme.hide_from_focus(self, 'pages', [other for other in self.pages.values() if other is not page])
         self.current_page = name
-        if name == 'collect' and hasattr(self, '_dim_collect_box'):
-            self._dim_collect_box(bool(self.busy))      # (1.7.0 U6) the look waits for its page
+        if name == 'collect' and hasattr(self, 'collect_urls'):
+            self.collect_urls.set_dimmed(bool(self.busy))   # (1.7.0 U6) the look waits for its page
         self.focus_page(name)
 
     def focus_page(self, name):
@@ -453,7 +434,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         elif name == 'logs':
             target = getattr(self, 'logs', page)
         elif name == 'library':
-            # The tab ids are the 1.6.0 Chinese names (group library_tab, I18N.md 7), in tab order.
+            # The tab ids are codes (group library_tab), in tab order.
             tab_ids = [value for value, _label in i18n.choices('library_tab')]
             tables = dict(zip(tab_ids, ('history_tree', 'subscription_tree', 'archive_tree')))
             try:
@@ -466,16 +447,12 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             pass
 
     def refresh_shell(self):
-        """Side status line and the start button's label, derived from the current state."""
+        """The sidebar's status (a dot and one word, 00-system 4.4), then the hooks of the pages that follow
+        the shell state: refresh_foreign_activity, refresh_start and refresh_settings_controls."""
         try:
-            text, tone = i18n.t('shell.status.ready'), ui_theme.SIDE_OK
             if self.busy and self.operation == 'download':
                 if self.wait_context is not None and self.wait_seconds is not None:
                     text, tone = i18n.t('shell.status.waiting', time=time_text(self.wait_seconds)), ui_theme.SIDE_WARN
-                elif self.active_index is not None:
-                    total = max(self.job_row_count(), self.active_index + 1)
-                    text, tone = (i18n.t('shell.status.downloading_n', index=self.active_index + 1, total=total),
-                                  ui_theme.SIDE_INFO)
                 else:
                     text, tone = i18n.t('shell.status.downloading'), ui_theme.SIDE_INFO
             elif self.busy and self.operation == 'collect':
@@ -483,19 +460,15 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             elif self.busy and self.operation == 'update':
                 text, tone = i18n.t('shell.status.updating'), ui_theme.SIDE_INFO
             elif getattr(self, 'bot_retry', None) is not None:
-                text, tone = i18n.t('shell.status.bot_wait'), ui_theme.SIDE_DANGER
-            # The status is fitted (cut with '…' when it is too wide): compare the full text.
-            if ui_theme.full_text(self.side_status) != text:
+                text, tone = i18n.t('shell.status.bot_wait'), ui_theme.SIDE_WARN
+            else:
+                text, tone = i18n.t('shell.status.ready'), ui_theme.SIDE_OK
+            if self.side_status.cget('text') != text or self.side_status.cget('text_color') != tone:
                 self.side_status.configure(text=text, text_color=tone)
                 self.side_dot.configure(text_color=tone)
-            # (I18N.md 8.7) compared with the texts of the running language, not with Chinese literals
-            queued = self.busy and self.operation == 'download'
-            start = i18n.t('download.start.queue') if queued else i18n.t('download.start')
-            if self.start_button.cget('text').strip() != start:
-                self.start_button.configure(text=start)
         except (AttributeError, tk.TclError):
             pass     # called while the window is still being built or already gone
-        for refresh in ('refresh_foreign_activity', 'refresh_engine_controls'):
+        for refresh in ('refresh_foreign_activity', 'refresh_start', 'refresh_settings_controls'):
             try:
                 getattr(self, refresh)()
             except (AttributeError, tk.TclError):
@@ -541,15 +514,14 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
             control.configure(state='disabled' if busy else 'normal')
         for control in self.input_controls:
             control.configure(state='disabled' if busy and self.operation != 'download' else 'normal')
-        self.stop_button.configure(state='normal' if busy else 'disabled')
-        self.refresh_failed_button()
-        self.on_format()
-        if hasattr(self, 'collect_stop'):
-            self.collect_stop.configure(state='normal' if busy and self.operation == 'collect' else 'disabled')
-            self.collection_selection_changed()
-        if hasattr(self, 'history_tree'):
-            self.history_selection()
-        self.refresh_shell()
+        # (2.0.0 S4, 00-system 4.7) The final shape: every control that also depends on a selection, a content or
+        # a mode is set by the hook of its view, which reads self.busy itself.
+        self.refresh_failed_button()           # download, tasks: stop, retry unfinished, clear unfinished
+        self.on_format()                       # download, input: resolution, subtitles
+        self.refresh_collect_actions()         # collect: stop, save page text
+        self.collection_selection_changed()    # collect: add to downloads, export
+        self.history_selection()               # library: archive_selection and subscription_tools first
+        self.refresh_shell()                   # shell: refresh_foreign_activity, refresh_start, refresh_settings_controls
 
     def stop(self):
         if self.busy and self.runner:

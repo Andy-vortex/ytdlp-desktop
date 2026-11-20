@@ -29,9 +29,14 @@ import urllib.error
 import urllib.request
 
 import engine
+import i18n
 import paths
 import procutil
 import updater
+
+
+# (2.0.0 S3 W4) the zh text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import zh_t
 
 TAG = '2099.01.02'
 ASSET_URL = updater.ASSET_PREFIX + TAG + '/yt-dlp.exe'
@@ -200,9 +205,9 @@ class UpdaterCase(unittest.TestCase):
                 subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True,
                                creationflags=procutil.HIDDEN, timeout=30)
 
-    def run_update(self, github, probe_args=PROBE_ARGS, legacy=False, probe=None):
+    def run_update(self, github, probe_args=PROBE_ARGS, probe=None):
         with mock.patch('urllib.request.urlopen', github), (probe or self.probe()):
-            updater.EngineUpdater(self.emit, self.cancelled, probe_args, legacy_events=legacy).run()
+            updater.EngineUpdater(self.emit, self.cancelled, probe_args).run()
         self.assertEqual(self.kinds()[-1], 'update_done', 'update_done must be the last event')
         self.assertEqual(self.kinds().count('update_done'), 1)
         for url in github.urls:
@@ -214,7 +219,6 @@ class EnginePathTests(UpdaterCase):
         self.assertEqual(updater.engine_path(), self.bundled)
         self.assertEqual(updater.engine_version(), self.bundled_version)
         self.assertIs(engine.engine_path, updater.engine_path)
-        self.assertIs(engine.engine_version, updater.engine_version)
         self.assertEqual(engine.build_command('https://example.invalid/a', engine.Options(self.root))[0],
                          str(self.bundled))
         self.assertFalse(paths.STATE_DIR.exists(), 'asking for the engine creates nothing')
@@ -283,7 +287,7 @@ class EnginePathTests(UpdaterCase):
         # A valid engine whose receipt has no version: the engine is used, the version is unknown.
         self.install_old(receipt={'sha256': sha(OLD_ENGINE)})
         self.assertEqual(updater.engine_path(), self.engines / 'yt-dlp.exe')
-        self.assertEqual(updater.engine_version(), '已内置')
+        self.assertEqual(updater.engine_version(), zh_t('core.update.builtin'))
         # A folder in place of the exe.
         (self.engines / 'yt-dlp.exe').unlink()
         (self.engines / 'yt-dlp.exe').mkdir()
@@ -322,18 +326,19 @@ class CheckLatestTests(UpdaterCase):
                 self.assertEqual(set(result), {'tag', 'url', 'size', 'sha256'})
 
     def test_network_failures_give_the_network_message(self):
-        failures = [(urllib.error.URLError(TimeoutError('timed out')), '连接超时'),
-                    (TimeoutError('The read operation timed out'), '连接超时'),
+        failures = [(urllib.error.URLError(TimeoutError('timed out')), zh_t('core.update.timeout')),
+                    (TimeoutError('The read operation timed out'), zh_t('core.update.timeout')),
                     (urllib.error.URLError(OSError(11001, 'getaddrinfo failed')), 'getaddrinfo failed'),
                     (urllib.error.HTTPError(updater.RELEASE_URL, 403, 'rate limit exceeded', {}, None), 'HTTP 403'),
                     (ConnectionResetError(10054, 'connection reset'), 'connection reset')]
+        head, tail = zh_t('core.update.no_github', reason='\0').split('\0')
         for failure, reason in failures:
             with self.subTest(failure=failure), mock.patch('urllib.request.urlopen', FakeGitHub(error=failure)):
                 with self.assertRaises(updater.UpdateError) as caught:
                     updater.check_latest()
                 message = str(caught.exception)
-                self.assertTrue(message.startswith('无法连接 GitHub，请检查网络后重试。（'), message)
-                self.assertTrue(message.endswith('）'), message)
+                self.assertTrue(message.startswith(head), message)
+                self.assertTrue(message.endswith(tail), message)
                 self.assertIn(reason, message)
                 self.assertNotIn('\n', message)
 
@@ -343,7 +348,7 @@ class CheckLatestTests(UpdaterCase):
             with self.subTest(raw=raw), mock.patch('urllib.request.urlopen', FakeGitHub(raw=raw)):
                 with self.assertRaises(updater.UpdateError) as caught:
                     updater.check_latest()
-                self.assertEqual(str(caught.exception), '官方发布信息无法识别，已保留现有引擎。')
+                self.assertEqual(str(caught.exception), zh_t('core.update.bad_release'))
 
 
 class EngineUpdaterTests(UpdaterCase):
@@ -354,7 +359,7 @@ class EngineUpdaterTests(UpdaterCase):
         self.assertEqual(github.urls, [updater.RELEASE_URL, ASSET_URL])
         self.assertEqual(self.kinds(), ['update_status', 'update_status', 'update_progress', 'update_progress',
                                         'update_progress', 'update_status', 'updated', 'update_done'])
-        self.assertEqual(self.values('update_status')[0], '正在检查官方更新…')
+        self.assertEqual(self.values('update_status')[0], zh_t('core.update.checking'))
         self.assertTrue(all(isinstance(text, str) and text for text in self.values('update_status')))
         progress = self.values('update_progress')
         self.assertEqual([set(value) for value in progress], [{'fraction', 'downloaded', 'total'}] * 3)
@@ -416,16 +421,16 @@ class EngineUpdaterTests(UpdaterCase):
         self.assert_old_engine_kept()
 
     def test_digest_none_is_refused_with_a_readable_message(self):
-        self.refused(FakeGitHub(digest=None), '官方发布未提供 SHA256，已保留现有引擎。')
+        self.refused(FakeGitHub(digest=None), zh_t('core.update.no_sha'))
 
     def test_digest_absent_or_short_is_refused(self):
         for digest in ('absent', 'sha256:abc', ''):
             with self.subTest(digest=digest):
                 self.events.clear()
-                self.refused(FakeGitHub(digest=digest), '官方发布未提供 SHA256，已保留现有引擎。')
+                self.refused(FakeGitHub(digest=digest), zh_t('core.update.no_sha'))
 
     def test_bad_hash_is_refused(self):
-        self.refused(FakeGitHub(digest='sha256:' + sha(b'another file')), '更新文件校验失败，已保留原来的引擎。',
+        self.refused(FakeGitHub(digest='sha256:' + sha(b'another file')), zh_t('core.update.bad_hash'),
                      asset_requested=True)
         self.assertEqual(self.probes, [], 'a file that failed verification is never started')
 
@@ -433,11 +438,11 @@ class EngineUpdaterTests(UpdaterCase):
         for size in (len(PAYLOAD) + 1, len(PAYLOAD) - 1, 300_000):
             with self.subTest(size=size):
                 self.events.clear()
-                self.refused(FakeGitHub(size=size), '更新文件校验失败，已保留原来的引擎。', asset_requested=True)
+                self.refused(FakeGitHub(size=size), zh_t('core.update.bad_hash'), asset_requested=True)
         self.assertEqual(self.probes, [])
 
     def test_probe_rejection_is_refused(self):
-        self.refused(FakeGitHub(), '新版引擎与本程序使用的参数不兼容，已保留现有引擎。',
+        self.refused(FakeGitHub(), zh_t('core.update.incompatible'),
                      probe=self.probe(BAD_PROBE), asset_requested=True)
         self.assertEqual(len(self.probes), 1)
 
@@ -446,35 +451,35 @@ class EngineUpdaterTests(UpdaterCase):
                         subprocess.TimeoutExpired(['yt-dlp.exe'], 60)):
             with self.subTest(failure=failure):
                 self.events.clear()
-                self.refused(FakeGitHub(), '新版引擎与本程序使用的参数不兼容，已保留现有引擎。',
+                self.refused(FakeGitHub(), zh_t('core.update.incompatible'),
                              probe=self.probe(failure), asset_requested=True)
 
     def test_release_without_the_exe_is_refused(self):
-        self.refused(FakeGitHub(assets=[]), '官方发布中没有找到 yt-dlp.exe。')
+        self.refused(FakeGitHub(assets=[]), zh_t('core.update.no_exe'))
 
     def test_download_address_outside_the_official_release_is_never_contacted(self):
         for url in ('https://example.invalid/yt-dlp.exe', 'http://github.com/yt-dlp/yt-dlp/releases/download/x/yt-dlp.exe',
                     'https://github.com/someone-else/yt-dlp/releases/download/x/yt-dlp.exe'):
             with self.subTest(url=url):
                 self.events.clear()
-                self.refused(FakeGitHub(url=url), '更新文件不在官方发布地址，已保留现有引擎。')
+                self.refused(FakeGitHub(url=url), zh_t('core.update.bad_host'))
 
     def test_implausible_size_is_refused_before_the_download(self):
         for size in (0, -1, 150 * 1024 * 1024 + 1, 'big'):
             with self.subTest(size=size):
                 self.events.clear()
-                self.refused(FakeGitHub(size=size), '官方发布的文件大小异常，已保留现有引擎。')
+                self.refused(FakeGitHub(size=size), zh_t('core.update.bad_size'))
 
     def test_network_failure_gives_the_network_message(self):
         self.refused(FakeGitHub(error=urllib.error.URLError(TimeoutError('timed out'))),
-                     '无法连接 GitHub，请检查网络后重试。（连接超时）')
+                     zh_t('core.update.no_github', reason=zh_t('core.update.timeout')))
 
     def test_connection_lost_during_the_download(self):
         def drop(index):
             if index == 1:
                 raise ConnectionResetError(10054, 'connection reset by peer')
 
-        self.refused(FakeGitHub(on_block=drop), '无法连接 GitHub，请检查网络后重试。（[Errno 10054] connection reset by peer）',
+        self.refused(FakeGitHub(on_block=drop), zh_t('core.update.no_github', reason='[Errno 10054] connection reset by peer'),
                      asset_requested=True)
 
     def test_cancel_during_the_download_installs_nothing_and_leaves_no_file(self):
@@ -559,48 +564,6 @@ class EngineUpdaterTests(UpdaterCase):
         self.assertEqual((self.engines / 'yt-dlp.exe').read_bytes(), PAYLOAD)
         self.assertEqual(self.leftovers(), [])
 
-    def test_legacy_events_are_the_kinds_of_1_5_1(self):
-        self.run_update(FakeGitHub(), legacy=True)
-        self.assertEqual(self.kinds(), ['title', 'progress', 'progress', 'progress', 'updated', 'update_done'])
-        self.assertEqual(self.values('title'), ['正在检查官方更新…'])
-        self.assertEqual(self.values('progress')[-1],
-                         {'fraction': 1.0, 'downloaded': len(PAYLOAD), 'total': len(PAYLOAD), 'speed': None,
-                          'eta': None, 'status': 'updating'})
-        self.assertEqual(self.values('updated'), [{'version': TAG, 'unchanged': False}])
-        self.assertEqual(self.values('update_done'), [{'cancelled': False}])
-
-    def test_legacy_error_and_unchanged(self):
-        self.run_update(FakeGitHub(tag=self.bundled_version), legacy=True)
-        self.assertEqual(self.kinds(), ['title', 'updated', 'update_done'])
-        self.events.clear()
-        with self.assertLogs('YtDlpDesktop.updater', 'WARNING'):
-            self.run_update(FakeGitHub(digest=None), legacy=True)
-        self.assertEqual(self.kinds(), ['title', 'update_error', 'update_done'])
-
-    def test_runner_update_is_the_legacy_delegate(self):
-        runner = engine.Runner(self.emit)
-        with mock.patch('urllib.request.urlopen', FakeGitHub()), self.probe():
-            runner.update()
-        self.assertEqual(self.kinds(), ['title', 'progress', 'progress', 'progress', 'updated', 'update_done'])
-        # WP1: the options of one preset.  From WP2 on: engine.probe_args(), every preset and option block.
-        expected = (engine.probe_args() if hasattr(engine, 'probe_args') else
-                    engine.build_command('https://example.invalid/probe',
-                                         engine.Options(Path(tempfile.gettempdir())))[1:-2])
-        self.assertEqual(self.probes[0][0][1:], expected)
-        self.assertIn('--ignore-config', expected)
-        self.assertNotIn('https://example.invalid/probe', self.probes[0][0])
-        self.assertNotIn('--', self.probes[0][0])
-        self.assertEqual(updater.engine_version(), TAG)
-        # Stop is the runner's own event.
-        self.events.clear()
-        updater.restore_bundled()
-        stopped = engine.Runner(self.emit)
-        stopped.cancel()
-        with mock.patch('urllib.request.urlopen', FakeGitHub()), self.probe():
-            stopped.update()
-        self.assertEqual(self.kinds(), ['title', 'update_done'])
-        self.assertEqual(self.values('update_done'), [{'cancelled': True}])
-
     def test_unexpected_failure_is_logged_with_its_traceback(self):
         with mock.patch.object(updater, 'check_latest', side_effect=RuntimeError('boom')), \
                 self.assertLogs('YtDlpDesktop.updater', 'ERROR') as logs:
@@ -614,7 +577,7 @@ class EngineUpdaterTests(UpdaterCase):
         with mock.patch.object(updater.os, 'replace', side_effect=PermissionError(13, '拒绝访问。')), \
                 self.assertLogs('YtDlpDesktop.updater', 'WARNING'):
             self.run_update(FakeGitHub())
-        self.assertEqual(self.values('update_error'), ['新版引擎无法写入（拒绝访问。），已保留现有引擎。'])
+        self.assertEqual(self.values('update_error'), [zh_t('core.update.write_failed', reason='拒绝访问。')])
         self.assertEqual(self.leftovers(), [])
         self.assert_old_engine_kept()
 
@@ -624,10 +587,11 @@ class EngineUpdaterTests(UpdaterCase):
         with open(self.engines / 'yt-dlp.exe', 'rb'), self.assertLogs('YtDlpDesktop.updater', 'WARNING') as logs:
             self.run_update(FakeGitHub())   # the engine in use cannot be replaced
         message = self.values('update_error')[0]
-        self.assertTrue(message.startswith('新版引擎无法写入（') and message.endswith('），已保留现有引擎。'), message)
+        head, tail = zh_t('core.update.write_failed', reason='\0').split('\0')
+        self.assertTrue(message.startswith(head) and message.endswith(tail), message)
         for part in ('yt-dlp', 'engines', str(self.root), self.root.name, '\\', '[WinError', "'"):
             self.assertNotIn(part, message)
-        self.assertGreater(len(message), len('新版引擎无法写入（），已保留现有引擎。'), 'the reason is missing')
+        self.assertGreater(len(message), len(head + tail), 'the reason is missing')
         self.assertTrue(logs.records[0].exc_info, 'the log keeps the full error')
         self.assertEqual(self.values('updated'), [])
         self.assertEqual(self.leftovers(), [])
@@ -653,7 +617,7 @@ class EngineUpdaterTests(UpdaterCase):
         with self.failing_receipt(), self.assertLogs('YtDlpDesktop.updater', 'WARNING'):
             self.run_update(FakeGitHub())
         self.assertEqual(self.values('update_error'),
-                         ['新版引擎的校验记录无法写入（拒绝访问。），已改用内置引擎，请稍后重试更新。'])
+                         [zh_t('core.update.record_failed', reason='拒绝访问。')])
         self.assertEqual(self.values('updated'), [])
         self.assertEqual(self.values('update_done'), [{'cancelled': False}])
         # No exe that nothing vouches for, and no receipt of an engine that is gone.
@@ -702,7 +666,7 @@ class EngineUpdaterTests(UpdaterCase):
         with self.assertLogs('YtDlpDesktop.updater', 'WARNING'), self.assertRaises(updater.UpdateError) as caught:
             updater.EngineUpdater(self.emit, self.cancelled, arguments + ['--no-such-option-in-any-yt-dlp'])._probe(
                 self.bundled)
-        self.assertEqual(str(caught.exception), '新版引擎与本程序使用的参数不兼容，已保留现有引擎。')
+        self.assertEqual(str(caught.exception), zh_t('core.update.incompatible'))
         self.assertEqual(self.events, [])
 
 
@@ -761,7 +725,7 @@ class ProbeOutputTests(UpdaterCase):
             data = json.loads(report.read_text(encoding='utf-8')) if report.is_file() else {}
             self.addCleanup(self.kill_leftovers, [data.get('pid'), data.get('second')])
         elapsed = time.monotonic() - started
-        self.assertEqual(str(caught.exception), '新版引擎与本程序使用的参数不兼容，已保留现有引擎。')
+        self.assertEqual(str(caught.exception), zh_t('core.update.incompatible'))
         self.assertIsInstance(caught.exception.__cause__, subprocess.TimeoutExpired)
         self.assertIn('did not finish', logs.records[0].getMessage())
         self.assertTrue(data, 'the stand-in did not start in time')
@@ -789,7 +753,7 @@ class ProbeOutputTests(UpdaterCase):
         timed_out = subprocess.TimeoutExpired(['yt-dlp.exe'], 60)
         with self.assertLogs('YtDlpDesktop.updater', 'WARNING'):
             self.run_update(FakeGitHub(), probe=self.probe(timed_out))
-        self.assertEqual(self.values('update_error'), ['新版引擎与本程序使用的参数不兼容，已保留现有引擎。'])
+        self.assertEqual(self.values('update_error'), [zh_t('core.update.incompatible')])
         self.assertEqual(self.values('update_done'), [{'cancelled': False}])
         self.assertEqual(self.leftovers(), [])
         self.assert_old_engine_kept()
@@ -831,7 +795,8 @@ class HousekeepingTests(UpdaterCase):
         updater.cleanup()
         self.assertEqual(sorted(path.name for path in self.engines.iterdir()),
                          sorted(['.ytdlp-desktop', 'notes.txt', 'yt-dlp.download-folder', 'yt-dlp.download-notes.txt',
-                                 'yt-dlp.download.old', running, 'yt-dlp.exe', 'yt-dlp.json']))
+                                 'yt-dlp.download.old', running, 'yt-dlp.exe', 'yt-dlp.json',
+                                 'yt-dlp.download']))     # (2.0.0 S2 P4) 1.5.1's fixed name: left alone
         self.assert_old_engine_kept()
 
     def test_cleanup_leaves_an_engines_folder_alone_that_is_not_the_apps_own(self):
@@ -851,11 +816,12 @@ class HousekeepingTests(UpdaterCase):
             for name in names:
                 (default / name).write_bytes(b'x')
             updater.cleanup()
-            self.assertEqual(sorted(path.name for path in default.iterdir()), ['yt-dlp.download-notes.txt'])
+            self.assertEqual(sorted(path.name for path in default.iterdir()),
+                             ['yt-dlp.download', 'yt-dlp.download-notes.txt'], '(2.0.0 S2 P4) the fixed name of 1.5.1 stays')
 
     def test_update_error_is_an_exception_with_a_user_message(self):
         self.assertTrue(issubclass(updater.UpdateError, Exception))
-        self.assertEqual(str(updater.UpdateError('更新文件校验失败，已保留原来的引擎。')), '更新文件校验失败，已保留原来的引擎。')
+        self.assertEqual(str(updater.UpdateError(zh_t('core.update.bad_hash'))), zh_t('core.update.bad_hash'))
 
     def test_updater_does_not_import_the_engine_or_the_network_at_import(self):
         code = ('import sys; sys.path.insert(0, sys.argv[1]); import updater; '

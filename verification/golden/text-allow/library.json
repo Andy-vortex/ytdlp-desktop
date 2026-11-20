@@ -1,6 +1,6 @@
 {
  "module": "library",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
   "未命名": {
    "category": "file",
@@ -17,10 +17,6 @@
   "网页正文.txt": {
    "category": "file",
    "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
-  },
-  "网页链接": {
-   "category": "stored",
-   "reason": "stored / compared enum value (value.link_kind.web); shown through i18n.label or a value.* message, never as text (P7)"
   },
   "资料信息.bad-{stamp}-{n}.json": {
    "category": "file",
@@ -47,25 +43,13 @@
    "reason": "on-disk file or folder name (I18N.md D10); never translated (P7)"
   }
  },
- "raises": {
-  "not an archive record": {
-   "exception": "ValueError",
-   "line_hint": 911,
-   "reason": "internal marker raised in Archive.prepare and caught there (the record is set aside)"
-  }
- },
- "composed": {
-  "str(title)": {
-   "line_hint": 597,
-   "reason": "Library.rename_job's title normalisation: str() of a Message / Raw / Value returns the object itself (MESSAGES.md 2.3, D3), so the typed title reaches the column and its sidecar unchanged; a plain str stays the same text (no flattening, no path)"
-  }
- },
+ "raises": {},
+ "composed": {},
  "sinks": {
   "body": {
    "line_hint": 934,
    "function": "Archive.prepare",
    "reason": "Archive.prepare's filetext.page_text body: the collected page's own text / markdown (user data, never an app text), written into 网页正文.txt / .md as it is, as 1.7.0 did"
   }
- },
- "pending_keys": {}
+ }
 }

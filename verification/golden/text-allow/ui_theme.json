@@ -1,6 +1,6 @@
 {
  "module": "ui_theme",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
   "（［｛〈《「『【〔([{“‘": {
    "category": "internal",
@@ -75,6 +75,5 @@
    "reason": "English internal raise text (G1e, listed under raises); never shown to the owner, so composing it is harmless"
   }
  },
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

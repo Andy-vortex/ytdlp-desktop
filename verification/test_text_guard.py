@@ -4,10 +4,10 @@
 
 G1 runs on every src module (the catalogs and the generated data excepted) and G5 on every UI
 module, unconditionally (WP-6 removed the staging flags, MESSAGES.md 7.8); the release gate (no
-MESSAGES_READY flag, no localize call, no pending_keys, no stale allow entry) is checked here as well
-(10.3 WP-6).  The self-tests run the scanners on the frozen
-1.7.0 sources (verification/release-sources/1.7.0) with the 1.8.0 allow files and on synthetic
-modules written to the sandbox: the guards must catch 媒体直链 and 动态页面媒体请求 (the misses of
+stale allow entry, no G1 / G5 finding) is checked here as well
+(10.3 WP-6).  The self-tests run the scanners on synthetic
+modules written to the sandbox (2.0.0 S2 Q4: those that ran on the frozen 1.7.0 sources now run
+on synthetic modules with the same code shapes, and the current allow files): the guards must catch 媒体直链 and 动态页面媒体请求 (the misses of
 1.7.0's own test 6), local / enum-source bindings in text slots, composed text in core slots, keys
 that are not literals, i18n in core modules, unshown values at UI sinks and the six str(error)
 dialogs of 1.7.0.  No window, no network, no src import except through the scanner's AST.
@@ -15,13 +15,15 @@ dialogs of 1.7.0.  No window, no network, no src import except through the scann
 import _sandbox
 import ast
 import json
+import os
+import re
+import subprocess
 import textwrap
 import unittest
 
 import guard_contract
 import i18n_tool
-
-OLD = _sandbox.release_src('1.7.0')
+import repo_files
 
 
 def lines(findings, rule=None):
@@ -61,42 +63,49 @@ class TreeTests(unittest.TestCase):
         print('G5 applies to: ' + ', '.join(i18n_tool.UI_MODULES) + ' and library (filetext)')
 
     def test_the_release_gate(self):
-        """(WP-6, MESSAGES.md 7.2 / 7.8 / 10.3) no staging flag or set, no localize, no pending_keys, no
-        literal of category pending, no stale allow entry, no G1 / G5 finding."""
+        """(WP-6, MESSAGES.md 7.2 / 7.8 / 10.3) no stale allow entry, no G1 / G5 finding; no staging flag or set is
+        left in src (the gate's own lists of those WP-6 leftovers went in the S3 review fix)."""
         gate = i18n_tool.release_gate()
         self.assertEqual({name: value for name, value in gate.items() if value}, {})
-        self.assertEqual(i18n_tool.ready_flags(), [])
         for name in i18n_tool.src_modules():
             tree = ast.parse((i18n_tool.SRC / f'{name}.py').read_text(encoding='utf-8'))
             names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
             self.assertFalse(names & {'MESSAGES_READY', 'TRANSIT_UNTIL_WP6', 'RUNTIME_ALWAYS'}, name)
         print('release gate: ' + ', '.join(f'{name} {len(value)}' for name, value in gate.items()))
 
-    def test_the_gate_sees_a_flag_a_pending_key_and_a_stale_entry(self):
-        """Self-test of release_gate on a synthetic tree: each kind of leftover is reported."""
+    def test_the_gate_sees_a_stale_entry(self):
+        """Self-test of release_gate on a synthetic tree: an allow entry that matches nothing is reported."""
         folder = _sandbox.out('guard-synthetic-gate', 'src')
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / 'naming.py').write_text('MESSAGES_READY = True\n' "NAMING = ('title',)\n", encoding='utf-8')
+        (folder / 'naming.py').write_text("NAMING = ('title',)\n", encoding='utf-8')
         allow_dir = _sandbox.out('guard-synthetic-gate', 'allow')
         allow_dir.mkdir(parents=True, exist_ok=True)
         (allow_dir / 'naming.json').write_text(json.dumps({
-            'module': 'naming', 'literals': {'无此文字': {'category': 'pending', 'reason': 'self-test'}},
-            'composed': {"f'{gone}'": {'reason': 'self-test'}},
-            'pending_keys': {'core.x': {'zh': '无此文字', 'en': 'x', 'reason': 'self-test'}}}), encoding='utf-8')
+            'module': 'naming', 'literals': {'无此文字': {'category': 'internal', 'reason': 'self-test'}},
+            'composed': {"f'{gone}'": {'reason': 'self-test'}}}), encoding='utf-8')
         gate = i18n_tool.release_gate(folder, allow_dir)
-        self.assertEqual(gate['ready_flags'], ['naming'])
-        self.assertEqual(gate['pending_keys'], ['naming: core.x'])
-        self.assertEqual(gate['pending_literals'], ['naming: 无此文字'])
         self.assertEqual(sorted(gate['stale']), ["naming: composed f'{gone}'", 'naming: literals 无此文字'])
 
     def test_every_src_module_has_a_well_formed_allow_file(self):
-        names = set(i18n_tool.src_modules())
+        """Every module G1 scans has verification/golden/text-allow/<module>.json with the four sections; a catalog
+        module (G1 does not scan it) has none.  (S3 review fix) No 'pending' category and no pending_keys."""
+        names = set(i18n_tool.g1_modules())
         files = {path.stem for path in i18n_tool.ALLOW_DIR.glob('*.json')}
+        problems = [f"新模块 src/{name}.py 没有 allow 文件：复制一份 verification/golden/text-allow/paths.json，改名为 "
+                    f"{name}.json，把 module 改成 '{name}'，四个段清空" for name in sorted(names - files)]
+        problems += [f"verification/golden/text-allow/{name}.json 对应的模块不在了：删掉这个文件"
+                     for name in sorted(files - names - set(i18n_tool.G1_EXCLUDED))]
+        problems += [f"verification/golden/text-allow/{name}.json：目录模块不扫描，不要 allow 文件，删掉这个文件"
+                     for name in sorted(files & set(i18n_tool.G1_EXCLUDED))]
+        self.assertEqual(problems, [], '\n'.join(problems))
+        # (2.0.0 S4 stage C) exactly the scanned modules have one, with nothing but the four sections
         self.assertEqual(files, names)
-        pending = []
-        for name in sorted(names):
+        for name in sorted(files):
             data = json.loads((i18n_tool.ALLOW_DIR / f'{name}.json').read_text(encoding='utf-8'))
             self.assertEqual(data.get('module'), name)
+            extra = {key: value for key, value in data.items()
+                     if key not in ('module', 'note') and key not in i18n_tool.ALLOW_SECTIONS}
+            self.assertEqual(extra, {}, f"{name}.json：只能有 module 和 {', '.join(i18n_tool.ALLOW_SECTIONS)} 这几段")
             for section in i18n_tool.ALLOW_SECTIONS:
                 self.assertIsInstance(data.get(section), dict, f'{name}: {section}')
             for text, entry in data['literals'].items():
@@ -104,15 +113,9 @@ class TreeTests(unittest.TestCase):
                 self.assertTrue(entry.get('reason'), f'{name}: {text!r} needs a reason')
                 if entry['category'] == 'token':
                     self.assertIn(name, i18n_tool.TOKEN_MODULES)
-                if entry['category'] == 'h4-unused':
-                    self.assertTrue(entry.get('name'), f'{name}: {text!r} names its constant')
             for section in ('raises', 'composed', 'sinks'):
                 for text, entry in data[section].items():
                     self.assertTrue(entry.get('reason'), f'{name}: {section} {text!r} needs a reason')
-            pending += [f'{name}: {key}' for key in data['pending_keys']]
-            pending += [f'{name}: {text} (category pending)' for text, entry in data['literals'].items()
-                        if entry['category'] == 'pending']
-        self.assertEqual(pending, [], 'the release gate fails on pending_keys (MESSAGES.md 10.2, 10.3 WP-6)')
 
     def test_no_stale_entry_in_any_allow_file(self):
         context = i18n_tool.GuardContext()
@@ -120,26 +123,57 @@ class TreeTests(unittest.TestCase):
             if name not in i18n_tool.G1_EXCLUDED:
                 self.assertEqual(i18n_tool.allow_stale(context, name), [], name)
 
+    def test_the_one_file_literal_that_shares_a_catalog_text(self):
+        """(2.0.0 final polish) engine's archive subfolder '媒体' (a name on disk) is the only 'file' literal allowed to
+        equal a catalog zh text (value.link_kind.media); the same literal anywhere else, or allowed under another
+        category, is still a G1a finding."""
+        self.assertEqual(i18n_tool.FILE_SAME_AS_KEY, {('engine', '媒体'): 'value.link_kind.media'})
+        context = i18n_tool.GuardContext()
+        self.assertEqual(context.allow('engine')['literals']['媒体']['category'], 'file')
+        source = """
+            FOLDER = '媒体'
+        """
+        # (final review, drill) the collision itself is injected, so the check holds whatever the catalog's wording
+        for module, category in (('naming', 'file'), ('engine', 'internal')):
+            folder = synthetic(module, source)
+            context = i18n_tool.GuardContext()
+            context.zh_texts()['媒体'] = 'value.link_kind.media'
+            context.allow(module)['literals']['媒体'] = {'category': category, 'reason': 'self-test'}
+            details = [item['detail'] for item in i18n_tool.g1a_module(context, module, folder)]
+            self.assertEqual(len(details), 1, (module, category))
+            self.assertIn('value.link_kind.media', details[0])
+        folder = synthetic('engine', source)
+        context = i18n_tool.GuardContext()
+        self.assertEqual(i18n_tool.g1a_module(context, 'engine', folder), [])
+
     def test_the_allow_files_leave_the_converted_producers_out(self):
         """10.2: literals that become messages are not listed, so a module fails G1 until converted."""
         context = i18n_tool.GuardContext()
         self.assertNotIn('媒体直链', context.allow('collector')['literals'])
         self.assertNotIn('网页', context.allow('collector')['literals'])
         self.assertNotIn('动态页面媒体请求', context.allow('collector')['literals'])
-        self.assertEqual(context.allow('collector')['literals']['媒体地址']['category'], 'stored')
+        # (2.0.0 S2 P5) the stored link kinds are codes ('media'): no allow entry, and no 'stored' category
+        self.assertNotIn('媒体地址', context.allow('collector')['literals'])
+        self.assertNotIn('stored', i18n_tool.CATEGORIES)
+        for name in i18n_tool.src_modules():
+            if name not in i18n_tool.G1_EXCLUDED:
+                self.assertEqual([text for text, entry in context.allow(name)['literals'].items()
+                                  if entry.get('category') == 'stored'], [], name)
         self.assertNotIn('无法连接代理或网站，请检查代理地址', context.allow('ui_download')['literals'])
-        self.assertEqual(context.allow('ui_download')['literals']['上次失败']['category'], 'h4-unused')
-        self.assertEqual(i18n_tool._referenced_outside(context, 'ui_download', 'REASON_WORDS'), [])
+        # (2.0.0 S3 W1) no h4 / h4-unused category: the Chinese constants only tests read are gone
+        self.assertNotIn('h4', i18n_tool.CATEGORIES)
+        self.assertNotIn('h4-unused', i18n_tool.CATEGORIES)
+        self.assertNotIn('pending', i18n_tool.CATEGORIES)          # (S3 review fix) a WP-6 leftover
         self.assertEqual(set(context.allow('library_ui')['raises']), {'the history job was never written', 'no options'})
-        raises = sum(len(context.allow(name)['raises']) for name in i18n_tool.src_modules() if name != 'messages')
-        self.assertEqual(raises, 18, 'the 18 internal English raises of 1.7.0 (7.2 G1e)')
+        raises = sum(len(context.allow(name)['raises']) for name in i18n_tool.src_modules()
+                     if name != 'messages')
+        # (2.0.0 S2 Q2) 17: Archive.prepare no longer raises its internal 'not an archive record' marker
+        # (_archive_record raises core.archive.not_v2), so its allow entry went stale and was removed.
+        self.assertEqual(raises, 17, 'the 18 internal English raises of 1.7.0 (7.2 G1e) less the archive marker')
 
     def test_boundaries(self):
-        # G1d: the 1.7.0 baseline of 52 localize call lines is pinned on the frozen 1.7.0 sources;
-        # from WP-6 on none is left in src (6.2: 52 -> 0), and i18n has no localize any more.
-        self.assertEqual(i18n_tool.LOCALIZE_BASELINE, 52)
-        self.assertEqual(len(i18n_tool.localize_lines(OLD)), i18n_tool.LOCALIZE_BASELINE)
-        self.assertEqual(i18n_tool.localize_lines(), [])
+        # i18n has no localize any more (6.4; test_i18n_catalog C12 checks the attribute, so a call cannot run).
+        # (S3 review fix) The count of localize call lines, a WP-6 leftover, went with the localize baseline.
         i18n_tree = ast.parse((i18n_tool.SRC / 'i18n.py').read_text(encoding='utf-8'))
         defined = {node.name for node in i18n_tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
         self.assertFalse(defined & {'localize', '_Template', '_Index', '_get_index', '_allowed', '_localized',
@@ -150,45 +184,210 @@ class TreeTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
                     self.assertNotEqual(node.module, 'i18n', f'{path.name}: from i18n import (G1d)')
-                if isinstance(node, (ast.Import, ast.ImportFrom)) and path.stem != 'messages':
-                    names = [alias.name for alias in node.names] + [getattr(node, 'module', None) or '']
-                    self.assertNotIn('i18n_legacy', names, path.name)
+        for gone in ('i18n_legacy', 'i18n_legacy_data'):
+            self.assertFalse((i18n_tool.SRC / f'{gone}.py').exists(), f'(2.0.0 S2 P4) {gone}.py is gone')
+        # (2.0.0 S2 Q1) no converter: 2.0.0 does not read the stores of older versions
+        self.assertEqual(sorted(path.name for path in i18n_tool.SRC.glob('upgrade_v2*.py')), [])
 
 
-    def test_line_endings_kept_from_1_7_0(self):
-        """(final review 1, Q1) A src file 1.7.0 had keeps its line endings (library_ui.py is CRLF in
-        git, the others LF), so the 1.8.0 diff shows only the lines that changed (spec 0)."""
-        def style(data):
-            crlf, lf = data.count(b'\r\n'), data.count(b'\n')
-            return 'crlf' if crlf and crlf == lf else 'lf' if not crlf else 'mixed'
+    def test_text_files_use_lf(self):
+        """(2.0.0 S1; replaces the 1.8.0 rule "keep 1.7.0's line endings") Every repository text file
+        uses LF.  The repository files are those .gitignore does not exclude; .gitattributes says which
+        are text: everything but the binary types.  (2.0.0 S2 Q4) No exception: the one frozen folder
+        (the release sources) is gone."""
+        root = _sandbox.ROOT
+        rules = repo_files.load_attributes(root)
+        self.assertEqual(rules[0], ('*', {'text': 'auto', 'eol': 'lf'}), 'the first rule of .gitattributes')
+        frozen = sorted(pattern for pattern, values in rules if values.get('text') is False and not values.get('binary'))
+        self.assertEqual(frozen, [],
+                         'a new unconverted folder needs a reason in the 2.0.0 plan, not only a .gitattributes line')
+        crlf, unmarked, text = [], [], []
+        for relative in repo_files.repository_files(root):
+            if repo_files.attributes_of(relative, rules).get('text') is False:
+                continue
+            data = (root / relative).read_bytes()
+            if b'\0' in data:
+                unmarked.append(relative)
+            elif b'\r' in data:
+                crlf.append(relative)
+            else:
+                text.append(relative)
+        self.assertEqual(crlf, [], 'convert these to LF (the content stays the same): data.replace(b"\\r\\n", b"\\n")')
+        self.assertEqual(unmarked, [], 'binary files: add their type to .gitattributes as "binary"')
+        for name in ('src/library_ui.py', 'src/engine.py', 'verification/golden/stored-keys.json', 'requirements-lock.txt',
+                     'requirements-build.txt', 'app.spec', 'vendor.lock.json', '.gitattributes', 'README.md'):
+            self.assertIn(name, text)
+        self.assertGreater(len(text), 150, 'the walk found too few files (185 text files at 2.0.0 S1)')
 
-        checked = 0
-        for old in sorted(OLD.glob('*.py')):
-            new = i18n_tool.SRC / old.name
-            if new.is_file():
-                checked += 1
-                self.assertEqual(style(new.read_bytes()), style(old.read_bytes()), old.name)
-        self.assertGreater(checked, 20)
-        self.assertEqual(style((i18n_tool.SRC / 'library_ui.py').read_bytes()), 'crlf')
+    # (2.0.0 S5) The made-up user folder names the tests use; any other name after <drive>:\Users\ is real.
+    PLACEHOLDER_USERS = frozenset({'某人', 'x', 'zz-probe-user', '...', '…', '<you>', '<user>', 'Public'})
+    # Reserved test domains (RFC 2606 / 6761): the only e-mail addresses a public repository may hold.
+    PLACEHOLDER_MAIL = re.compile(r'@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|example|test|invalid)$', re.I)
+
+    def test_repository_files_hold_no_personal_data(self):
+        """(2.0.0 S5, AGENTS.md "Hard rules") The repository is public: no repository text file holds this
+        machine's user name, the user folder, a real <drive>:\\Users\\<name> path, the git e-mail or any
+        e-mail address outside the reserved test domains."""
+        root = _sandbox.ROOT
+        rules = repo_files.load_attributes(root)
+        needles = set()
+        name = os.environ.get('USERNAME', '').strip()
+        if len(name) >= 3:
+            needles.add(name)
+        home = os.environ.get('USERPROFILE', '').strip()
+        if home:
+            needles |= {home, home.replace('\\', '/'), home.replace('\\', '\\\\')}
+        try:
+            mail = subprocess.run(['git', 'config', 'user.email'], cwd=root, capture_output=True, text=True,
+                                  timeout=30, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            mail = ''
+        if mail:
+            needles.add(mail)
+        users = re.compile(r'[A-Za-z]:(?:\\|/)+Users(?:\\|/)+([^\\/\s"\'`<>:;,)]+)', re.I)
+        address = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}')
+        findings, scanned = [], 0
+        for relative in repo_files.repository_files(root):
+            if repo_files.attributes_of(relative, rules).get('text') is False:
+                continue
+            try:
+                text = (root / relative).read_text(encoding='utf-8')
+            except UnicodeDecodeError:
+                continue
+            scanned += 1
+            for number, line in enumerate(text.splitlines(), 1):
+                lowered = line.lower()
+                where = f'{relative}:{number}'
+                findings += [f'{where}: this machine\'s user name, user folder or git e-mail'
+                             for needle in needles if needle.lower() in lowered][:1]
+                findings += [f'{where}: a user folder {match.group(0)!r}' for match in users.finditer(line)
+                             if match.group(1) not in self.PLACEHOLDER_USERS]
+                findings += [f'{where}: an e-mail address {match.group(0)!r}' for match in address.finditer(line)
+                             if not self.PLACEHOLDER_MAIL.search(match.group(0))]
+        self.assertGreater(scanned, 150, 'the walk found too few files')
+        self.assertEqual(findings, [], 'personal data in a repository file: write the path relative to the repository '
+                                       'root or with a placeholder (%LOCALAPPDATA%, C:\\Users\\<you>), and an address '
+                                       'only on a reserved test domain (example.org)')
+
+    def test_the_repository_file_rules(self):
+        """repo_files reads .gitignore / .gitattributes the way git does for the patterns they use."""
+        self.assertTrue(repo_files.matches('verification/*.json', 'verification/report.json'))
+        self.assertFalse(repo_files.matches('verification/*.json', 'verification/golden/a.json'))
+        self.assertTrue(repo_files.matches('docs/*/handoff', 'docs/2.0.0/handoff'))
+        self.assertTrue(repo_files.matches('*.png', 'docs/screenshots/a.png'))
+        self.assertTrue(repo_files.matches('verification/x/**', 'verification/x/1.7.0/src/x.py'))
+        self.assertFalse(repo_files.matches('verification/x/**', 'verification/x.json'))
+        self.assertTrue(repo_files.matches('__pycache__', 'src/__pycache__'))
+        rules = [('build', False, True), ('verification/*.json', False, False),
+                 ('verification/keep.json', True, False), ('*.log', False, False)]
+        self.assertTrue(repo_files.ignored('build', True, rules))
+        self.assertFalse(repo_files.ignored('build', False, rules), 'a folder rule does not apply to a file')
+        self.assertTrue(repo_files.ignored('verification/report.json', False, rules))
+        self.assertFalse(repo_files.ignored('verification/keep.json', False, rules))
+        self.assertTrue(repo_files.ignored('src/x.log', False, rules))
+        files = repo_files.repository_files(_sandbox.ROOT)
+        self.assertIn('verification/golden/stored-keys.json', files)
+        self.assertFalse([name for name in files if repo_files.matches('verification/*.json', name)], 'ignored')
+        self.assertFalse([name for name in files if name.startswith(('build/', 'vendor/', '.venv/', '.git/', 'data/'))
+                          or '__pycache__' in name or '/handoff/' in name])
+        attributes = repo_files.load_attributes(_sandbox.ROOT)
+        self.assertIs(repo_files.attributes_of('app.ico', attributes).get('text'), False)
+        self.assertEqual(repo_files.attributes_of('src/library_ui.py', attributes), {'text': 'auto', 'eol': 'lf'})
+        # a later "-text" line overrides the first rule for the files it matches (a made-up folder)
+        unconverted = attributes + [('verification/x/**', {'text': False})]
+        self.assertIs(repo_files.attributes_of('verification/x/1.7.0/src/library_ui.py', unconverted).get('text'), False)
+        self.assertEqual(repo_files.attributes_of('src/library_ui.py', unconverted), {'text': 'auto', 'eol': 'lf'})
 
 
 class G1SelfTests(unittest.TestCase):
+    # (2.0.0 S2 Q4) The code shapes of 1.7.0's collector.py that carried its page and link titles
+    # (parse_page: the hostname fallback 网页 and add(url, '动态页面媒体请求', True); collect: the
+    # direct media page and its link), cut down to what the scanner reads.  The self-test ran on the
+    # frozen 1.7.0 sources until they were removed.
+    COLLECTOR_1_7_0 = r'''
+        import re
+        from urllib.parse import urlsplit
+
+        MAX_LINKS = 500
+        MEDIA_EXT = re.compile(r'\.(mp4|m4a|mp3)$', re.I)
+
+
+        def web_url(href, base=''):
+            return href
+
+
+        def link_kind(url, media=False):
+            return 'media' if media else 'web'
+
+
+        def parse_page(response, requested_url, selector='', captured=()):
+            base = str(response.url or requested_url)
+            title = ' '.join(response.css('title::text').getall()).strip() or urlsplit(base).hostname or '网页'
+            title = title[:300]
+            links = {}
+
+            def add(href, label='', media=False):
+                if not href or len(links) >= MAX_LINKS:
+                    return
+                url = web_url(href, base)
+                if not url:
+                    return
+                kind = link_kind(url, media)
+                item = {'url': url, 'title': re.sub(r'\s+', ' ', label).strip()[:200] or title,
+                        'kind': kind, 'source': base}
+                if url not in links or kind == 'media':
+                    links[url] = item
+
+            for url in captured:
+                add(url, '动态页面媒体请求', True)
+            return {'url': base, 'title': title, 'links': list(links.values())}
+
+
+        def collect(urls, emit):
+            visited, todo, deferred = set(), [], []
+            for url in urls:
+                try:
+                    if MEDIA_EXT.search(urlsplit(url).path):
+                        visited.add(url)
+                        emit('collect_page', {'url': url, 'title': '媒体直链', 'text': '', 'markdown': '',
+                            'links': [{'url': url, 'title': '媒体直链', 'kind': 'media', 'source': url}], 'next': None,
+                            '_checkpoint': dict(visited=sorted(visited), todo=todo + deferred)})
+                except OSError:
+                    continue
+        '''
+
     def test_g1a_and_g1b_catch_the_1_7_0_collector_titles(self):
+        # (S3 review fix) the two 1.7.0 titles are written as today's zh texts of their stored keys, so the check
+        # "a copy of a stored key's text" holds whatever the wording is
+        zh = i18n_tool.catalog_texts()['zh']
+        direct, dynamic = zh['value.link_kind.direct'], zh['value.link_kind.dynamic_request']
+        folder = _sandbox.out('guard-synthetic-1-7-0', 'collector')
+        folder.mkdir(parents=True, exist_ok=True)
+        source = textwrap.dedent(self.COLLECTOR_1_7_0).lstrip('\n').replace('媒体直链', direct)
+        (folder / 'collector.py').write_text(source.replace('动态页面媒体请求', dynamic), encoding='utf-8')
+        hostname = line_of(folder, 'collector', "or '网页'")
+        captured = line_of(folder, 'collector', f"add(url, '{dynamic}', True)")
+        page = line_of(folder, 'collector', f"'title': '{direct}', 'text'")
+        link = line_of(folder, 'collector', f"'title': '{direct}', 'kind'")
         context = i18n_tool.GuardContext()
-        findings = i18n_tool.g1_module(context, 'collector', OLD)
+        findings = i18n_tool.g1_module(context, 'collector', folder)
         flagged = {(item['line'], item['text']) for item in findings if item['rule'] == 'G1a'}
-        for line, text in ((122, '网页'), (156, '动态页面媒体请求'), (203, '媒体直链'), (204, '媒体直链')):
-            self.assertIn((line, text), flagged)
+        self.assertEqual(flagged, {(hostname, '网页'), (captured, dynamic), (page, direct), (link, direct)})
         allowed = context.allow('collector')['literals']
-        for text in ('媒体直链', '动态页面媒体请求'):          # what 1.7.0's GROUPS allowance amounted to
-            allowed[text] = {'category': 'stored', 'reason': 'self-test'}
+        for text in (direct, dynamic):                         # what 1.7.0's GROUPS allowance amounted to
+            allowed[text] = {'category': 'internal', 'reason': 'self-test'}
         context._enum = None
-        findings = i18n_tool.g1_module(context, 'collector', OLD)
+        findings = i18n_tool.g1_module(context, 'collector', folder)
         g1b = {(item['line'], item['detail']) for item in findings if item['rule'] == 'G1b'}
-        self.assertIn((203, "allow-listed text in dict 'title'"), g1b)
-        self.assertIn((204, "allow-listed text in dict 'title'"), g1b)
-        self.assertIn((156, 'allow-listed text in add(label)'), g1b)
-        self.assertNotIn(203, {item['line'] for item in findings if item['rule'] == 'G1a'})
+        self.assertIn((page, "allow-listed text in dict 'title'"), g1b)
+        self.assertIn((link, "allow-listed text in dict 'title'"), g1b)
+        self.assertIn((captured, 'allow-listed text in add(label)'), g1b)
+        # (2.0.0 S3 G1a-stored) allowed as 'internal', they are still copies of the zh texts of the stored keys
+        # value.link_kind.direct / dynamic_request: G1a says so (before S3 only an 'h4' entry was checked)
+        stored = {item['line']: item['detail'] for item in findings if item['rule'] == 'G1a'}
+        for line, key in ((page, 'value.link_kind.direct'), (link, 'value.link_kind.direct'),
+                          (captured, 'value.link_kind.dynamic_request')):
+            self.assertIn(key, stored.get(line, ''), line)
 
     def test_synthetic_core_module(self):
         folder = synthetic('collector', '''
@@ -212,7 +411,7 @@ class G1SelfTests(unittest.TestCase):
 
             def fine(emit):
                 for preset in formats.PRESETS:
-                    emit('log', msg('core.engine.error', error=messages.value('format', preset.label)))
+                    emit('log', msg('core.engine.error', error=preset.id))
 
 
             def composed(m, x):
@@ -234,12 +433,21 @@ class G1SelfTests(unittest.TestCase):
             def placeholders():
                 return msg('core.library.temporary'), msg('core.no.such.key')
             ''')
-        context = i18n_tool.GuardContext()
+        # (2.0.0 S4 A1) src/formats.py has no text any more (a preset is shown as format.<id>): the enum record
+        # with an allow-listed label comes from the contract's synthetic formats.py, so G1b still sees one
+        (folder / 'formats.py').write_text(guard_contract.FORMATS, encoding='utf-8')
+        context = i18n_tool.GuardContext(enum_src=folder)
+        for text in guard_contract.FORMATS_ALLOWED:
+            context.allow('formats')['literals'][text] = {'category': 'internal', 'reason': 'self-test'}
+        # (2.0.0 S2 Q1) 媒体地址 was an allowed literal through collector's 'stored' entry, which is gone
+        # (the link kinds are codes): the self-test allows it itself, so G1b still sees an allowed text
+        context.allow('collector')['literals']['媒体地址'] = {'category': 'internal', 'reason': 'self-test'}
         findings = i18n_tool.g1_module(context, 'collector', folder)
         found = {(item['rule'], item['line']) for item in findings}
         self.assertIn(('G1b', line_of(folder, 'collector', "page['title'] = kind")), found)
         self.assertIn(('G1b', line_of(folder, 'collector', 'error=preset.label')), found)
-        self.assertNotIn(('G1b', line_of(folder, 'collector', "value('format', preset.label)")), found)
+        # (2.0.0 S2 P4: messages.value is gone) a code, not the allow-listed label, is no finding
+        self.assertNotIn(('G1b', line_of(folder, 'collector', 'error=preset.id')), found)
         self.assertIn(('G1f', line_of(folder, 'collector', "{'error': f'{m}")), found)
         self.assertIn(('G1c', line_of(folder, 'collector', 'msg(key)')), found)
         self.assertIn(('G1d', line_of(folder, 'collector', 'i18n.label')), found)
@@ -310,8 +518,8 @@ class G1SelfTests(unittest.TestCase):
             ''')
         context = i18n_tool.GuardContext(enum_src=folder)       # LABELS is an enum source of this module
         for text in ('标题（推荐）', '精简标题'):
-            context.allow('unfinished')['literals'][text] = {'category': 'h4', 'reason': 'self-test'}
-        context.allow('unfinished')['literals']['媒体地址'] = {'category': 'stored', 'reason': 'self-test'}
+            context.allow('unfinished')['literals'][text] = {'category': 'internal', 'reason': 'self-test'}
+        context.allow('unfinished')['literals']['媒体地址'] = {'category': 'internal', 'reason': 'self-test'}
         findings = i18n_tool.g1_module(context, 'unfinished', folder)
         found = {(item['rule'], item['line']) for item in findings}
         at = lambda needle: line_of(folder, 'unfinished', needle)
@@ -369,7 +577,7 @@ class G1SelfTests(unittest.TestCase):
                         clauses(parts + [url]))                        # OK
             ''')
         context = i18n_tool.GuardContext()
-        context.allow('engine')['literals']['媒体地址'] = {'category': 'stored', 'reason': 'self-test'}
+        context.allow('engine')['literals']['媒体地址'] = {'category': 'internal', 'reason': 'self-test'}
         source = (folder / 'engine.py').read_text(encoding='utf-8').splitlines()
         marked = {mark: {number for number, text in enumerate(source, 1) if text.rstrip().endswith(f'# {mark}')}
                   for mark in ('FLAG', 'OK')}
@@ -465,11 +673,11 @@ class G1SelfTests(unittest.TestCase):
         rest = i18n_tool._Sinks(context, ['library_ui'], folder=folder).run(allow_for=lambda name: {'sinks': entry})
         self.assertEqual(sorted({item['line'] for item in rest}), sorted(marked['FLAG'] - {min(marked['FLAG'])}))
 
-    def test_g1d_g1e_and_the_h4_check(self):
-        folder = synthetic('studio', '''
-            import i18n_legacy
+    def test_g1d_g1e_and_the_stored_text_check(self):
+        no_job = i18n_tool.catalog_texts()['zh']['core.library.no_job']      # (S3 review fix) today's wording
+        folder = synthetic('studio', f'''
             import messages
-            TITLE = '找不到任务记录。'
+            TITLE = {no_job!r}
 
 
             def leak(record):
@@ -477,21 +685,78 @@ class G1SelfTests(unittest.TestCase):
 
 
             def codec(record):
-                return messages.decode(record, 'job')
+                return messages.read_slots(record, ())
 
 
             def localize(text):
                 return text
             ''')
         context = i18n_tool.GuardContext()
-        context.allow('studio')['literals']['找不到任务记录。'] = {'category': 'h4', 'reason': 'self-test'}
+        context.allow('studio')['literals'][no_job] = {'category': 'internal', 'reason': 'self-test'}
         findings = i18n_tool.g1_module(context, 'studio', folder)
         details = {(item['rule'], item['line']) for item in findings}
-        self.assertIn(('G1d', line_of(folder, 'studio', 'import i18n_legacy')), details)
-        self.assertIn(('G1d', line_of(folder, 'studio', 'messages.decode')), details)
+        # (2.0.0 S2 P4) the format-2 slot codec is the stores' own
+        self.assertIn(('G1d', line_of(folder, 'studio', 'messages.read_slots')), details)
         self.assertIn(('G1d', line_of(folder, 'studio', 'def localize')), details)
         self.assertIn(('G1e', line_of(folder, 'studio', 'raise ValueError')), details)
-        self.assertIn(('G1a', line_of(folder, 'studio', 'TITLE =')), details, 'an h4 constant pinned to a core key')
+        # (2.0.0 S3 G1a-stored) an allowed literal of any category but 'token' that is the zh text of a stored key
+        self.assertIn(('G1a', line_of(folder, 'studio', 'TITLE =')), details, 'a second copy of a stored key\'s text')
+        stored = [item for item in findings if item['rule'] == 'G1a']
+        self.assertEqual(len(stored), 1)
+        self.assertIn('core.library.no_job', stored[0]['detail'])
+
+    def test_g1a_reports_logging_calls_and_only_token_copies_of_stored_texts(self):
+        """(2.0.0 S3 G1a-log) A CJK literal in a logging call needs an allow entry like any other; (G1a-stored)
+        the proxy-mask token [代理] (the zh text of the stored key core.proxy_mask) is allowed as a token in
+        messages, and is a G1a finding as an internal literal anywhere else."""
+        folder = synthetic('settings', '''
+            import logging
+            _log = logging.getLogger('YtDlpDesktop.settings')
+
+
+            def damaged():
+                _log.warning('设置文件损坏')
+            ''')
+        context = i18n_tool.GuardContext()
+        findings = i18n_tool.g1_module(context, 'settings', folder)
+        [found] = [item for item in findings if (item['rule'], item['line']) == ('G1a', line_of(folder, 'settings',
+                                                                                              '设置文件损坏'))]
+        # (S3 review fix) the report says how to fix it: the catalog first, the allow file only for unshown text
+        self.assertIn('src/i18n_<页>.py', found['detail'])
+        self.assertIn('verification/golden/text-allow/settings.json', found['detail'])
+        context.allow('settings')['literals']['设置文件损坏'] = {'category': 'internal', 'reason': 'self-test'}
+        self.assertEqual([item for item in i18n_tool.g1_module(context, 'settings', folder) if item['rule'] == 'G1a'], [])
+        folder = synthetic('messages', '''
+            PROXY_TOKEN = '[代理]'
+            ''')
+        context = i18n_tool.GuardContext()
+        self.assertEqual(context.allow('messages')['literals']['[代理]']['category'], 'token')
+        self.assertEqual([item for item in i18n_tool.g1_module(context, 'messages', folder) if item['rule'] == 'G1a'], [])
+        folder = synthetic('library_ui', '''
+            MASK = '[代理]'
+            ''')
+        context.allow('library_ui')['literals']['[代理]'] = {'category': 'internal', 'reason': 'self-test'}
+        found = [item for item in i18n_tool.g1_module(context, 'library_ui', folder) if item['rule'] == 'G1a']
+        self.assertEqual(len(found), 1)
+        self.assertIn('core.proxy_mask', found[0]['detail'])
+
+    def test_g1a_reports_an_internal_copy_of_any_interface_text(self):
+        """(S3 review fix) A Chinese constant kept only for tests cannot come back with an 'internal' allow entry: an
+        internal literal that is the zh text of any key (not only a stored one) is a G1a finding; a 'file' literal
+        (a name on disk) is checked against the stored keys only."""
+        text = i18n_tool.catalog_texts()['zh']['common.cancel']
+        folder = synthetic('library_ui', f'''
+            NO_PENDING = {text!r}
+            ''')
+        context = i18n_tool.GuardContext()
+        context.allow('library_ui')['literals'][text] = {'category': 'internal', 'reason': 'kept for the tests'}
+        found = [item for item in i18n_tool.g1a_module(context, 'library_ui', folder)]
+        self.assertEqual([(item['rule'], item['line']) for item in found], [('G1a', line_of(folder, 'library_ui',
+                                                                                             'NO_PENDING'))])
+        self.assertIn('common.cancel', found[0]['detail'])
+        context.allow('library_ui')['literals'][text] = {'category': 'file', 'reason': 'a folder name'}
+        self.assertEqual(i18n_tool.g1a_module(context, 'library_ui', folder), [])
+        self.assertEqual(i18n_tool.g1a_scan(), [], 'the quick tier runs the same check on the tree')
 
     def test_the_boundary_modules_are_reached_by_their_names(self):
         """(final review 1, Q3, amendment A13.2) G1b / G1c / G1d match messages and i18n by name, so an
@@ -503,7 +768,7 @@ class G1SelfTests(unittest.TestCase):
             import messages as M                                    # FLAG
             import messages
             import i18n
-            from messages import encode as enc                      # FLAG
+            from messages import to_json as enc                     # FLAG
             from messages import msg, cut
 
 
@@ -512,7 +777,7 @@ class G1SelfTests(unittest.TestCase):
                 lang = getattr(i18n, 'language')                    # FLAG
                 loaded = importlib.import_module('messages')        # FLAG
                 legacy = __import__('i18n')                         # FLAG
-                aliased = (_lang.t('common.unfinished'), M.encode(record, 'job'), M.msg('core.no.such.key'),
+                aliased = (_lang.t('common.unfinished'), M.to_json(record), M.msg('core.no.such.key'),
                            M.cut(f"{url}", 70), codec, lang, loaded, legacy, enc)
                 return aliased, messages.msg('core.reason.network'), msg('core.reason.network'), cut(url, 70)  # OK
             ''')
@@ -532,12 +797,11 @@ class G1SelfTests(unittest.TestCase):
         used = line_of(folder, 'naming', 'aliased = (')
         self.assertEqual([item for item in rest if item['line'] in (used, used + 1)], [],
                          'the aliased spellings themselves pass the name-based checks')
-        # the release sources and the tree have none of these forms
-        for version in ('1.5.1', '1.6.0', '1.7.0'):
-            old = _sandbox.release_src(version)
-            for name in i18n_tool.src_modules(old):
-                if name not in i18n_tool.G1_EXCLUDED:
-                    self.assertEqual(i18n_tool._g1d_aliases(context.module(name, old)), [], f'{version} {name}')
+        # the tree has none of these forms ((2.0.0 S2 Q4) the same check on the frozen release sources
+        # went with them)
+        for name in i18n_tool.src_modules(i18n_tool.SRC):
+            if name not in i18n_tool.G1_EXCLUDED:
+                self.assertEqual(i18n_tool._g1d_aliases(context.module(name)), [], name)
 
     def test_star_imports_and_messages_functions_as_values(self):
         """(final review 2, Q3, amendment A14.4) a star import of messages / i18n and a messages function
@@ -547,14 +811,14 @@ class G1SelfTests(unittest.TestCase):
         folder = synthetic('naming', '''
             import messages
             from messages import *                                  # FLAG
-            from messages import encode, msg, cut, raw, Raw
+            from messages import to_json, msg, cut, raw, Raw
 
 
             def probe(record, url):
-                star = decode_columns(record, 'job', {})
-                fn = messages.encode                                # FLAG
+                star = read_slots(record, ())
+                fn = messages.to_json                               # FLAG
                 make = messages.msg                                 # FLAG
-                enc = encode                                        # FLAG
+                enc = to_json                                       # FLAG
                 build = msg                                         # FLAG
                 shorten = cut                                       # FLAG
                 many = list(map(raw, LABELS.values()))              # FLAG
@@ -587,13 +851,17 @@ class G1SelfTests(unittest.TestCase):
     def test_enum_values_items_and_parameter_defaults(self):
         """(final review 2, Q5 and F1, amendment A14.3 / A14.1) G1b follows an enum source through
         `.values()`, `.items()` (the value of the pair, not its key) and `.copy()`, and takes a
-        parameter's default as a binding: naming.LABELS holds ids in GROUPS, so G2 cannot catch these
-        texts at run time and G1b is their only guard."""
+        parameter's default as a binding: naming.LABELS held ids in GROUPS, so G2 cannot catch these
+        texts at run time and G1b is their only guard.  (2.0.0 S3 W1) naming.LABELS is gone from src (its texts
+        are the catalog's); the probe declares the 1.8.1 table itself, its texts allowed as 'internal'."""
         context = i18n_tool.GuardContext()
+        for text in ('标题（推荐）', '精简标题', '标题 [视频 ID]'):
+            context.allow('naming')['literals'][text] = {'category': 'internal', 'reason': 'self-test'}
         source = (i18n_tool.SRC / 'naming.py').read_text(encoding='utf-8')
         extra = textwrap.dedent('''
 
             from messages import raw, msg
+            LABELS = {'title': '标题（推荐）', 'clean': '精简标题', 'title_id': '标题 [视频 ID]'}
 
 
             def probe(record):
@@ -626,15 +894,64 @@ class G1SelfTests(unittest.TestCase):
         g1b = {item['line'] for item in findings if item['rule'] == 'G1b'}
         self.assertEqual(sorted(g1b & (marked['FLAG'] | marked['OK'])), sorted(marked['FLAG']))
 
+    # (2.0.0 S2 Q4) The English raises of 1.7.0's engine.py, formats.py and library.py that later
+    # versions turned into messages (FLAG), and the internal raises the allow files still list (OK),
+    # in synthetic modules: the self-test ran on the frozen 1.7.0 sources until they were
+    # removed (it flagged engine 178 / 184 / 188 / 190 / 425, formats 75 / 82 / 89 and
+    # library 805 there).
+    RAISES_1_7_0 = {
+        'engine': '''
+            def from_dict(data, mode, resolution, name, process):
+                if not isinstance(data, dict):
+                    raise ValueError('Options data must be an object')                  # FLAG
+                if not data.get('output'):
+                    raise ValueError('Options data has no usable output folder')        # FLAG
+                if mode is None:
+                    raise ValueError(f'Unsupported output format: {mode!r}')            # FLAG
+                if resolution is None:
+                    raise ValueError(f'Unsupported resolution: {resolution!r}')         # FLAG
+                if name is None:
+                    raise ValueError('Unsupported output option')                       # FLAG
+                raise RuntimeError(f'{name}: {process.stderr}')                         # OK
+            ''',
+        'formats': '''
+            def by_name(mode):
+                raise ValueError(f'Unsupported output format: {mode!r}')                # FLAG
+
+
+            def by_id(preset_id):
+                raise ValueError(f'Unsupported output format id: {preset_id!r}')        # FLAG
+
+
+            def by_label(label):
+                raise ValueError(f'Unsupported output format label: {label!r}')         # FLAG
+            ''',
+        'library': '''
+            def record(data):
+                if not isinstance(data, dict):
+                    raise ValueError('not an archive record')                           # FLAG
+                raise ValueError('上次的记录无法读取')                                   # OK
+            ''',
+    }
+
     def test_g1e_counts_the_1_7_0_raises(self):
+        folder = _sandbox.out('guard-synthetic-1-7-0', 'raises')
+        folder.mkdir(parents=True, exist_ok=True)
+        marked = {}
+        for name, source in self.RAISES_1_7_0.items():
+            text = textwrap.dedent(source).lstrip('\n')
+            (folder / f'{name}.py').write_text(text, encoding='utf-8')
+            for mark in ('FLAG', 'OK'):
+                marked[name, mark] = {number for number, line in enumerate(text.splitlines(), 1)
+                                      if line.rstrip().endswith(f'# {mark}')}
+        self.assertEqual(sum(len(marked[name, 'FLAG']) for name in self.RAISES_1_7_0), 9)
         context = i18n_tool.GuardContext()
         flagged = []
-        for name in i18n_tool.src_modules(OLD):
-            if name in i18n_tool.G1_EXCLUDED:
-                continue
-            flagged += [(name, item['line']) for item in i18n_tool.g1_module(context, name, OLD) if item['rule'] == 'G1e']
-        self.assertEqual(sorted(flagged), sorted([('engine', 178), ('engine', 184), ('engine', 188), ('engine', 190),
-                                                  ('engine', 425), ('formats', 75), ('formats', 82), ('formats', 89)]))
+        for name in self.RAISES_1_7_0:
+            self.assertNotIn(name, i18n_tool.G1_EXCLUDED)
+            flagged += [(name, item['line']) for item in i18n_tool.g1_module(context, name, folder) if item['rule'] == 'G1e']
+        self.assertEqual(sorted(flagged), sorted((name, line) for name in self.RAISES_1_7_0
+                                                 for line in marked[name, 'FLAG']))
 
 
 class G5SelfTests(unittest.TestCase):
@@ -721,19 +1038,142 @@ class G5SelfTests(unittest.TestCase):
         self.assertEqual(len(findings), 6, findings)
         self.assertIn('text', sinks.sink_params['set_hint'])
 
+    # (2.0.0 S2 Q4) The nine sink positions G5 found in 1.7.0's UI modules (str(error) in a dialog, an
+    # exception into i18n.t(error=...)), with i18n.localize as display text the way 1.7.0 used it, in
+    # synthetic modules of the same names and code shapes: the self-test ran on the frozen 1.7.0
+    # sources until they were removed.  FLAG: a finding; OK: none.
+    SITES_1_7_0 = {
+        'library_ui': '''
+            import os
+            import i18n
+            from tkinter import messagebox
+
+
+            class LibraryPage:
+                def show_library_problem(self, text):
+                    self.library_note.configure(text=text)
+
+                def refresh_library(self):
+                    try:
+                        self.library.history()
+                    except OSError as error:
+                        self.show_library_problem(i18n.t('library.unreadable', error=error))       # FLAG
+
+                def refresh_history(self):
+                    try:
+                        self.library.history()
+                    except OSError as error:
+                        self.show_library_problem(i18n.t('library.unreadable', error=error))       # FLAG
+
+                def open_archive(self, row):
+                    try:
+                        os.startfile(row['folder'])
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.open_failed'), str(error), parent=self)  # FLAG
+            ''',
+        'ui_settings': '''
+            import i18n
+            from tkinter import messagebox
+
+
+            class SettingsPage:
+                def restart(self):
+                    try:
+                        self.relaunch()
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.restart_failed.title'),
+                                             i18n.t('dialog.restart_failed.text', error=error), parent=self)  # FLAG
+            ''',
+        'studio': '''
+            import os
+            import i18n
+            from tkinter import messagebox
+
+
+            class StudioApp:
+                def open_output(self, path):
+                    try:
+                        os.startfile(path)
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.open_folder_failed'), str(error), parent=self)  # FLAG
+            ''',
+        'ui_download': '''
+            import os
+            import i18n
+            from tkinter import messagebox
+
+
+            class DownloadPage:
+                def open_file(self, path):
+                    try:
+                        os.startfile(path)
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.open_file_failed'), str(error), parent=self)  # FLAG
+            ''',
+        'ui_log': '''
+            import os
+            import i18n
+            from tkinter import messagebox
+
+
+            class LogPage:
+                def open_log_file(self, path):
+                    try:
+                        os.startfile(path)
+                    except OSError as error:
+                        messagebox.showwarning(i18n.t('dialog.open_log_failed'), str(error), parent=self)  # FLAG
+            ''',
+        'collection_ui': '''
+            import i18n
+            from pathlib import Path
+            from tkinter import messagebox
+
+
+            class CollectionPage:
+                def save_links(self, path, items):
+                    try:
+                        Path(path).write_text('\\n'.join(i['url'] for i in items), encoding='utf-8-sig')
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.save_failed'), str(error), parent=self)  # FLAG
+
+                def save_pages(self, path, pages):
+                    try:
+                        Path(path).write_text('\\n'.join(p['text'] for p in pages), encoding='utf-8-sig')
+                    except OSError as error:
+                        messagebox.showerror(i18n.t('dialog.save_failed'), str(error), parent=self)  # FLAG
+
+                def show_page(self, page):
+                    self.page_title.configure(text=i18n.localize(page['title']))               # OK
+            ''',
+    }
+
     def test_the_1_7_0_sites_with_localize_as_display_text(self):
+        folder = _sandbox.out('guard-synthetic-1-7-0', 'sinks')
+        folder.mkdir(parents=True, exist_ok=True)
+        marked = {}
+        for name, source in self.SITES_1_7_0.items():
+            text = textwrap.dedent(source).lstrip('\n')
+            (folder / f'{name}.py').write_text(text, encoding='utf-8')
+            for mark in ('FLAG', 'OK'):
+                marked[name, mark] = {(f'{name}.py', number) for number, line in enumerate(text.splitlines(), 1)
+                                      if line.rstrip().endswith(f'# {mark}')}
+        flags = set().union(*(marked[name, 'FLAG'] for name in self.SITES_1_7_0))
+        self.assertEqual(len(flags), 9)
+        for name in self.SITES_1_7_0:
+            self.assertIn(name, i18n_tool.UI_MODULES)
         context = i18n_tool.GuardContext()
-        findings = i18n_tool._Sinks(context, i18n_tool.UI_MODULES, folder=OLD,
+        findings = i18n_tool._Sinks(context, i18n_tool.UI_MODULES, folder=folder,
                                     extra_display={('i18n', 'localize')}).run(allow_for=lambda name: {'sinks': {}})
-        flagged = set(lines(findings))
-        for site in (('library_ui.py', 639), ('library_ui.py', 787), ('ui_settings.py', 414), ('studio.py', 509),
-                     ('ui_download.py', 1311), ('ui_log.py', 195), ('collection_ui.py', 622), ('collection_ui.py', 643),
-                     ('library_ui.py', 1306)):
-            self.assertIn(site, flagged)
+        self.assertEqual(set(lines(findings)), flags)
         texts = {(item['file'], item['line']): item['text'] for item in findings}
-        self.assertEqual(texts[('studio.py', 509)], 'str(error)')
-        self.assertEqual(texts[('library_ui.py', 639)], 'error')
-        print(f'G5 on release-sources/1.7.0 (localize as display): {len(findings)} sink positions to convert or allow')
+        studio_site, = marked['studio', 'FLAG']
+        self.assertEqual(texts[studio_site], 'str(error)')
+        for site in marked['library_ui', 'FLAG']:
+            if site != max(marked['library_ui', 'FLAG']):
+                self.assertEqual(texts[site], 'error')
+        # without localize as display text, the page title is one more sink position
+        plain = i18n_tool._Sinks(context, i18n_tool.UI_MODULES, folder=folder).run(allow_for=lambda name: {'sinks': {}})
+        self.assertEqual(set(lines(plain)), flags | marked['collection_ui', 'OK'])
 
     # I-2 (MESSAGES.md 15, amendment A7): the scanner defects WP-4 / WP-5 reported.  Lines marked
     # FLAG must be findings, lines marked OK must not; nothing else in the module may be flagged.
@@ -800,7 +1240,7 @@ class G5SelfTests(unittest.TestCase):
                     self.shown.configure(text=shown)                                  # FLAG
 
             def _caption(self):
-                return i18n.t('shell.brand_caption'), False
+                return i18n.t('shell.engine_update'), False
 
             def sd3(self, rows):
                 self.a.configure(text=i18n.t('x.count', count=max(len(rows), 1)))     # OK
@@ -1123,7 +1563,7 @@ class ContractTests(unittest.TestCase):
     def test_the_contract_list_is_the_published_spec(self):
         """(A16.7) The published spec lists the ids of i18n_tool.CONTRACT, one per line, in the block
         after its marker line: the contract is the same text in both places."""
-        spec = (i18n_tool.ROOT / 'docs' / '1.8.0' / 'spec' / 'MESSAGES.md').read_text(encoding='utf-8')
+        spec = (i18n_tool.ROOT / 'docs' / 'GUARDS.md').read_text(encoding='utf-8')
         marker = '<!-- guard contract ids (A16.7) -->'
         self.assertIn(marker, spec)
         block = spec.split(marker, 1)[1].split('```', 2)[1]

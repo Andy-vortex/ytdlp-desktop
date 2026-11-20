@@ -25,10 +25,9 @@ import messages
 from messages import message_of, msg, raw, stripped
 import paths
 import procutil
-from urls import identity   # moved to urls.py unchanged; kept here for importers
+import settings             # (2.0.0 S4) settings.SCHEDULES: the allowed subscription schedules
+from urls import identity
 
-# Kept for importers; Library() without a path resolves its file when it is created.
-CATALOG = paths.data_dir() / 'library.sqlite3'
 WRITE_CHECK_TIMEOUT = 2   # seconds open_library waits for another writer before it stops checking
 _log = logging.getLogger('YtDlpDesktop.library')
 
@@ -72,7 +71,7 @@ def is_busy(error):
     code = getattr(error, 'sqlite_errorcode', None)
     if isinstance(code, int):
         return code & 0xFF in (5, 6)
-    text = str(error).lower()
+    text = messages.zh(str(error)).lower()     # (2.0.0) NotV2 carries a Message
     return 'database is locked' in text or 'database table is locked' in text or 'database is busy' in text
 
 
@@ -144,98 +143,65 @@ def _ui_retrying(method):
             _local.depth = 0
     call.ui_retrying = True
     return call
-# A job's options['mode'] is read by the 1.5.1 window (继续未完成, 查看结果), which only knows
-# the five old formats.  A 1.6.0-only format is therefore stored as the nearest old one in
-# 'mode' and as itself in this additive key; Library.job() and history() give 1.6.0 callers
-# the real format back in 'mode' (core fix review-compat-1).
-MODE_KEY = 'mode_v2'
 # Keys of a download job's options that are not options of one download.
-JOB_OPTION_KEYS = ('urls', 'overrides', 'variants', MODE_KEY)
+JOB_OPTION_KEYS = ('urls', 'overrides', 'variants')
+
+# (2.0.0, S2-DESIGN.md 1.2) The text positions ("slots") of each record kind of the format-2 store:
+# a slot holds a message ({"k", "p"}, messages.to_json) or the text itself (a plain string, '' for
+# none); '*' walks the items of a list or the values of a dict.  Every read and write of a record
+# goes through _load / _dump with this table; nothing else in a record is read as a message.
+SLOTS = {
+    'job': (('errors', '*', 'error'), ('errors', '*', 'reason'), ('options', 'archive_contexts', '*', 'title')),
+    'subscription': (('last_error',),),
+    'page': (('title',), ('links', '*', 'title')),
+    'entry': (('title',), ('page_title',)),
+    'archive': (('title',), ('page_title',)),
+}
+STORE_VERSION = 2           # PRAGMA user_version of a format-2 library
+ARCHIVE_VERSION = 2         # "version" of a 资料信息.json file (only the file has it, not archives.data)
+_FOREIGN_CODES = (11, 26)   # SQLITE_CORRUPT, SQLITE_NOTADB: the file's content itself is not a library
 
 
-def _legacy_mode(mode):
-    """The 1.5.1 format closest to a 1.6.0-only one (same kind: audio -> 原始最佳, video -> MKV)."""
-    preset = formats.by_mode(mode)
-    return formats.LEGACY_MODES[4] if preset.kind == 'video' else formats.LEGACY_MODES[0]
+class NotV2(sqlite3.OperationalError):
+    """(2.0.0, PLAN 3.10) A database with tables whose user_version is not 2 (1.5.1-1.8.1 wrote 0, a later
+    version may write 3).  An OperationalError without a busy code: Library() does not take it for a
+    lock; open_library sets the file aside and starts a new library."""
 
 
-def stored_options(options):
-    """Job options as they are written: a 1.6.0-only 'mode' becomes the nearest 1.5.1 mode,
-    the real one goes to MODE_KEY.  Other values (and non-dicts) unchanged."""
-    if not isinstance(options, dict):
-        return options
-    mode = options.get('mode')
-    if mode in formats.MODES and mode not in formats.LEGACY_MODES:
-        options = dict(options)
-        options['mode'] = _legacy_mode(mode)
-        options[MODE_KEY] = mode
-    return options
+def _load(text, kind):
+    """A stored record: json.loads with every slot of ``kind`` read as a typed value (messages.from_json)."""
+    return messages.read_slots(json.loads(text), SLOTS[kind])
 
 
-def read_options(options):
-    """Job options as 1.6.0 uses them: the real format back in 'mode', MODE_KEY removed."""
-    if not isinstance(options, dict) or MODE_KEY not in options:
-        return options
-    options = dict(options)
-    real = options.pop(MODE_KEY)
-    if real in formats.MODES:
-        options['mode'] = real
-    return options
+def _dump(data, kind):
+    """The JSON text a record is stored as: every slot of ``kind`` in its format-2 form (messages.to_json)."""
+    return json.dumps(messages.write_slots(data, SLOTS[kind]), ensure_ascii=False)
 
 
-# (1.8.0, MESSAGES.md 3.4) Two load paths, never mixed.  A display read (_read_record) decodes the
-# texts, gives 1.6.0 callers the real format in 'mode' and lifts the archive-context titles; nothing
-# read that way is ever written back.  A read-modify-write (_load_for_write) decodes the text fields
-# of its record kind only: every other value, 'options' above all (its stored 1.5.1-compatible 'mode'
-# and MODE_KEY), is the very object json.loads gave, so it is written back with its stored bytes.
-
-def _context_titles(options):
-    """Download options whose archive_contexts titles are lifted for display (kind context_title,
-    no sidecar inside options; L-4).  The codec walks the link -> context map itself (I-1 amendment
-    A2); the stored options object is never changed (a copy where a title changed)."""
-    contexts = options.get('archive_contexts')
-    if not isinstance(contexts, dict) or not contexts:
-        return options
-    shown = messages.decode(options, 'job_options')
-    if not isinstance(shown, dict) or shown.get('archive_contexts') is contexts:
-        return options
-    if 'msgs' in options:                                # decode drops it; options are kept as they are
-        shown['msgs'] = options['msgs']
-    return shown
-
-
-def _read_record(data, columns=None):
-    """(display read) The job record decoded (kind job), with read_options and the lifted context
-    titles applied to its options, and the decoded column texts; (data, columns)."""
-    shown = messages.decode(data, 'job')
-    if isinstance(shown, dict) and isinstance(shown.get('options'), dict):
-        shown['options'] = _context_titles(read_options(shown['options']))
-    if columns is not None:
-        columns = messages.decode_columns(data if isinstance(data, dict) else {}, 'job', columns)
-    return shown, columns
-
-
-def _load_for_write(text, kind, columns=None):
-    """(read-modify-write) The stored JSON loaded with the text fields of ``kind`` decoded and the
-    column texts decoded with its sidecar; ``options`` and every other value untouched; (data, columns)."""
-    stored = json.loads(text)
-    data = messages.decode(stored, kind)
-    if columns is not None:
-        columns = messages.decode_columns(stored if isinstance(stored, dict) else {}, kind, columns)
-    return data, columns
-
-
-def _dump(data, kind, columns=None):
-    """The JSON text a record is stored as: the record with its sidecar (messages.encode)."""
-    return json.dumps(messages.encode(data, kind, columns), ensure_ascii=False)
+def _title(text):
+    """The title / name column as read: the stored text is the owner's or the source's own (Raw)."""
+    return raw(text) if isinstance(text, str) else text
 
 
 def _format_of(options):
     """The format key (formats.format_key) of one download's options dict, or None."""
     try:
-        return formats.format_key(formats.by_mode(options.get('mode')), options.get('resolution'))
+        return formats.format_key(formats.by_id(options.get('mode')), options.get('resolution'))
     except (ValueError, TypeError, AttributeError):
         return None
+
+
+def _done_pairs(data):
+    """{(url, format)} of a job record's 'done' list (pairs of another shape are skipped)."""
+    pairs = data.get('done') if isinstance(data.get('done'), list) else []
+    found = set()
+    for pair in pairs:
+        if isinstance(pair, list) and len(pair) == 2:
+            try:
+                found.add(tuple(pair))
+            except TypeError:
+                continue
+    return found
 
 
 def job_downloads(data):
@@ -245,19 +211,15 @@ def job_downloads(data):
     One entry per (link, format): the job's links with the job's options (or the link's
     own from 'overrides'), then the links that were added again in another format
     ('variants', core fix review-e2e-4).  ``options`` is a plain options dict (no job keys);
-    ``done`` says whether that download finished, by (link, format) in
-    'completed_variants', or, for a record without such an entry for the link (1.5.1, or a
-    job from before this list existed), by the link in 'completed' for its first format.
+    ``done`` says whether that download finished: (link, format) is in the job's 'done' list.
     """
     data = data if isinstance(data, dict) else {}
-    options = read_options(data.get('options') or {})
+    options = data.get('options') or {}
     if not isinstance(options, dict):
         return []
     base = {key: value for key, value in options.items() if key not in JOB_OPTION_KEYS}
     overrides = options.get('overrides') if isinstance(options.get('overrides'), dict) else {}
-    completed = data.get('completed') if isinstance(data.get('completed'), list) else []
-    finished = {tuple(pair) for pair in (data.get('completed_variants') or []) if isinstance(pair, list) and len(pair) == 2}
-    tracked = {url for url, _format in finished}
+    finished = _done_pairs(data)
     result = []
     for url in options.get('urls') or []:
         if not isinstance(url, str):
@@ -265,8 +227,7 @@ def job_downloads(data):
         own = overrides.get(url)
         own = dict(own) if isinstance(own, dict) else dict(base)
         key = _format_of(own)
-        done = (url, key) in finished or (url not in tracked and url in completed)
-        result.append({'url': url, 'format': key, 'options': own, 'done': done})
+        result.append({'url': url, 'format': key, 'options': own, 'done': (url, key) in finished})
     for variant in options.get('variants') or []:
         if not isinstance(variant, dict) or not isinstance(variant.get('url'), str):
             continue
@@ -278,12 +239,32 @@ def job_downloads(data):
     return result
 
 
-def _decoded_title(title):
-    """A page / archive title decoded as the stored title it is, for the files for the owner
-    (网页正文.*, 阅读说明.txt; I18N.md 8.8), which show it with messages.show (an app-made title in
-    the running language, any other title as it is): a typed value stays as it is, a plain text is
-    lifted like any keyless stored text (MESSAGES.md 4.4)."""
-    return messages.decode({'title': title}, 'archive')['title']
+def title_parts(row) -> tuple:
+    """(2.0.0, S2-DESIGN.md 1.2) What a job's history title is made of; the structure only (no display
+    call): ('subscription', name) | ('multi', title, n) | ('plain', title) | ('link', url) |
+    ('multi_link', url, n).  ``row``: {'kind', 'title', 'data'}, the title column holding the owner's /
+    the media's own text ('' or None: none), data['via'] == 'subscription' for a job a subscription
+    made, data['title_links'] the n of '<title> 等 n 条'.  library_ui.history_title shows it."""
+    title = row.get('title')
+    title = title if isinstance(title, str) else ''
+    data = row.get('data') if isinstance(row.get('data'), dict) else {}
+    if data.get('via') == 'subscription':
+        return ('subscription', title)
+    if row.get('kind') != 'download':
+        return ('plain', title)
+    count = data.get('title_links')
+    if title and isinstance(count, int) and not isinstance(count, bool) and count >= 2:
+        return ('multi', title, count)
+    if title:
+        return ('plain', title)
+    options = data.get('options') if isinstance(data.get('options'), dict) else {}
+    links = options.get('urls') if isinstance(options.get('urls'), list) else []
+    links = [url for url in links if isinstance(url, str) and url]
+    if len(links) == 1:
+        return ('link', links[0])
+    if links:
+        return ('multi_link', links[0], len(links))
+    return ('plain', '')
 
 
 def safe_name(value, limit=60):
@@ -301,26 +282,11 @@ def write_json(path, data):
 alive = procutil.alive
 
 
-def _stripped_reason(reason):
-    """The stored form of a task row's reason: 1.7.0 stored ``reason.strip()``.  A Message / Value
-    whose zh text has edge whitespace (a reason cut to 70 characters, D-F28) is rebuilt with the
-    stripped text and keeps its key, params, origin and entry, the way ``cut`` keeps them (en still
-    shows it whole); any other value goes through ``stripped``."""
-    if isinstance(reason, (messages.Message, messages.Value)):
-        text = messages.zh(reason)
-        if text == text.strip():
-            return reason
-        if isinstance(reason, messages.Value):
-            return messages.Value(reason.group, text.strip())
-        return messages.Message(text.strip(), reason.key, reason.params, reason.origin, reason.entry)
-    return stripped(reason)
-
-
 def _storable(value):
     """An event value whose texts can be written as UTF-8: a lone UTF-16 surrogate (a title
     cut inside an emoji, which yt-dlp prints escaped) becomes '?'.  Other values unchanged.
-    (1.8.0) The types are kept: a Message / Raw / Value that cannot be written is rebuilt with the
-    repaired text (a Message keeps its key, origin and entry, its params repaired the same way)."""
+    (1.8.0) The types are kept: a Message / Raw that cannot be written is rebuilt with the
+    repaired text (a Message keeps its key, its params repaired the same way)."""
     if isinstance(value, str):
         try:
             value.encode('utf-8')
@@ -329,9 +295,7 @@ def _storable(value):
             text = messages.zh(value).encode('utf-8', 'replace').decode('utf-8')
         if isinstance(value, messages.Message):
             params = {name: _storable(item) for name, item in value.params.items()}
-            return messages.Message(text, value.key, params, value.origin, value.entry)
-        if isinstance(value, messages.Value):
-            return messages.Value(value.group, text)
+            return messages.Message(text, value.key, params)
         return raw(text) if isinstance(value, messages.Raw) else text
     if isinstance(value, dict):
         return {_storable(key): _storable(item) for key, item in value.items()}
@@ -384,9 +348,18 @@ class Library:
             _log.warning('the history is locked by another program at start-up (%s); retried later', error)
 
     def _ensure_schema(self, db):
-        if not self._schema_ready:
+        """(2.0.0) The first connection of this object: a file without any table gets the tables and
+        user_version 2 in one transaction (an exit half-way leaves no table behind); a file with tables
+        must have user_version 2, else NotV2 (2.0.0 reads no other format)."""
+        if self._schema_ready:
+            return
+        if db.execute('SELECT 1 FROM sqlite_master LIMIT 1').fetchone() is None:
+            db.executescript(f'BEGIN; {SCHEMA} PRAGMA user_version = {STORE_VERSION}; COMMIT;')
+        elif int(db.execute('PRAGMA user_version').fetchone()[0]) != STORE_VERSION:
+            raise NotV2(msg('core.library.not_v2'))
+        else:
             db.executescript(SCHEMA)
-            self._schema_ready = True
+        self._schema_ready = True
 
     @contextmanager
     def db(self):
@@ -420,19 +393,24 @@ class Library:
         finally:
             db.close()
 
-    def create_job(self, kind, title, options, subscription=None):
+    def create_job(self, kind, title, options, subscription=None, via=None):
+        """A new job record (S2-DESIGN.md 1.2).  ``title``: the owner's / the source's own text ('' for
+        none: the history names the job after its links); ``via='subscription'`` for the job of a
+        subscription check (its title is the subscription's name, '' for the untitled one)."""
         options = dict(options)
         options['proxy'] = ''  # Login/proxy secrets never enter persisted settings.
         options.pop('resume', None)
         options.pop('job_id', None)
         options.pop('history_path', None)
-        options = stored_options(options)
         job = uuid.uuid4().hex
         data = dict(options=options, subscription=subscription, checkpoint=None, errors=[],
-                    owner=os.getpid(), worker=None, completed=[], files=[])
+                    owner=os.getpid(), worker=None, done=[], files=[])
+        if via:
+            data['via'] = via
+        title = messages.zh(title) if isinstance(title, str) else ''
         with self.db() as db:
             db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', (job, kind, title, 'running', time.time(),
-                                                                 _dump(data, 'job', {'title': title, 'kind': kind})))
+                                                                 _dump(data, 'job')))
         return job
 
     def job(self, job):
@@ -441,31 +419,25 @@ class Library:
             if not row:
                 raise ValueError(msg('core.library.no_job'))
             result = dict(row)
-            result['data'], columns = _read_record(json.loads(row['data']), {'title': row['title'], 'kind': row['kind']})
-            result['title'] = columns['title']
-            result['pages'] = [messages.decode(json.loads(r[0]), 'page')
+            result['data'] = _load(row['data'], 'job')
+            result['title'] = _title(row['title'])
+            result['pages'] = [_load(r[0], 'page')
                                for r in db.execute('SELECT data FROM pages WHERE job=? ORDER BY rowid', (job,))]
             return result
 
-    @staticmethod
-    def _job_columns(row):
-        return {'title': row['title'], 'kind': row['kind']}
-
     def change_job(self, job, status=None, **updates):
         with self.tx() as db:
-            row = db.execute('SELECT data,status,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
-            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
-            if 'options' in updates:
-                updates['options'] = stored_options(updates['options'])
+            row = db.execute('SELECT data,status FROM jobs WHERE id=?', (job,)).fetchone()
+            data = _load(row[0], 'job')
             data.update(updates)
             db.execute('UPDATE jobs SET data=?,status=?,updated=? WHERE id=?',
-                       (_dump(data, 'job', columns), status or row[1], time.time(), job))
+                       (_dump(data, 'job'), status or row[1], time.time(), job))
 
     def collection_event(self, job, kind, value):
         # Page and its frontier commit together, inside the worker BEFORE GUI notification.
         with self.tx() as db:
-            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
-            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
+            row = db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()
+            data = _load(row[0], 'job')
             if kind == 'collect_page':
                 page = dict(value)
                 data['checkpoint'] = page.pop('_checkpoint')
@@ -473,8 +445,8 @@ class Library:
             elif kind == 'collect_checkpoint':
                 data['checkpoint'] = value
             elif kind == 'collect_error':
-                data['errors'].append(value)
-            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job', columns), time.time(), job))
+                data['errors'].append({'error': value, 'reason': None})
+            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job'), time.time(), job))
 
     def history(self, limit=HISTORY_PAGE, search=''):
         """The newest ``limit`` jobs, newest first; with ``search``, only the jobs whose title or
@@ -500,13 +472,13 @@ class Library:
                 # program) is listed by its title with empty data, as the search's json_valid guard
                 # intends; its status is shown as stored and nothing is written to it.
                 row['data'] = {}
-                row['title'] = messages.decode_columns({}, 'job', self._job_columns(row))['title']
+                row['title'] = _title(row['title'])
                 continue
-            row['data'], columns = _read_record(data, self._job_columns(row))
-            row['title'] = columns['title']
+            row['data'] = messages.read_slots(data, SLOTS['job'])
+            row['title'] = _title(row['title'])
             if row['status'] == 'running' and not alive(row['data'].get('worker') or row['data'].get('owner')):
                 try:
-                    # A read-modify-write of its own: the row decoded for display is never written.
+                    # A read-modify-write of its own: the row read for display is never written.
                     self.change_job(row['id'], status='interrupted')
                 except sqlite3.OperationalError as error:
                     if not is_busy(error):
@@ -537,8 +509,7 @@ class Library:
         options = data.setdefault('options', {})
         known = options.setdefault('urls', [])
         overrides = overrides if isinstance(overrides, dict) else {}
-        current = read_options(options)
-        base = {key: value for key, value in current.items() if key not in JOB_OPTION_KEYS}
+        base = {key: value for key, value in options.items() if key not in JOB_OPTION_KEYS}
         given = [url for url in urls if isinstance(url, str)]
         for url in given:
             own = overrides.get(url) if isinstance(overrides.get(url), dict) else None
@@ -568,12 +539,13 @@ class Library:
             options.setdefault('overrides', {}).update(rest)
 
     @staticmethod
-    def _completed_variant(data, url, format):
-        """Remember a finished download by (link, format) in the additive 'completed_variants'
-        list ('completed' keeps the links, as 1.5.1 reads them)."""
-        if not isinstance(url, str) or not isinstance(format, str) or not format:
+    def _mark_done(data, url, format):
+        """(2.0.0) Remember a finished download as [link, format] in the job's 'done' list (once;
+        format None when it is not known)."""
+        if not isinstance(url, str) or not url:
             return
-        pairs = data.setdefault('completed_variants', [])
+        format = format if isinstance(format, str) and format else None
+        pairs = data.setdefault('done', [])
         if [url, format] not in pairs:
             pairs.append([url, format])
 
@@ -586,33 +558,10 @@ class Library:
     def extend_job(self, job, urls, overrides=None):
         """Links that joined a running job: a later resume sees them, each with its own format and folder."""
         with self.tx() as db:
-            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
-            data, columns = _load_for_write(row[0], 'job', self._job_columns(row))
+            row = db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()
+            data = _load(row[0], 'job')
             self._extend(data, urls, overrides)
-            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job', columns), time.time(), job))
-
-    def rename_job(self, job, title):
-        """(1.8.0) One transaction: the title column and the job's sidecar entry for it (C-H-3).
-        The record is rewritten only when its sidecar changes."""
-        title = str(title)
-        with self.tx() as db:
-            row = db.execute('SELECT data,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
-            text = None
-            if row is not None:
-                try:
-                    stored = json.loads(row['data'])
-                except (TypeError, ValueError):
-                    stored = None
-                if isinstance(stored, dict):
-                    data, columns = _load_for_write(row['data'], 'job', self._job_columns(row))
-                    columns['title'] = title
-                    encoded = messages.encode(data, 'job', columns)
-                    if encoded.get('msgs') != stored.get('msgs'):
-                        text = json.dumps(encoded, ensure_ascii=False)
-            if text is None:
-                db.execute('UPDATE jobs SET title=? WHERE id=?', (title, job))
-            else:
-                db.execute('UPDATE jobs SET title=?,data=? WHERE id=?', (title, text, job))
+            db.execute('UPDATE jobs SET data=?,updated=? WHERE id=?', (_dump(data, 'job'), time.time(), job))
 
     @staticmethod
     def _record_download(db, keys, format, url, title, path, job):
@@ -655,8 +604,8 @@ class Library:
             return
         value = _storable(value)
         with self.tx() as db:
-            row = db.execute('SELECT data,status,kind,title FROM jobs WHERE id=?', (job,)).fetchone()
-            (data, columns), status = _load_for_write(row[0], 'job', self._job_columns(row)), row[1]
+            row = db.execute('SELECT data,status,title FROM jobs WHERE id=?', (job,)).fetchone()
+            data, status = _load(row[0], 'job'), row[1]
             if kind == 'item':
                 data['current'] = value['url']
                 data['current_key'] = value.get('key')
@@ -664,16 +613,14 @@ class Library:
                 data['current_origin'] = value.get('origin')
                 data['current_multi'] = bool(value.get('multi'))
             elif kind == 'title':
-                # The first title names the job, so the history shows a song instead of a count.
-                # (1.8.0, C-F22) The media title is raw text; the job's sidecar is rewritten below,
-                # in the same transaction.
-                if isinstance(value, str) and messages.zh(value).strip() and not data.get('titled'):
+                # The first title names the job, so the history shows a song instead of a link.
+                # (2.0.0, S2-DESIGN.md 1.2) The title column gets the media's own text; with several
+                # links, title_links keeps how many the job had at that moment ('<title> 等 n 条').
+                if isinstance(value, str) and messages.zh(value).strip() and not row['title']:
                     count = len((data.get('options') or {}).get('urls') or [])
-                    media = value if isinstance(value, messages.Message) else raw(value)
-                    title = msg('value.job_title.multi', title=media, count=count) if count > 1 else media
-                    db.execute('UPDATE jobs SET title=? WHERE id=?', (title, job))
-                    columns['title'] = title
-                    data['titled'] = True
+                    db.execute('UPDATE jobs SET title=? WHERE id=?', (messages.zh(value), job))
+                    if count > 1:
+                        data['title_links'] = count
             elif kind == 'media':
                 if isinstance(value, dict) and isinstance(value.get('filepath'), str) and value['filepath']:
                     keys = []
@@ -707,30 +654,29 @@ class Library:
                     # No item event came before it: data['current'] is not this link.
                     url = value.get('url')
                     if url:
-                        if url not in data['completed']:
-                            data['completed'].append(url)
-                        self._completed_variant(data, url, value.get('format') or self._sole_format(data, url))
+                        self._mark_done(data, url, value.get('format') or self._sole_format(data, url))
                         for key in dict.fromkeys(identity(link) for link in (url, value.get('origin')) if link):
                             db.execute('UPDATE entries SET pending=0 WHERE key=?', (key,))
                 elif value['success'] and data.get('current'):
                     url = data['current']
-                    if url not in data['completed']:
-                        data['completed'].append(url)
-                    self._completed_variant(data, url, value.get('format') or data.get('current_format'))
+                    self._mark_done(data, url, value.get('format') or data.get('current_format')
+                                    or self._sole_format(data, url))
                     for key in dict.fromkeys(identity(link) for link in (url, data.get('current_origin')) if link):
                         db.execute('UPDATE entries SET pending=0 WHERE key=?', (key,))
                 if value.get('error'):
-                    # (1.8.0, C-F34) The error keeps its type (Message / Raw / plain text).
+                    # (1.8.0, C-F34) The error keeps its type (Message / Raw / plain text).  (2.0.0) With
+                    # it the short reason the task row showed for that line, which the history note
+                    # shows (polish ui-wording-consistency-5); None when there was none.
                     error = value['error']
-                    data.setdefault('errors', []).append(error if isinstance(error, str) else str(error))
-                    data['errors'] = data['errors'][-20:]
-                    # The short Chinese reason the task row showed for that line (additive key;
-                    # 1.5.1 ignores it): the history note shows it (polish ui-wording-consistency-5).
                     reason = value.get('reason')
-                    if isinstance(reason, str) and messages.zh(reason).strip():
-                        data['last_reason'] = {'error': data['errors'][-1], 'reason': _stripped_reason(reason)}
+                    reason = stripped(reason) if isinstance(reason, str) and messages.zh(reason).strip() else None
+                    error = error if isinstance(error, str) else raw(str(error))
+                    data.setdefault('errors', []).append({'error': error, 'reason': reason})
+                    data['errors'] = data['errors'][-20:]
             elif kind == 'done':
-                data['result'] = value
+                # (2.0.0) engine_error is stored as a flag (its only reader asks whether there was one)
+                data['result'] = dict(value, engine_error=bool(value.get('engine_error'))) \
+                    if isinstance(value, dict) and 'engine_error' in value else value
                 # Not completed while anything is left: a failure, an archive error, a bot-check
                 # block, an engine that could not run (its links are stored as unstarted), or
                 # any other link of this run that did not finish.
@@ -738,71 +684,53 @@ class Library:
                     'partial' if (value['failed'] or value.get('archive_errors') or value.get('blocked')
                                   or value.get('engine_error') or value.get('pending_urls')) else 'completed')
             db.execute('UPDATE jobs SET data=?,status=?,updated=? WHERE id=?',
-                       (_dump(data, 'job', columns), status, time.time(), job))
+                       (_dump(data, 'job'), status, time.time(), job))
 
     def subscription(self, name, options, interval=3600, media_only=True, first_new=True):
-        if interval not in (0, 900, 3600, 86400):
+        if interval not in settings.SCHEDULES:
             raise ValueError(msg('core.library.bad_interval'))
         options = dict(options)
         options['proxy'] = ''
         key = uuid.uuid4().hex
         data = dict(options=options, media_only=media_only, first_new=first_new,
                     initialized=False, last_check=None, last_error='', last_new=0)
-        # (1.8.0, C-F24) The name the owner typed is raw text; without one, a message.
-        name = raw(name.strip()[:100]) or msg('value.subscription.untitled')
+        # (2.0.0) The name column holds the name the owner typed ('' for none: shown as the untitled one).
+        name = messages.zh(name).strip()[:100]
         with self.db() as db:
             db.execute('INSERT INTO subscriptions VALUES(?,?,?,?,?,?)',
-                       (key, name, 1, interval, time.time(), _dump(data, 'subscription', {'name': name})))
+                       (key, name, 1, interval, time.time(), _dump(data, 'subscription')))
         return key
 
     def subscriptions(self):
         with self.db() as db:
             rows = [dict(r) for r in db.execute('SELECT * FROM subscriptions ORDER BY rowid')]
             for row in rows:
-                stored = json.loads(row['data'])
-                row['data'] = messages.decode(stored, 'subscription')
-                row['name'] = messages.decode_columns(stored if isinstance(stored, dict) else {}, 'subscription',
-                                                      {'name': row['name']})['name']
+                # (2.0.0) 'name': the name to show (the owner's text, or the untitled message);
+                # 'name_text': the stored text ('' for an untitled subscription)
+                row['data'] = _load(row['data'], 'subscription')
+                row['name_text'] = row['name'] if isinstance(row['name'], str) else ''
+                row['name'] = raw(row['name_text']) or msg('value.subscription.untitled')
                 row['pending'] = db.execute('SELECT count(*) FROM entries WHERE subscription=? AND pending=1', (row['id'],)).fetchone()[0]
             return rows
 
     def configure_subscription(self, key, enabled, interval):
-        if interval not in (0, 900, 3600, 86400):
+        if interval not in settings.SCHEDULES:
             raise ValueError(msg('core.library.bad_interval'))
         with self.db() as db:
             db.execute('UPDATE subscriptions SET enabled=?,interval=?,next_check=? WHERE id=?', (int(enabled), interval, time.time() + interval, key))
 
     def rename_subscription(self, key, name):
-        """(1.8.1) The name column and the subscription's sidecar entry for it, in one transaction (as
-        rename_job).  The owner's text is raw, cut to 100 characters; an empty name is the untitled
-        message (as subscription(), C-F24).  The record is rewritten only when its sidecar changes.
-        True when the subscription exists."""
-        name = raw(str(name).strip()[:100]) or msg('value.subscription.untitled')
+        """(1.8.1) The name column, in one transaction.  The owner's text, cut to 100 characters; an
+        empty name is the untitled one (as subscription()).  The record is not touched.  True when the
+        subscription exists."""
+        name = messages.zh(str(name)).strip()[:100]
         with self.tx() as db:
-            row = db.execute('SELECT data,name FROM subscriptions WHERE id=?', (key,)).fetchone()
-            if row is None:
-                return False
-            text = None
-            try:
-                stored = json.loads(row['data'])
-            except (TypeError, ValueError):
-                stored = None
-            if isinstance(stored, dict):
-                data, columns = _load_for_write(row['data'], 'subscription', {'name': row['name']})
-                columns['name'] = name
-                encoded = messages.encode(data, 'subscription', columns)
-                if encoded.get('msgs') != stored.get('msgs'):
-                    text = json.dumps(encoded, ensure_ascii=False)
-            if text is None:
-                db.execute('UPDATE subscriptions SET name=? WHERE id=?', (name, key))
-            else:
-                db.execute('UPDATE subscriptions SET name=?,data=? WHERE id=?', (name, text, key))
-            return True
+            return db.execute('UPDATE subscriptions SET name=? WHERE id=?', (name, key)).rowcount > 0
 
     def delete_subscription(self, key):
         """(1.8.1) Remove a subscription and its entries, in one transaction.  The collection jobs of its
         checks stay in the history; their record forgets the subscription (data['subscription'] =
-        None, through the read-modify-write path, so options and sidecar keep their bytes): a resumed
+        None; every other value keeps its bytes): a resumed
         check never looks for it (1.5.1 to 1.8.0 read that id and their finish_subscription has no
         None check; 1.5.1 would stay busy).  jobs.updated is kept, so the history order stays.
         Downloads, archives and the job history are not touched.  True when the subscription existed."""
@@ -812,7 +740,7 @@ class Library:
             found = db.execute('DELETE FROM subscriptions WHERE id=?', (key,)).rowcount
             db.execute('DELETE FROM entries WHERE subscription=?', (key,))
             # The id is 32 ASCII hex digits: no JSON escape hides it from instr; each hit is compared exactly.
-            rows = db.execute("SELECT id,data,kind,title FROM jobs WHERE kind='collect' AND instr(data, ?) > 0",
+            rows = db.execute("SELECT id,data FROM jobs WHERE kind='collect' AND instr(data, ?) > 0",
                               (key,)).fetchall()
             for row in rows:
                 try:
@@ -821,9 +749,8 @@ class Library:
                     continue
                 if not isinstance(stored, dict) or stored.get('subscription') != key:
                     continue
-                data, columns = _load_for_write(row['data'], 'job', self._job_columns(row))
-                data['subscription'] = None
-                db.execute('UPDATE jobs SET data=? WHERE id=?', (_dump(data, 'job', columns), row['id']))
+                stored['subscription'] = None
+                db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(stored, ensure_ascii=False), row['id']))
         return bool(found)
 
     def finish_subscription(self, key, pages, successful, error=''):
@@ -831,12 +758,12 @@ class Library:
             row = db.execute('SELECT * FROM subscriptions WHERE id=?', (key,)).fetchone()
             if row is None:
                 return 0        # (1.8.1) deleted meanwhile (delete_subscription): nothing to record
-            data, columns = _load_for_write(row['data'], 'subscription', {'name': row['name']})
+            data = _load(row['data'], 'subscription')
             new = 0
             if successful:
                 for page in pages:
                     for item in page['links']:
-                        if data['media_only'] and item['kind'] == '网页链接':
+                        if data['media_only'] and item['kind'] == 'web':
                             continue
                         item_key = identity(item['url'])
                         old = db.execute('SELECT pending FROM entries WHERE subscription=? AND key=?', (key, item_key)).fetchone()
@@ -850,12 +777,12 @@ class Library:
                 # A stopped/failed scan never establishes a baseline or consumes new items.
                 data['last_error'] = error or msg('value.subscription.interrupted')
             db.execute('UPDATE subscriptions SET data=?,next_check=? WHERE id=?',
-                       (_dump(data, 'subscription', columns), time.time() + max(900, row['interval']), key))
+                       (_dump(data, 'subscription'), time.time() + max(900, row['interval']), key))
             return new
 
     def pending(self, key):
         with self.db() as db:
-            return [messages.decode(json.loads(r[0]), 'entry')
+            return [_load(r[0], 'entry')
                     for r in db.execute('SELECT data FROM entries WHERE subscription=? AND pending=1 ORDER BY rowid', (key,))]
 
     def downloaded(self, url):
@@ -892,17 +819,17 @@ class Library:
 
     def archives(self):
         with self.db() as db:
-            return [dict(folder=r['folder'], **messages.decode(json.loads(r['data']), 'archive'))
+            return [dict(folder=r['folder'], **_load(r['data'], 'archive'))
                     for r in db.execute('SELECT * FROM archives ORDER BY updated DESC')]
 
     def contexts(self, urls):
         """The newest collected page context of each link: {url: {title, source, job_id, page_url}}.
 
         (1.8.1) The window calls this before a download with archiving on; a link that was never
-        collected used to cost a decode of every stored page (seconds with thousands of pages).  Now
-        only pages that can hold a wanted link are decoded: with at most `prefilter` search texts
+        collected used to cost a read of every stored page (seconds with thousands of pages).  Now
+        only pages that can hold a wanted link are read: with at most `prefilter` search texts
         the database keeps the rows whose data contains one of them (instr; each text costs one
-        pass over the data column); otherwise each row is loaded and decoded only when one of its
+        pass over the data column); otherwise each row is loaded and read only when one of its
         links is wanted.  The result is the same: newest page first (rowid DESC), each link
         compared exactly, done once every link is found.
 
@@ -915,8 +842,8 @@ class Library:
         no search text is never read, so it is skipped where the old loop raised; one that holds a
         search text raises as before.  On the row-by-row way every row reached is loaded (json.loads
         and its links), so a row that is not JSON or has no links raises as in the old loop; only
-        a row that parses but holds no wanted link is not decoded (messages.decode), so a fault that
-        only decoding would find is not raised for it.  Rows after the last wanted link was found are
+        a row that parses but holds no wanted link is not read further (its slots), so a fault that
+        only that would find is not raised for it.  Rows after the last wanted link was found are
         not read on either way, as before."""
         prefilter = 4           # measured break-even of the two ways (1.8.1 design 1.1)
         remaining, result = set(urls), {}
@@ -951,7 +878,7 @@ class Library:
                 if screen and not any(isinstance(item, dict) and item.get('url') in remaining
                                       for item in stored['links']):
                     continue
-                page = messages.decode(stored, 'page')
+                page = messages.read_slots(stored, SLOTS['page'])
                 for item in page['links']:
                     if item['url'] in remaining:
                         result[item['url']] = dict(title=item['title'], source=item['source'], job_id=row['job'],
@@ -963,7 +890,7 @@ class Library:
 # (1.7.0 U1) Every public method that opens the database repeats itself briefly on the window's
 # thread instead of waiting WORKER_TIMEOUT there (_ui_retrying); other threads are not affected.
 UI_RETRIED = ('create_job', 'job', 'change_job', 'collection_event', 'history', 'history_count', 'extend_job',
-              'rename_job', 'record_download', 'find_download', 'download_event', 'subscription',
+              'record_download', 'find_download', 'download_event', 'subscription',
               'subscriptions', 'configure_subscription', 'finish_subscription', 'pending', 'downloaded',
               'archive_index', 'archives', 'contexts',
               'ignore_entries', 'delete_subscription', 'rename_subscription')
@@ -1000,29 +927,87 @@ def _prove_writable(path) -> None:
         db.close()
 
 
+def _opened(path):
+    """(Library, '') of ``path`` (None: paths.catalog_path()), proven writable."""
+    store = Library(path)
+    _prove_writable(store.path)
+    beside = paths.data_dir() / 'library.sqlite3'
+    if path is None and beside.is_file() and store.path != beside.resolve():
+        _log.warning('the history beside the program cannot be written (%s); this session uses %s',
+                     beside, store.path)
+    return store, ''
+
+
+def _temporary(error):
+    """(Library, warning): a throw-away database in the temp folder for this session."""
+    folder = Path(tempfile.mkdtemp(prefix='ytdlp-history-'))
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    return Library(folder / 'library.sqlite3'), msg('core.library.temporary', error=message_of(error))
+
+
+def _foreign(error) -> bool:
+    """Is the file itself not a library of this version: NotV2, or SQLite's "not a database" /
+    "malformed" (never a lock, a missing right or an IO error: those leave the file alone)?"""
+    if isinstance(error, NotV2):
+        return True
+    return type(error) is sqlite3.DatabaseError and \
+        (getattr(error, 'sqlite_errorcode', None) or 0) & 0xFF in _FOREIGN_CODES
+
+
+def _keep_aside(file) -> Path:
+    """Rename a library that is not of this version to library.bad-<time>.sqlite3 (never replacing a
+    file).  OSError when it cannot be: a -wal file is there (part of the content would stay behind), the
+    file is in use (also by a connection in a transaction: Windows refuses the rename), every name is
+    taken.  A hot -journal was already rolled back by SQLite when _opened read the file; a journal SQLite
+    does not take for hot holds nothing of the file and does not stop the rename (S2 review F4)."""
+    if file.with_name(file.name + '-wal').exists():
+        raise OSError(msg('core.library.cannot_set_aside', path=os.fspath(file)))
+    target = paths.set_aside(file, 'bad')
+    if target is None:
+        raise OSError(msg('core.library.cannot_set_aside', path=os.fspath(file)))
+    return target
+
+
 def open_library(path=None):
     """(Library, warning).  The history is optional: when its file cannot be opened or
     cannot be written, a throw-away database in the temp folder serves this session and
-    the warning says so."""
+    the warning says so.  (2.0.0, PLAN 3.10) A file that is not a library of this version (NotV2,
+    damaged) is renamed to library.bad-<time>.sqlite3 in its folder and a new library starts in
+    its place; the warning (core.library.kept_aside) says so."""
     try:
-        store = Library(path)
-        _prove_writable(store.path)
-        beside = paths.data_dir() / 'library.sqlite3'
-        if path is None and beside.is_file() and store.path != beside.resolve():
-            _log.warning('the history beside the program cannot be written (%s); this session uses %s',
-                         beside, store.path)
-        return store, ''
+        return _opened(path)
     except (OSError, sqlite3.Error) as error:
-        folder = Path(tempfile.mkdtemp(prefix='ytdlp-history-'))
-        atexit.register(shutil.rmtree, folder, ignore_errors=True)
-        return Library(folder / 'library.sqlite3'), msg('core.library.temporary', error=message_of(error))
+        if not _foreign(error):
+            return _temporary(error)
+        file = Path(path or paths.catalog_path()).resolve()
+        try:
+            target = _keep_aside(file)
+        except OSError as failure:
+            return _temporary(failure)      # the file stays as it is; the next start tries again
+        kept = msg('core.library.kept_aside', problem=message_of(error), target=target.name)
+        try:
+            store, _ = _opened(file)        # the same place, not catalog_path() again (data\ stays)
+            return store, kept
+        except (OSError, sqlite3.Error) as again:
+            store, _ = _temporary(again)
+            return store, msg('core.library.temporary', error=kept)
+
+
+def _archive_record(data):
+    """资料信息.json as read: a version-2 record (files and transcripts lists) without its version key,
+    its slots typed (messages.from_json).  ValueError (core.archive.not_v2) for anything else."""
+    if not (isinstance(data, dict) and data.get('version') == ARCHIVE_VERSION
+            and isinstance(data.get('files'), list) and isinstance(data.get('transcripts'), list)):
+        raise ValueError(msg('core.archive.not_v2'))
+    return messages.read_slots({key: value for key, value in data.items() if key != 'version'}, SLOTS['archive'])
 
 
 class Archive:
-    def __init__(self, root, library=None):
+    def __init__(self, root, library=None, log=None):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.library = library
+        self.log = log          # (2.0.0) gets the line of a record set aside (the log page, download.log)
 
     def prepare(self, url, context=None):
         context = context or {}
@@ -1037,17 +1022,16 @@ class Archive:
         folder.mkdir(parents=True, exist_ok=True)
         record = folder / '资料信息.json'
         try:
-            data = json.loads(paths.read_text(record))
-            if not (isinstance(data, dict) and isinstance(data.get('files'), list)
-                    and isinstance(data.get('transcripts'), list)):
-                raise ValueError('not an archive record')
-            data = messages.decode(data, 'archive')        # (1.8.0) read-modify-write (3.4)
+            data = _archive_record(json.loads(paths.read_text(record)))
         except FileNotFoundError:
             data = None
         except ValueError:
-            # Unreadable (cut off, edited by hand): kept aside as 资料信息.bad.json and rebuilt,
-            # so that the link can be archived again.  The media files in the folder stay.
-            self._set_aside(record)
+            # Unreadable (cut off, edited by hand) or not version 2 (an older version wrote it): kept
+            # aside as 资料信息.bad.json and rebuilt, so that the link can be archived again.  The media
+            # files in the folder stay.
+            target = self._set_aside(record)
+            if self.log:
+                self.log(msg('core.archive.kept_aside', target=target.name, folder=os.fspath(folder)))
             data = None
         if data is None:
             data = dict(url=url, source=source, title=context.get('title') or url,
@@ -1061,7 +1045,7 @@ class Archive:
             # (1.7.0) The labels are in the running language (zh: the 1.6.0 bytes); the file names stay (D10).
             note = i18n.t('filetext.truncated_source') if page.get('text_truncated') else ''
             for filename, body in [('网页正文.txt', page.get('text', '')), ('网页正文.md', page.get('markdown', ''))]:
-                (folder / filename).write_text(i18n.t('filetext.page_text', title=messages.show(_decoded_title(page['title'])),
+                (folder / filename).write_text(i18n.t('filetext.page_text', title=messages.show(page['title']),
                                                       url=page['url'],
                                                       note=note, body=body), encoding='utf-8-sig')
             data['page_title'] = page['title']
@@ -1089,11 +1073,11 @@ class Archive:
         folder = Path(folder).resolve()
         if not folder.is_relative_to(self.root):
             raise ValueError(msg('core.archive.outside_root'))
-        write_json(folder / '资料信息.json', messages.encode(data, 'archive'))
+        write_json(folder / '资料信息.json', dict(messages.write_slots(data, SLOTS['archive']), version=ARCHIVE_VERSION))
         # (1.7.0) The readme's labels are in the running language (zh: the 1.6.0 bytes); it is rewritten
         # on every save, so a readme of the other language is replaced the next time (I18N.md 8.8).
         (folder / '阅读说明.txt').write_text(
-            i18n.t('filetext.readme_head', title=messages.show(_decoded_title(data['title'])), url=data['url'], source=data['source'],
+            i18n.t('filetext.readme_head', title=messages.show(data['title']), url=data['url'], source=data['source'],
                    author=data.get('uploader') or i18n.t('filetext.author_unknown'))
             + data.get('description', '') + i18n.t('filetext.readme_media') + '\n'.join(data['files'])
             + i18n.t('filetext.readme_transcripts') + '\n'.join(data['transcripts']) + '\n', encoding='utf-8-sig')
@@ -1105,7 +1089,7 @@ class Archive:
         path = Path(metadata['filepath']).resolve()
         if not path.is_relative_to(folder) or not folder.is_relative_to(self.root) or not path.is_file():
             raise ValueError(msg('core.archive.media_mismatch'))
-        data = messages.decode(json.loads(paths.read_text(folder / '资料信息.json')), 'archive')
+        data = _archive_record(json.loads(paths.read_text(folder / '资料信息.json')))
         found = {key: metadata[key] for key in ('id', 'title', 'uploader', 'description', 'webpage_url', 'upload_date') if metadata.get(key) is not None}
         if isinstance(found.get('title'), str):
             found['title'] = raw(found['title'])      # (1.8.0) the media's own title is raw text (P5)
@@ -1120,7 +1104,7 @@ class Archive:
         folder, source = Path(folder).resolve(), Path(source).resolve()
         if not folder.is_relative_to(self.root) or source.suffix.lower() not in ('.txt', '.srt', '.md', '.vtt'):
             raise ValueError(msg('core.archive.transcript_type'))
-        data = messages.decode(json.loads(paths.read_text(folder / '资料信息.json')), 'archive')
+        data = _archive_record(json.loads(paths.read_text(folder / '资料信息.json')))
         target = folder / '转写稿' / safe_name(source.stem, 75)
         target = target.with_name(target.name + '_' + hashlib.sha256(source.read_bytes()).hexdigest()[:10] + source.suffix.lower())
         target.parent.mkdir(exist_ok=True)

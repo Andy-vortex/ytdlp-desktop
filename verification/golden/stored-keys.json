@@ -1,0 +1,247 @@
+{
+ "note": "S2-DESIGN.md 1.1: the keys a format-2 store may hold, with their placeholders. A persistent contract: never rename or remove a key; only add.",
+ "keys": {
+  "common.clauses": [
+   "parts"
+  ],
+  "common.unfinished": [],
+  "core.archive.cannot_set_aside": [
+   "record"
+  ],
+  "core.archive.media_mismatch": [],
+  "core.archive.outside_root": [],
+  "core.archive.transcript_outside": [],
+  "core.archive.transcript_type": [],
+  "core.archive.unwritable": [
+   "error"
+  ],
+  "core.collect.bad_address": [],
+  "core.collect.bad_proxy": [],
+  "core.collect.bad_resume": [],
+  "core.collect.bad_source": [],
+  "core.collect.ca_cache": [],
+  "core.collect.http_status": [
+   "status"
+  ],
+  "core.collect.limits": [],
+  "core.collect.needs_chrome": [],
+  "core.collect.no_match": [],
+  "core.collect.page_n": [
+   "page"
+  ],
+  "core.collect.too_large": [],
+  "core.collect.too_many_pages": [],
+  "core.collect.worker_exit": [
+   "code"
+  ],
+  "core.cookies.json": [],
+  "core.cookies.line_failed": [],
+  "core.cookies.line_failed_item": [],
+  "core.cookies.line_skipped": [],
+  "core.cookies.missing": [
+   "file"
+  ],
+  "core.cookies.not_netscape": [],
+  "core.cookies.too_large": [],
+  "core.engine.archive_info_failed": [
+   "error"
+  ],
+  "core.engine.bot_check_hint": [],
+  "core.engine.bot_check_stale": [],
+  "core.engine.cannot_start_engine": [
+   "error"
+  ],
+  "core.engine.cannot_start_link": [
+   "error"
+  ],
+  "core.engine.duplicate_merged": [
+   "url"
+  ],
+  "core.engine.error": [
+   "error"
+  ],
+  "core.engine.incompatible": [],
+  "core.engine.item_unfinished": [
+   "code"
+  ],
+  "core.engine.kept_existing": [
+   "name"
+  ],
+  "core.engine.no_collect_history": [],
+  "core.engine.other_format_source": [
+   "name"
+  ],
+  "core.engine.picture_exists": [
+   "name"
+  ],
+  "core.engine.present_skipped": [
+   "name"
+  ],
+  "core.engine.present_untagged": [
+   "count"
+  ],
+  "core.engine.rate_limited_out": [],
+  "core.engine.record_unreadable": [
+   "error"
+  ],
+  "core.engine.resume_partial": [],
+  "core.engine.subtitles_dropped": [],
+  "core.engine.unfinished_not_saved": [
+   "error"
+  ],
+  "core.engine.waiting": [
+   "reason",
+   "seconds"
+  ],
+  "core.formats.bad_id": [
+   "id"
+  ],
+  "core.formats.bad_mode": [
+   "mode"
+  ],
+  "core.library.bad_interval": [],
+  "core.library.no_job": [],
+  "core.library.temporary": [
+   "error"
+  ],
+  "core.links.bad_line": [
+   "line"
+  ],
+  "core.links.encoding": [],
+  "core.links.file_too_large": [],
+  "core.links.no_link_on_line": [
+   "line"
+  ],
+  "core.links.none": [],
+  "core.links.too_long": [
+   "length",
+   "url"
+  ],
+  "core.options.bad_resolution": [
+   "resolution"
+  ],
+  "core.options.no_output": [],
+  "core.options.not_object": [],
+  "core.options.unsupported": [],
+  "core.proxy.scheme": [],
+  "core.proxy_mask": [],
+  "core.reason.bot_check": [],
+  "core.reason.engine_error": [],
+  "core.reason.exit_code": [
+   "code"
+  ],
+  "core.reason.format": [],
+  "core.reason.http_403": [],
+  "core.reason.http_404": [],
+  "core.reason.http_410": [],
+  "core.reason.network": [],
+  "core.reason.page_403": [],
+  "core.reason.page_404": [],
+  "core.reason.page_410": [],
+  "core.reason.region": [],
+  "core.reason.stale": [],
+  "core.reason.unavailable": [],
+  "core.reason.unsupported": [],
+  "core.rename.failed": [
+   "reason"
+  ],
+  "core.rename.failed_named": [
+   "name",
+   "reason"
+  ],
+  "core.rename.locked": [
+   "name"
+  ],
+  "core.rename.too_many": [
+   "name"
+  ],
+  "core.unfinished.cannot_set_aside": [
+   "path"
+  ],
+  "core.unfinished.kept_aside": [
+   "problem",
+   "target"
+  ],
+  "core.unfinished.no_overflow_name": [
+   "path"
+  ],
+  "core.unfinished.overflow": [
+   "count",
+   "target"
+  ],
+  "core.unfinished.problem.damaged": [],
+  "core.unfinished.problem.dropped": [
+   "dropped"
+  ],
+  "core.unfinished.problem.too_large": [
+   "size"
+  ],
+  "core.unfinished.problem.unknown_format": [],
+  "core.unfinished.problem.unreadable": [],
+  "core.update.bad_hash": [],
+  "core.update.bad_host": [],
+  "core.update.bad_release": [],
+  "core.update.bad_size": [],
+  "core.update.builtin": [],
+  "core.update.checking": [],
+  "core.update.downloading": [],
+  "core.update.incompatible": [],
+  "core.update.no_exe": [],
+  "core.update.no_github": [
+   "reason"
+  ],
+  "core.update.no_sha": [],
+  "core.update.record_failed": [
+   "reason"
+  ],
+  "core.update.restore_failed": [],
+  "core.update.save_failed": [
+   "reason"
+  ],
+  "core.update.start_cannot": [],
+  "core.update.start_exit": [
+   "code"
+  ],
+  "core.update.start_failed": [
+   "reason"
+  ],
+  "core.update.start_no_version": [],
+  "core.update.start_timeout": [
+   "timeout"
+  ],
+  "core.update.testing": [],
+  "core.update.timeout": [],
+  "core.update.write_failed": [
+   "reason"
+  ],
+  "core.wait.pace": [],
+  "core.wait.pace_or_retry": [],
+  "core.wait.rate_queue": [],
+  "core.wait.rate_retry": [
+   "attempt",
+   "limit"
+  ],
+  "download.reason.blocked": [],
+  "download.reason.failed": [],
+  "download.reason.proxy": [],
+  "value.job_title.multi": [
+   "count",
+   "title"
+  ],
+  "value.job_title.subscription": [
+   "name"
+  ],
+  "value.link_kind.direct": [],
+  "value.link_kind.dynamic_request": [],
+  "value.link_kind.media": [],
+  "value.link_kind.video_page": [],
+  "value.link_kind.web": [],
+  "value.page_title.fallback": [],
+  "value.resolution.best": [],
+  "value.resolution.heights": [],
+  "value.subscription.interrupted": [],
+  "value.subscription.stopped": [],
+  "value.subscription.unfinished": [],
+  "value.subscription.untitled": []
+ }
+}

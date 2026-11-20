@@ -30,10 +30,10 @@ def main():
         report.parent.mkdir(parents=True, exist_ok=True)
         try:
             result = diagnostics()
-            # (1.7.0) What the language would be (read-only; before any --restarted-from wait).
+            # (1.7.0) What the language would be (read-only: peek never sets a damaged file aside).
             import i18n
             import settings
-            result['language'] = i18n.diagnostics(i18n.stored_choice(settings.load()))
+            result['language'] = i18n.diagnostics(i18n.stored_choice(settings.peek()))
             if arguments.smoke_url:
                 if not arguments.smoke_output:
                     raise ValueError('下载自检需要 --smoke-output 指定测试目录。')

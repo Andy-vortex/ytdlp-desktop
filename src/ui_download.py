@@ -1,7 +1,10 @@
-"""Download page of StudioApp (mixin DownloadUI; 1.6.0 WP4).
+"""Download page of StudioApp (mixin DownloadUI; 1.6.0 WP4, 2.0.0 S4 layout).
 
-Composer card (links, format, destination, start) over a task card (state, metrics, notices,
-progress, task rows).  Never import studio here at module level: studio imports this module.
+One sheet, no cards: the link box (count chip and '⋯' in its corner), the link note, the clipboard
+notice, the option row and the folder / start row; below them the task area (notice, a two-line task
+header, the progress bar, the task rows, or the empty state).  Every action has a visible control:
+link_menu, task_menu and the selected row's row_menu; right clicks mirror them (*_menu_items).
+Never import studio here at module level: studio imports this module.
 """
 from __future__ import annotations
 
@@ -10,7 +13,6 @@ import hashlib
 import math
 import os
 from pathlib import Path
-import re
 import threading
 import time
 import tkinter as tk
@@ -28,18 +30,12 @@ import ui_theme
 import unfinished as unfinished_list
 import urls as links
 from progress import SmoothProgressBar
-from engine import APP_DIR, RESOLUTIONS, LinkTooLong, Options, Runner, build_command
+from engine import RESOLUTIONS, LinkTooLong, Options, Runner, build_command
+from paths import APP_DIR
 from library_ui import require_job
 
-# 1.5.1 colour names, now ui_theme tokens ((light, dark) pairs); studio re-exports them.
-BG, WHITE, INK, MUTED = ui_theme.BG, ui_theme.SURFACE, ui_theme.INK, ui_theme.MUTED
-BLUE, BLUE_LIGHT, LINE = ui_theme.ACCENT, ui_theme.ACCENT_SOFT, ui_theme.LINE
-SIDE, GREEN, ORANGE = ui_theme.SIDE, ui_theme.OK, ui_theme.WARN
 # Event kinds the download history records (library.download_event).
 HISTORY_KINDS = ('item', 'title', 'media', 'file', 'queued', 'item_done', 'done')
-# The seven preset labels in MODES order (index-based callers such as library_ui keep working).
-FORMATS = [preset.label for preset in formats.PRESETS]
-TITLE = 'YT-DLP 下载器'
 
 ROW_PITCH = 56                  # logical px per task row (52 + 2 x 2)
 ROW_CHUNK = 10                  # at most this many rows built per step of the build queue
@@ -56,65 +52,30 @@ LIST_HANDS_OFF = 10             # s after a hand scroll of the task list in whic
 BOT_RETRY_DELAYS = (1800, 900, 900)
 CONVERTING = ('[ExtractAudio]', '[Merger]', '[VideoRemuxer]', '[Metadata]', '[ThumbnailsConvertor]',
               '[EmbedThumbnail]', '[EmbedSubtitle]', '[MoveFiles]')
-# state -> (icon, tone, chip text)
+# state -> (icon, tone); the chip text is i18n.label('row_state', state)
 STATE_LOOK = {
-    'waiting': (ui_theme.ICON_CLOCK, 'idle', '等待中'),
-    'active': (ui_theme.ICON_DOWNLOAD, 'info', '解析中'),
-    'done': (ui_theme.ICON_DONE, 'ok', '已完成'),
-    'failed': (ui_theme.ICON_ERROR, 'danger', '失败'),
-    'stopped': (ui_theme.ICON_STOP, 'idle', '已停止'),
-    'unstarted': (ui_theme.ICON_PENDING, 'idle', '未开始'),
-    'blocked': (ui_theme.ICON_CLOCK, 'warn', '已暂缓'),
-    'skipped': (ui_theme.ICON_SKIP, 'idle', '已下载过'),
-    'unfinished': (ui_theme.ICON_ERROR, 'warn', '未完成'),
+    'waiting': (ui_theme.ICON_CLOCK, 'idle'),
+    'active': (ui_theme.ICON_DOWNLOAD, 'info'),
+    'done': (ui_theme.ICON_DONE, 'ok'),
+    'failed': (ui_theme.ICON_ERROR, 'danger'),
+    'stopped': (ui_theme.ICON_STOP, 'idle'),
+    'unstarted': (ui_theme.ICON_PENDING, 'idle'),
+    'blocked': (ui_theme.ICON_CLOCK, 'warn'),
+    'skipped': (ui_theme.ICON_SKIP, 'idle'),
+    'unfinished': (ui_theme.ICON_ERROR, 'warn'),
 }
 RETRYABLE = ('failed', 'stopped', 'unstarted', 'blocked', 'unfinished')
 REASON_STATES = ('failed', 'blocked', 'unfinished')      # rows whose menu offers 查看原因
-# (final-fix-ui, polish-function-2) A row of the last job whose entry 清除未完成 removed keeps its
-# state (its menu still offers 查看原因 and 重试此条) and gets the flag 'cleared', this chip and
-# this detail; it no longer counts as unfinished.
-CLEARED_CHIP = '已移出'
-CLEARED_DETAIL = '已从未完成列表移除'
-FINISHED_UNFINISHED = '未完成的链接已保留，可点“重试未完成”，或右键单条重试。'
-CLEARED_METRICS = '未完成记录已清除；已下载的文件不受影响，右键单条仍可重试。'
-# The header of a job that left links unfinished ('任务结束 · 1 条成功，1 条未完成'), and what
-# 清除未完成 puts in place of its unfinished part (1.6.0: '，未完成记录已清除'; 1.7.0: nothing).
-FINISHED_PREFIX = '任务结束 · '
-# (1.7.0 U5) Nothing: the header becomes '任务结束 · 1 条成功', which fits at 1000x740; the metrics
-# line below it says 未完成记录已清除 in full (CLEARED_METRICS).
-CLEARED_TITLE_SUFFIX = ''
-REASON_WORDS = {'failed': '上次失败', 'stopped': '已停止', 'unstarted': '未开始', 'blocked': 'YouTube 验证'}
-HINT_DEFAULT = 'Ctrl+V 粘贴 · Ctrl+Enter 开始'
-PLACEHOLDER = '在这里粘贴视频或音频链接，每行一条'
-METRICS_IDLE = '添加链接后，点击开始下载'
-# The title above it already says "YouTube 暂时拒绝了当前网络"; the metrics line does not repeat it.
-BOT_TEXT = '通常约 30 分钟后自行恢复，链接已保留；也可在“偏好设置 → 网络”选择 cookies。'
-BLOCKED_DETAIL = '等 YouTube 验证解除后重试'
-# While another activity holds the window: (task title, metrics line, stop button) on the download page.
-# and the placeholder of the dimmed link box.
-FOREIGN_TEXT = {'update': ('正在更新下载引擎…', '更新结束后即可添加链接、开始下载；进度见“偏好设置 → 下载引擎”。', '停止更新',
-                           '下载引擎更新中，结束后可在这里粘贴链接'),
-                'collect': ('正在网页采集…', '采集结束后即可添加链接、开始下载；进度见“网页采集”。', '停止采集',
-                            '网页采集中，结束后可在这里粘贴链接')}
-BOT_TEXT_COOKIES = 'YouTube 仍要求验证：cookies 可能已过期。可稍后重试，或在“偏好设置 → 网络”重新选择 cookies。'
 # (polish, ui-daily-flow-2) A network failure of a job that went through a proxy.  (1.8.0, D-F46) A
 # message: the history stores it with its key; its value is the 1.7.0 text.
 PROXY_REASON = messages.msg('download.reason.proxy')
-# (polish, ui-daily-flow-4) A job whose links were all downloaded before.
-SKIPPED_TEXT = '这些链接以前下载过，文件仍在；右键可“仍然下载”。'
-# (1.7.0, I18N.md 8.1) The constants above keep their Chinese values (tests and other modules read
-# them); what the page shows comes from the catalogs.  The keys of REASON_WORDS and FOREIGN_TEXT:
+# The keys of the reason a row shows (download.reason.* or a chip) and of the task title while another
+# activity holds the window (the link box is dimmed, the title says who runs).
 REASON_KEYS = {'failed': 'download.reason.failed', 'stopped': 'download.chip.stopped',
                'unstarted': 'download.chip.unstarted', 'blocked': 'download.reason.blocked'}
-FOREIGN_KEYS = {'update': ('download.foreign.update.title', 'download.foreign.update.metrics',
-                           'download.foreign.update.stop', 'download.foreign.update.placeholder'),
-                'collect': ('download.foreign.collect.title', 'download.foreign.collect.metrics',
-                            'download.foreign.collect.stop', 'download.foreign.collect.placeholder')}
-# (I18N.md 10.5) The title of the task header keeps at least this many logical px; the stats line
-# beside it drops its unfinished part when it would leave less.  STATS_GAPS: the padding of the
-# stats label and the three buttons right of it.
-TITLE_MIN = 160
-STATS_GAPS = 40
+FOREIGN_KEYS = {'update': 'download.foreign.update.title', 'collect': 'download.foreign.collect.title'}
+# Notices of the task area shown in the warning tone (the others: the idle tone).
+WARN_NOTICES = ('bot', 'bot_end', 'settings', 'bot_recent')
 # The start button's icon (ui_theme.icon's default size) and the spacing CTkButton puts between
 # an image and its text (logical px).
 START_ICON = 16
@@ -175,16 +136,6 @@ def history_value(kind, value, proxied):
     return value
 
 
-def text_button_width(parent, text, size='md'):
-    """The logical width an AppButton needs to show ``text`` in full (ui_theme.fitted_width's
-    measure: the text, the label's 1 px border on each side and the corner columns), without
-    fitted_width's 72 px floor."""
-    scale = ui_theme._scaling(parent) or 1.0
-    measure = ui_theme._measure_font(parent, ui_theme.font('caption' if size == 'sm' else 'body'))
-    needed = measure.measure(text) + 2 + 2 * round(ui_theme.RADIUS * scale)
-    return int(-(-needed // scale))
-
-
 def synthetic_done():
     """The terminal event the UI makes up for a download worker that ended without one (WP4.md section C)."""
     return {'success': 0, 'failed': 0, 'files': [], 'cancelled': True, 'failed_urls': [], 'pending_urls': []}
@@ -201,199 +152,160 @@ def _cancel(widget, job):
 class DownloadUI:
     # ================================================================ page
     def build_download_page(self):
-        page = self.page('download', i18n.t('nav.download'), i18n.t('download.subtitle'), max_width=ui_theme.PAGE_MAX)
+        page = self.page('download', i18n.t('nav.download'), max_width=ui_theme.PAGE_MAX)
         page.grid_rowconfigure(2, weight=1)
-        pad = ui_theme.CARD_PAD
         self.row_pool = []
-        self.row_menu = None
         self.link_after = self.hint_after = self.clip_after = self.bot_after = self.notice_after = None
         self.notice_kind = None
-        self.undo_count = 0                 # links the undo notice can put back
         self.list_scrolled_at = 0.0        # when the owner last scrolled the task list by hand
         self.follow_after = None
         self.foreign_activity = None        # 'update' / 'collect' while that activity holds the download page
         self.foreign_saved = None
-        self.job_ended = False              # the task rows are those of a job that has ended (footer text)
-        self.metrics_base = ''              # metrics text of the running item before the active title is added
-        self.job_summary = None             # (success, unfinished) of the job that ended last (I18N.md 8.7)
-        # The stats line: (full text, its shorter form or forms): the running stats without the unfinished
-        # part, or the shorter forms of a finished job's stats (final fix round 1, ENV-1); None: none.
-        self.stats_texts = ('', None)
-        # (final fix round 3, ENV3-1) A finished job's stats form is chosen by the title (English only).
-        self.stats_title_first = False
-        self.stats_after = None
+        self.job_ran = False                # a download ran in this session (the progress bar has a value)
+        self.link_total = 0                 # links in the box (links_changed)
+        self.note_text = ('', 'warn')       # the lasting note of the box's links (links_changed)
+        self.hint_note = None               # (text, tone) of a one-off feedback (set_hint), shown first
+        self.retry_count = None             # the unfinished count refresh_failed_button showed last
+        self.row_menu_at = None             # the row frame the row '⋯' sits in
         self.clip_text = self.clip_digest = ''
-        self._placeholder_shown = False
-        # ------------------------------------------------ composer card
-        composer = self.card(page)
-        composer.grid(row=1, column=0, sticky='ew', pady=(0, ui_theme.GAP))
+        # ------------------------------------------------ input: links, how, where and start
+        composer = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
+        composer.grid(row=1, column=0, sticky='ew')
         composer.grid_columnconfigure(0, weight=1)
         self.composer = composer
-        top = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
-        top.grid(row=0, column=0, sticky='ew', padx=pad, pady=(12, 8))
-        top.grid_columnconfigure(2, weight=1)
-        ui_theme.label(top, i18n.t('download.heading'), role='heading', anchor='w').grid(row=0, column=0, sticky='w')
-        self.link_count = ui_theme.chip(top, i18n.t('download.link_count', count=0), 'info')
-        self.link_count.grid(row=0, column=1, sticky='w', padx=(10, 0))
-        self.link_hint = ui_theme.label(top, '', role='caption', text_color=ui_theme.MUTED, anchor='e')
-        self.link_hint.grid(row=0, column=2, sticky='ew', padx=(12, 4))
-        ui_theme.fit(self.link_hint, i18n.t('download.hint.default'))
-        # (1.7.0, I18N.md 10.1) Fixed widths grow to fit their label: max(<1.6.0 width>, fitted width).
-        paste = ui_theme.button(top, i18n.t('download.paste'), self.paste, kind='ghost', size='sm',
-                                width=self._fitted(top, 60, 'download.paste', size='sm'))
-        paste.grid(row=0, column=3, padx=(4, 0))
-        importer = ui_theme.button(top, i18n.t('download.import'), self.import_txt, kind='ghost', size='sm',
-                                   width=self._fitted(top, 60, 'download.import', size='sm'))
-        importer.grid(row=0, column=4, padx=(4, 0))
-        clear = ui_theme.button(top, i18n.t('download.clear_box'), self.clear_links, kind='ghost', size='sm',
-                                width=self._fitted(top, 60, 'download.clear_box', size='sm'))
-        clear.grid(row=0, column=5, padx=(4, 0))
-        self.urls = ui_theme.textbox(composer, height=72, wrap='none')
-        self.urls.grid(row=1, column=0, sticky='ew', padx=pad)
-        self.link_placeholder = ui_theme.label(self.urls, i18n.t('download.placeholder'), text_color=ui_theme.FAINT,
-                                               fg_color=ui_theme.SURFACE_ALT, anchor='w', cursor='xterm')
-        self.link_placeholder.bind('<Button-1>', self._placeholder_clicked)
+        box = ctk.CTkFrame(composer, fg_color=ui_theme.SURFACE_ALT, border_width=1, border_color=ui_theme.LINE,
+                           corner_radius=ui_theme.RADIUS)
+        box.grid(row=0, column=0, sticky='ew')
+        box.grid_columnconfigure(0, weight=1)
+        self.link_box = box
+        self.urls = ui_theme.textbox(box, placeholder=i18n.t('download.placeholder'), undo=True, height=72,
+                                     wrap='none', fg_color=ui_theme.SURFACE_ALT, border_width=0, corner_radius=6)
+        self.urls.grid(row=0, column=0, sticky='nsew', padx=(2, 0), pady=2)
+        tools = ctk.CTkFrame(box, fg_color='transparent', corner_radius=0)
+        tools.grid(row=0, column=1, sticky='ne', padx=(0, ui_theme.INLINE), pady=ui_theme.INLINE)
+        self.link_tools = tools
+        self.link_count = ui_theme.chip(tools, '0', 'info', width=28)
+        self.link_count.grid(row=0, column=0, padx=(0, 4))
+        self.link_count.grid_remove()
+        self.link_menu = ui_theme.menu_button(tools, self.link_menu_items, size='sm')
+        self.link_menu.grid(row=0, column=1)
         self.urls.bind('<KeyRelease>', self._links_typed)
-        self.urls.bind('<<Modified>>', self._links_modified)
         self.urls.bind('<<Paste>>', self.on_box_paste)
         self.urls.bind('<Control-Return>', self._start_from_box)
-        self.urls.bind('<Button-3>', self._box_menu)
-        self.link_note = ui_theme.label(composer, '', role='caption', text_color=ui_theme.ACCENT_TEXT, anchor='w')
-        self.link_note.grid(row=2, column=0, sticky='ew', padx=pad, pady=(6, 0))
+        # Tk's Text binds Ctrl+O to "open a line": the box takes it first for 导入 TXT….
+        for sequence in ('<Control-o>', '<Control-O>'):
+            self.urls.bind(sequence, self._import_from_box)
+        for widget in (self.urls, box, tools):
+            ui_theme.bind_menu(widget, self.link_menu_items)
+        self.link_note = ui_theme.label(composer, '', role='caption', text_color=ui_theme.ACCENT_TEXT, anchor='w',
+                                        justify='left')
+        self.link_note.grid(row=1, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
+        ui_theme.wrap_to_width(self.link_note)
         self.link_note.grid_remove()
-        self.clip_bar = ctk.CTkFrame(composer, fg_color=ui_theme.SURFACE_ALT, corner_radius=8)
-        self.clip_bar.grid(row=3, column=0, sticky='ew', padx=pad, pady=(6, 0))
-        self.clip_bar.grid_columnconfigure(0, weight=1)
-        self.clip_label = ui_theme.label(self.clip_bar, '', role='caption', anchor='w')
-        self.clip_label.grid(row=0, column=0, sticky='ew', padx=(12, 8), pady=4)
-        ui_theme.button(self.clip_bar, i18n.t('download.clip.add'), self.accept_clipboard, kind='ghost', size='sm',
-                        width=self._fitted(self.clip_bar, 60, 'download.clip.add', size='sm')).grid(row=0, column=1,
-                                                                                                    pady=4)
-        ui_theme.button(self.clip_bar, i18n.t('download.clip.ignore'), self.ignore_clipboard, kind='ghost', size='sm',
-                        width=self._fitted(self.clip_bar, 60, 'download.clip.ignore', size='sm')).grid(
-                            row=0, column=2, padx=(4, 8), pady=4)
-        self.clip_bar.grid_remove()
-        choices = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
-        choices.grid(row=4, column=0, sticky='ew', padx=pad, pady=(10, 0))
-        choices.grid_columnconfigure(4, weight=1)
-        # (1.7.0, I18N.md 7) The menus show labels and keep the stored values: self.format holds the zh
-        # Preset.label (formats.by_label reads it), self.resolution the stored resolution.
-        values = [formats.by_id(i).label for i in formats.MENU_ORDER]
-        labels = [i18n.label('format', value) for value in values]
-        self.format_menu = ui_theme.option_menu(choices, values, labels=labels, variable=self.format,
-                                                command=self.on_format,
-                                                width=max(250, ui_theme.menu_width(choices, labels)))
+        self.clip_bar = ui_theme.notice_bar(composer)
+        self.clip_bar.grid(row=2, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
+        self.clip_bar.hide()
+        options = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
+        options.grid(row=3, column=0, sticky='ew', pady=(ui_theme.GAP, 0))
+        options.grid_columnconfigure(4, weight=1)
+        # The menus show labels and keep the values: self.mode holds the preset id, self.resolution the
+        # stored resolution.
+        labels = [i18n.t('format.' + i) for i in formats.MENU_ORDER]
+        self.format_menu = ui_theme.option_menu(options, list(formats.MENU_ORDER), labels=labels, variable=self.mode,
+                                                command=self.on_format, width=ui_theme.menu_width(options, labels))
         self.format_menu.grid(row=0, column=0, sticky='w')
         labels = [i18n.label('resolution', value) for value in RESOLUTIONS]
-        self.quality_menu = ui_theme.option_menu(choices, list(RESOLUTIONS), labels=labels, variable=self.resolution,
-                                                 width=max(120, ui_theme.menu_width(choices, labels)))
-        self.quality_menu.grid(row=0, column=1, sticky='w', padx=(8, 0))
-        self.subtitle_check = ui_theme.checkbox(choices, i18n.t('download.subtitles'), variable=self.subtitles)
-        self.subtitle_check.grid(row=0, column=2, sticky='w', padx=(16, 0))
-        playlist = ui_theme.checkbox(choices, i18n.t('download.playlist'), variable=self.playlist)
-        playlist.grid(row=0, column=3, sticky='w', padx=(16, 0))
-        destination = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
-        destination.grid(row=5, column=0, sticky='ew', padx=pad, pady=(8, 14))
-        destination.grid_columnconfigure(1, weight=1)
-        self.destination_label = ui_theme.label(destination, i18n.t('download.save_to'), role='caption',
-                                                text_color=ui_theme.MUTED)
-        self.destination_label.grid(row=0, column=0, padx=(0, 8))
-        self.output_entry = ui_theme.entry(destination, textvariable=self.output)
-        self.output_entry.grid(row=0, column=1, sticky='ew')
-        browse = ui_theme.button(destination, i18n.t('download.change'), self.browse,
-                                 width=self._fitted(destination, 60, 'download.change'))
-        browse.grid(row=0, column=2, padx=(8, 0))
-        self.open_output_button = ui_theme.button(destination, i18n.t('download.open_folder'), self.open_folder,
-                                                  width=self._fitted(destination, 92, 'download.open_folder'))
-        self.open_output_button.grid(row=0, column=3, padx=(8, 0))
+        self.quality_menu = ui_theme.option_menu(options, list(RESOLUTIONS), labels=labels, variable=self.resolution,
+                                                 width=ui_theme.menu_width(options, labels))
+        self.quality_menu.grid(row=0, column=1, sticky='w', padx=(ui_theme.INLINE, 0))
+        self.subtitle_check = ui_theme.checkbox(options, i18n.t('download.subtitles'), variable=self.subtitles)
+        self.subtitle_check.grid(row=0, column=2, sticky='w', padx=(ui_theme.PAD, 0))
+        playlist = ui_theme.checkbox(options, i18n.t('download.playlist'), variable=self.playlist)
+        playlist.grid(row=0, column=3, sticky='w', padx=(ui_theme.PAD, 0))
+        actions = ctk.CTkFrame(composer, fg_color='transparent', corner_radius=0)
+        actions.grid(row=4, column=0, sticky='ew', pady=(ui_theme.GAP, 0))
+        actions.grid_columnconfigure(2, weight=1)
+        # The folder button is the way to change the folder (the system dialog); with archived downloads it
+        # shows the archive folder and leads to Settings, where that folder is chosen.
+        self.output_button = ui_theme.path_button(actions, self.browse)
+        self.output_button.grid(row=0, column=0, sticky='w')
+        text = i18n.t('common.open_folder')
+        self.open_output_button = ui_theme.button(actions, text, self.open_folder,
+                                                  width=ui_theme.fitted_width(actions, text))
+        self.open_output_button.grid(row=0, column=1, sticky='w', padx=(ui_theme.INLINE, 0))
         # The start button fits the wider of its two labels plus its icon: it never changes width
-        # when a job starts (I18N.md 10.1).
+        # when a job starts (I18N.md 10.1).  refresh_start sets its label, state and kind.
         icon = ui_theme.icon(ui_theme.ICON_DOWNLOAD, 'white')
         extra = START_ICON + IMAGE_SPACING if icon is not None else 0
-        self.start_button = ui_theme.button(destination, i18n.t('download.start'), self.start, kind='primary',
-                                            width=self._fitted(destination, 132, 'download.start', 'download.start.queue',
-                                                               extra=extra),
-                                            image=icon, compound='left')
-        self.start_button.grid(row=0, column=4, padx=(16, 0))
-        self.controls += [self.format_menu, self.subtitle_check, playlist, self.output_entry, browse]
-        self.input_controls += [self.urls, paste, importer, clear, self.start_button]
-        # ------------------------------------------------ task card
-        tasks = self.card(page)
-        tasks.grid(row=2, column=0, sticky='nsew')
-        tasks.grid_columnconfigure(0, weight=1)
-        tasks.grid_rowconfigure(3, weight=1)
-        self.task_card = tasks
-        header = ctk.CTkFrame(tasks, fg_color='transparent', corner_radius=0)
-        header.grid(row=0, column=0, sticky='ew', padx=pad, pady=(12, 0))
+        width = max(ui_theme.fitted_width(actions, i18n.t(key)) for key in ('download.start', 'download.start.queue'))
+        self.start_button = ui_theme.button(actions, i18n.t('download.start'), self.start, kind='primary',
+                                            width=width + extra, image=icon, compound='left', state='disabled')
+        self.start_button.grid(row=0, column=3, sticky='e')
+        self.controls += [self.format_menu, self.subtitle_check, playlist, self.output_button]
+        # ------------------------------------------------ task area
+        area = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
+        area.grid(row=2, column=0, sticky='nsew', pady=(ui_theme.SECTION, 0))
+        area.grid_columnconfigure(0, weight=1)
+        area.grid_rowconfigure(3, weight=1)
+        self.task_area = area
+        self.notice_bar = ui_theme.notice_bar(area)
+        self.notice_bar.grid(row=0, column=0, sticky='ew', pady=(0, ui_theme.GAP))
+        self.notice_bar.hide()
+        header = ctk.CTkFrame(area, fg_color='transparent', corner_radius=0)
+        header.grid(row=1, column=0, sticky='ew')
         header.grid_columnconfigure(0, weight=1)
         self.task_header = header
+        # Line 1: what is going on (the whole width); line 2: how far / why, and what to do next.  Without a
+        # metrics line the buttons sit at the right end of line 1 (place_task_actions).
         self.current_title = ui_theme.label(header, '', role='heading', anchor='w')
-        self.current_title.grid(row=0, column=0, sticky='ew')
-        ui_theme.fit(self.current_title, i18n.t('download.title.ready'))
-        # (final fix round 3, ENV3-1) While a finished job's stats form depends on the title (English),
-        # a new title text measures the room again (ui_theme.fit's configure, wrapped once more).
-        fitted_configure = self.current_title.configure
-
-        def configure_title(require_redraw=False, **kwargs):
-            fitted_configure(require_redraw=require_redraw, **kwargs)
-            if 'text' in kwargs and getattr(self, 'stats_title_first', False):
-                self._stats_resized()
-        self.current_title.configure = configure_title
-        self.queue_stats =ui_theme.label(header, i18n.t('download.stats.none'), role='caption',
-                                          text_color=ui_theme.MUTED)
-        self.queue_stats.grid(row=0, column=1, padx=(12, 0))
-        self.retry_button = ui_theme.button(header, i18n.t('download.retry_unfinished'), lambda: self.retry_failed(),
-                                            state='disabled')
-        self.retry_button.grid(row=0, column=2, padx=(12, 0))
-        self.clear_unfinished_button = ui_theme.button(header, i18n.t('download.clear_unfinished'),
-                                                       self.clear_unfinished, kind='ghost', size='sm', state='disabled')
-        self.clear_unfinished_button.grid(row=0, column=3, padx=(8, 0))
-        self.stop_button = ui_theme.button(header, i18n.t('common.stop'), self.stop, kind='danger',
-                                           width=self._fitted(header, 64, 'common.stop'), state='disabled')
-        self.stop_button.grid(row=0, column=4, padx=(8, 0))
+        self.current_title.grid(row=0, column=0, columnspan=4, sticky='ew')
+        ui_theme.fit(self.current_title, '')
         self.metrics = ui_theme.label(header, '', role='caption', text_color=ui_theme.MUTED, anchor='w',
                                       height=ui_theme.LABEL_H['caption'])
-        self.metrics.grid(row=1, column=0, columnspan=5, sticky='ew')
-        ui_theme.fit(self.metrics, i18n.t('download.metrics.idle'))
-        # (I18N.md 10.5) The room of the stats line is measured again when the header or one of the
-        # buttons beside it (重试未完成 (N), the stop button's label) changes width.
-        for widget in (header, self.retry_button, self.clear_unfinished_button, self.stop_button):
-            tk.Misc.bind(widget, '<Configure>', self._stats_resized, add='+')
-        self.notice_bar = ctk.CTkFrame(tasks, fg_color=ui_theme.SURFACE_ALT, corner_radius=8)
-        self.notice_bar.grid(row=1, column=0, sticky='ew', padx=pad, pady=(8, 0))
-        self.notice_bar.grid_columnconfigure(0, weight=1)
-        self.notice_text = ui_theme.label(self.notice_bar, '', role='caption', anchor='w')
-        self.notice_text.grid(row=0, column=0, sticky='ew', padx=(12, 8), pady=4)
-        self.notice_buttons = [ui_theme.button(self.notice_bar, '', None, kind='ghost', size='sm') for _ in range(2)]
-        for column, button in enumerate(self.notice_buttons, 1):
-            button.grid(row=0, column=column, padx=(0, 8 if column == 2 else 4), pady=4)
-        self.notice_bar.grid_remove()
-        self.progress = SmoothProgressBar(tasks, height=6)
-        self.progress.grid(row=2, column=0, sticky='ew', padx=pad, pady=8)
+        self.metrics.grid(row=1, column=0, sticky='ew')
+        ui_theme.fit(self.metrics, '')
+        self.actions_inline = None          # the buttons are on the title's line (place_task_actions)
+        self.retry_button = ui_theme.button(header, i18n.t('download.retry_unfinished_n', count=0),
+                                            lambda: self.retry_failed(), state='disabled')
+        self.retry_button.grid(row=1, column=1, padx=(ui_theme.INLINE, 0))
+        self.retry_button.grid_remove()
+        self.task_menu = ui_theme.menu_button(header, self.task_menu_items)
+        self.task_menu.grid(row=1, column=2, padx=(ui_theme.INLINE, 0))
+        self.task_menu.grid_remove()
+        text = i18n.t('common.stop')
+        self.stop_button = ui_theme.button(header, text, self.stop, kind='danger',
+                                           width=ui_theme.fitted_width(header, text), state='disabled')
+        self.stop_button.grid(row=1, column=3, padx=(ui_theme.PAD, 0))
+        self.stop_button.grid_remove()
+        self.progress = SmoothProgressBar(area, height=6, surface=ui_theme.SURFACE)
+        self.progress.grid(row=2, column=0, sticky='ew', pady=(ui_theme.INLINE, 0))
         self.progress.set(0, immediate=True)
-        self.task_list = ui_theme.scroll_area(tasks, height=100)
-        self.task_list.grid(row=3, column=0, sticky='nsew', padx=8, pady=(0, 8))
+        self.task_list = ui_theme.scroll_area(area, height=100)
+        self.task_list.grid(row=3, column=0, sticky='nsew', pady=(ui_theme.GAP, 0))
         self.task_list.grid_columnconfigure(0, weight=1)
-        self.empty = ui_theme.empty_state(tasks, i18n.t('download.empty'), ui_theme.ICON_DOWNLOAD)
-        self.empty.grid(row=3, column=0, sticky='nsew', padx=8, pady=(0, 8))
+        # Empty: one short line and the next step (its button is in input_controls: grey while another
+        # activity holds the window).
+        self.empty = ui_theme.empty_state(area, i18n.t('download.empty'), ui_theme.ICON_DOWNLOAD,
+                                          action=(i18n.t('download.paste'), self.paste))
+        self.empty.grid(row=1, column=0, rowspan=3, sticky='nsew')
+        self.input_controls += [self.urls, self.empty.action_button]
         self.row_footer = ui_theme.label(self.task_list, '', role='caption', text_color=ui_theme.MUTED, anchor='w')
+        # The '⋯' of the selected row (one for the whole list, laid into that row; row_menu_items).
+        self.row_menu = ui_theme.menu_button(self.task_list, lambda: self.row_menu_items(self.selected_row), size='sm')
+        self.row_menu.configure(fg_color=ui_theme.ROW, bg_color=ui_theme.ROW)
+        for widget in (self.task_header, self.progress, self.task_list):
+            widget.grid_remove()
         for sequence in ('<MouseWheel>', '<B1-Motion>'):
             self.bind(sequence, self._list_touched, add='+')
+        self.place_task_actions()
         self.bind_download_keys()
         self.playlist.trace_add('write', lambda *_: self.links_changed())
-
-    @staticmethod
-    def _fitted(parent, width, *keys, size='md', extra=0):
-        """(1.7.0, I18N.md 10.1) max(``width``, the width the widest of the ``keys``' texts needs
-        on an AppButton, plus ``extra`` logical px for an image).  Unlike ui_theme.fitted_width
-        there is no 72 px floor: a 1.6.0 width below 72 whose label fits stays as it was."""
-        return max([width] + [text_button_width(parent, i18n.t(key), size) + extra for key in keys])
+        for variable in (self.output, self.archive_root):
+            variable.trace_add('write', lambda *_: self.refresh_destination())
 
     # ================================================================ composer
     def on_format(self, _value=None):
-        preset = formats.by_label(self.format.get())
-        if self.mode.get() != preset.mode:
-            self.mode.set(preset.mode)
+        preset = formats.by_id(self.mode.get())
         video = preset.kind == 'video'
         state = 'normal' if video and not self.busy else 'disabled'
         # (final fix round 1, polish-function-1) set_busy calls this on every busy switch: a widget is
@@ -419,31 +331,18 @@ class DownloadUI:
     def box_text(self):
         return self.urls.get('1.0', 'end-1c')
 
-    def _placeholder_clicked(self, _event=None):
-        self.urls.focus_set()
-        return 'break'
+    def links_usable(self):
+        """Links can be added: idle, or a download runs (not while a collection or an engine update holds it)."""
+        return not (self.busy and self.operation != 'download')
 
-    def sync_placeholder(self):
-        """The placeholder stays while the box is empty, focused or not (the box gets the focus at launch)."""
+    def _undo_mark(self):
+        """One undo step per change the program makes to the box (Ctrl+Z puts back one paste or one 清空)."""
         try:
-            empty = not self.box_text()
-            if empty and not self._placeholder_shown:
-                self.link_placeholder.place(x=10, y=6)
-            elif not empty and self._placeholder_shown:
-                self.link_placeholder.place_forget()
-            self._placeholder_shown = empty
+            self.urls.edit_separator()
         except tk.TclError:
             pass
-
-    def _links_modified(self, _event=None):
-        try:
-            self.urls.edit_modified(False)
-        except tk.TclError:
-            pass
-        self.sync_placeholder()
 
     def _links_typed(self, _event=None):
-        self.sync_placeholder()
         _cancel(self, self.link_after)
         self.link_after = self.after(150, self._links_debounced)
 
@@ -451,15 +350,22 @@ class DownloadUI:
         self.link_after = None
         self.links_changed()
 
+    def box_links(self):
+        """The links the box holds now (as 开始下载 would take them)."""
+        return links.normalize(links.extract_urls(self.box_text()), self.playlist.get()).urls
+
     def links_changed(self):
         """Count the links in the box and say what happens to playlists, mixes and duplicates.  Never raises."""
         try:
-            self.sync_placeholder()
+            self.urls.sync_placeholder()
             playlist = self.playlist.get()
             result = links.normalize(links.extract_urls(self.box_text()), playlist)
-            self.link_count.set(i18n.t('download.link_count', count=len(result.urls)))
+            self.link_total = len(result.urls)
+            self.link_count.set(str(self.link_total))
+            ui_theme.show(self.link_count, self.link_total > 0)
+            self.show_paste_action()
             kinds = result.kinds
-            note = ''
+            note, tone = '', 'warn'
             if result.dropped_lists and not playlist:
                 note = i18n.t('download.note.lists_dropped', count=result.dropped_lists)
             elif playlist and kinds.get('mix'):
@@ -471,22 +377,43 @@ class DownloadUI:
             elif kinds.get('channel'):
                 note = i18n.t('download.note.channel')
             elif result.duplicates:
-                note = i18n.t('download.note.duplicates', count=result.duplicates)
-            ui_theme.fit(self.link_note, note)
-            if note:
-                self.link_note.grid()
-            else:
-                self.link_note.grid_remove()
+                note, tone = i18n.t('download.note.duplicates', count=result.duplicates), 'info'
+            self.note_text = (note, tone)
+            self._show_note()
+            self.refresh_start()
         except Exception:
             applog.get('ui').exception('links_changed failed')
 
-    def set_hint(self, text):
-        default = '' if getattr(self, 'foreign_activity', None) else i18n.t('download.hint.default')
-        ui_theme.fit(self.link_hint, text or default)
+    def show_paste_action(self):
+        """(final polish) 粘贴 under the empty state only while the link box holds no link: with links in it the
+        next step is 开始下载, and the empty state keeps only its icon and sentence."""
+        button = getattr(getattr(self, 'empty', None), 'action_button', None)
+        if button is None:          # the box is built before the task area
+            return
+        wanted = not self.link_total
+        if wanted and not button.winfo_manager():
+            button.pack(pady=(ui_theme.GAP, 0))
+        elif not wanted and button.winfo_manager():
+            button.pack_forget()
+
+    def _show_note(self):
+        """The line under the box: a one-off feedback while it lasts, else the note of the links (not while
+        another activity holds the dimmed box), else nothing."""
+        text, tone = self.hint_note or (('', 'warn') if self.foreign_activity else self.note_text)
+        color = ui_theme.WARN if tone == 'warn' else ui_theme.ACCENT_TEXT
+        if text and (self.link_note.cget('text') != text or self.link_note.cget('text_color') != color):
+            self.link_note.configure(text=text, text_color=color)
+        ui_theme.show(self.link_note, bool(text))
+
+    def set_hint(self, text, tone='info', timeout=8000):
+        """A one-off feedback under the box (``tone`` 'info' or 'warn'), gone after ``timeout`` ms (None:
+        until the next one); '' clears it.  A reason is wrapped, never cut."""
         _cancel(self, self.hint_after)
         self.hint_after = None
-        if text and text != default:
-            self.hint_after = self.after(8000, lambda: self.set_hint(''))
+        self.hint_note = (text, tone) if text else None
+        if text and timeout:
+            self.hint_after = self.after(timeout, lambda: self.set_hint(''))
+        self._show_note()
 
     def box_keys(self):
         playlist = self.playlist.get()
@@ -494,8 +421,8 @@ class DownloadUI:
 
     def add_links(self, text, source='paste'):
         """Append the links found in ``text`` that are not in the box yet; returns how many were added."""
-        if self.busy and self.operation != 'download':
-            self.set_hint(i18n.t('download.hint.busy'))
+        if not self.links_usable():
+            self.set_hint(i18n.t('download.hint.busy'), 'warn')
             return 0
         found = links.extract_urls(text or '')
         playlist = self.playlist.get()
@@ -511,10 +438,14 @@ class DownloadUI:
         if added:
             current = self.box_text()
             prefix = '\n' if current and not current.endswith('\n') else ''
+            self._undo_mark()
             self.urls.insert('end', prefix + '\n'.join(added))
+            self._undo_mark()
             self.urls.see('end')
+        tone = 'info'
         if not found:
             hint = i18n.t('download.hint.no_links_file') if source == 'import' else i18n.t('download.hint.no_links_clip')
+            tone = 'warn'
         elif skipped:
             hint = i18n.t('download.hint.added_skipped', added=len(added), skipped=skipped)
         else:
@@ -524,21 +455,15 @@ class DownloadUI:
                         if line.strip() and not line.lstrip().startswith(links.COMMENT) and not links.extract_urls(line))
             if empty:
                 hint += i18n.t('download.hint.empty_lines', empty=empty)
-        self.set_hint(hint)
+        self.set_hint(hint, tone)
         self.links_changed()
         return len(added)
-
-    def add_urls(self, text):
-        if self.urls.get('1.0', 'end-1c').strip():
-            self.urls.insert('end', '\n')
-        self.urls.insert('end', text.strip())
-        self.links_changed()
 
     def paste(self):
         try:
             text = self.clipboard_get()
         except tk.TclError:
-            self.set_hint(i18n.t('download.hint.no_links_clip'))
+            self.set_hint(i18n.t('download.hint.no_links_clip'), 'warn')
             return 0
         return self.add_links(text, 'paste')
 
@@ -554,11 +479,20 @@ class DownloadUI:
         return 'break'
 
     def clear_links(self):
+        """清空 (red, last in the box's menu): no confirmation, Ctrl+Z in the box brings the links back."""
+        self._undo_mark()
         self.urls.delete('1.0', 'end')
+        self._undo_mark()
         self.set_hint('')
         self.links_changed()
 
+    def select_all_links(self):
+        self.urls.tag_add('sel', '1.0', 'end-1c')
+
     def import_txt(self):
+        if not self.links_usable():
+            self.set_hint(i18n.t('download.hint.busy'), 'warn')
+            return
         path = filedialog.askopenfilename(parent=self, title=i18n.t('dialog.import.title'),
                                           filetypes=[(i18n.t('dialog.filetype.text_files'), '*.txt'),
                                                      (i18n.t('dialog.filetype.all'), '*.*')])
@@ -571,38 +505,23 @@ class DownloadUI:
             return
         self.add_links(text, 'import')
 
-    def _box_menu(self, event):
-        menu = self._menu()
-        usable = 'disabled' if self.busy and self.operation != 'download' else 'normal'
-        menu.add_command(label=i18n.t('download.paste'), command=self.paste, state=usable)
-        menu.add_command(label=i18n.t('download.menu.select_all'),
-                         command=lambda: self.urls.tag_add('sel', '1.0', 'end-1c'))
-        menu.add_command(label=i18n.t('download.clear_box'), command=self.clear_links, state=usable)
-        self._popup(menu, event)
+    def _import_from_box(self, _event=None):
+        self.import_txt()
         return 'break'
 
-    def _menu(self):
-        if self.row_menu is not None:
-            try:
-                self.row_menu.destroy()
-            except tk.TclError:
-                pass
-        self.row_menu = tk.Menu(self, tearoff=0, font=(ui_theme.FAMILY, 10),
-                                background=ui_theme.resolve(ui_theme.SURFACE), foreground=ui_theme.resolve(ui_theme.INK),
-                                activebackground=ui_theme.resolve(ui_theme.ACCENT_SOFT),
-                                activeforeground=ui_theme.resolve(ui_theme.INK),
-                                disabledforeground=ui_theme.resolve(ui_theme.FAINT), relief='flat', borderwidth=1)
-        return self.row_menu
-
-    def _popup(self, menu, event):
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+    def link_menu_items(self):
+        """The link box's '⋯' and its right click: 粘贴, 导入 TXT…, 全选, 清空 (enabled as of now)."""
+        usable, text = self.links_usable(), bool(self.box_text())
+        return [ui_theme.MenuItem(i18n.t('download.paste'), self.paste, enabled=usable),
+                ui_theme.MenuItem(i18n.t('download.import'), self.import_txt, enabled=usable),
+                ui_theme.SEPARATOR,
+                ui_theme.MenuItem(i18n.t('common.select_all'), self.select_all_links, enabled=text),
+                ui_theme.MenuItem(i18n.t('download.clear_box'), self.clear_links, enabled=text and usable,
+                                  danger=True)]
 
     def browse(self):
         if self.archive_enabled.get():
-            self.choose_archive()
+            self.show_settings('downloads')     # the archive folder is chosen in Settings only
             return
         initial = self.output.get() if Path(self.output.get()).is_dir() else str(APP_DIR)
         path = filedialog.askdirectory(parent=self, initialdir=initial)
@@ -610,17 +529,19 @@ class DownloadUI:
             self.output.set(path)
 
     def refresh_destination(self):
-        enabled = self.archive_enabled.get()
-        self.output_entry.configure(textvariable=self.archive_root if enabled else self.output)
-        self.destination_label.configure(text=i18n.t('download.archive_to') if enabled else i18n.t('download.save_to'))
+        """The folder button shows where the files go: the archive folder (its icon) or the download folder."""
+        if self.archive_enabled.get():
+            self.output_button.set_path(self.archive_root.get(), ui_theme.ICON_ARCHIVE)
+        else:
+            self.output_button.set_path(self.output.get(), ui_theme.ICON_FOLDER)
 
-    # ================================================================ clipboard chip (ux-3, safe form)
+    # ================================================================ clipboard notice (ux-3, safe form)
     def check_clipboard(self):
         """Offer links found in the clipboard; never fills the box, never starts anything, never logs the text."""
         self.clip_after = None
         try:
             if (not self.clipboard_hint.get() or self.smoke_mode or self.current_page != 'download'
-                    or (self.busy and self.operation != 'download')):
+                    or not self.links_usable()):
                 return self.hide_clipboard()
             try:
                 text = self.clipboard_get()
@@ -638,8 +559,9 @@ class DownloadUI:
             if not fresh:
                 return self.hide_clipboard()
             self.clip_text, self.clip_digest = text, digest
-            self.clip_bar.grid()
-            ui_theme.fit(self.clip_label, i18n.t('download.clip.found', count=len(fresh), title=link_title(fresh[0])))
+            self.clip_bar.show(i18n.t('download.clip.found', count=len(fresh), title=link_title(fresh[0])),
+                               [(i18n.t('download.clip.add'), self.accept_clipboard),
+                                (i18n.t('common.ignore'), self.ignore_clipboard)])
         except Exception:
             applog.get('ui').exception('clipboard check failed')
 
@@ -648,7 +570,7 @@ class DownloadUI:
         self.clip_after = self.after(300, self.check_clipboard)
 
     def hide_clipboard(self):
-        self.clip_bar.grid_remove()
+        self.clip_bar.hide()
         self.clip_text = ''
 
     def _remember_clip(self):
@@ -678,6 +600,14 @@ class DownloadUI:
             self.bind(sequence, lambda event: self._key(self.urls.focus_set), add='+')
         for sequence in ('<Control-e>', '<Control-E>'):
             self.bind(sequence, lambda event: self._key(self.reveal_last_file), add='+')
+        for sequence in ('<Control-o>', '<Control-O>'):
+            self.bind(sequence, lambda event: self._key(self.import_txt), add='+')
+        # The selected task row's menu (the link box and the tables take these keys first, for their own menu).
+        for sequence in ('<Shift-F10>', '<App>'):
+            try:
+                self.bind(sequence, lambda event: self._key(self.open_row_menu, outside_text=True), add='+')
+            except tk.TclError:
+                pass        # a Tk without the menu key's keysym
         self.bind('<F4>', lambda event: self._key(self.open_folder), add='+')
         self.bind('<F5>', lambda event: self._key(self.retry_failed), add='+')
         for number, page in enumerate(('download', 'collect', 'library', 'logs', 'settings'), 1):
@@ -711,7 +641,7 @@ class DownloadUI:
             self.schedule_clipboard_check()
 
     def set_window_title(self, prefix=''):
-        title = i18n.t('app.title')         # TITLE in zh (I18N.md 8.5)
+        title = i18n.t('app.title')
         try:
             self.title(f'{prefix} — {title}' if prefix else title)
         except tk.TclError:
@@ -734,10 +664,10 @@ class DownloadUI:
 
     # ================================================================ another activity holds the window
     def refresh_foreign_activity(self):
-        """While an engine update or a web collection runs, the download page says so: its task header,
-        the stop button's label, the hint and a dimmed link box.  The download header is put back when
-        the activity ends.  Called from refresh_shell (so at the end of every set_busy)."""
-        foreign = self.operation if self.busy and self.operation in FOREIGN_TEXT else None
+        """While an engine update or a web collection runs, the download page says so: the task title names
+        it and the link box is dimmed.  The download header is put back when the activity ends.  Called
+        from refresh_shell (so at the end of every set_busy)."""
+        foreign = self.operation if self.busy and self.operation in FOREIGN_KEYS else None
         if foreign == self.foreign_activity:
             return
         if foreign is not None and self.foreign_activity is None:
@@ -745,15 +675,9 @@ class DownloadUI:
                                   self.metrics.cget('text_color'), self.progress.target)
         self.foreign_activity = foreign
         if foreign is not None:
-            title, metrics, stop, placeholder = (i18n.t(key) for key in FOREIGN_KEYS[foreign])
-            self.current_title.configure(text=title)
-            self.metrics.configure(text=metrics, text_color=ui_theme.MUTED)
-            self.stop_button.configure(text=stop)
-            _cancel(self, self.hint_after)
-            self.hint_after = None
-            ui_theme.fit(self.link_hint, '')      # no "Ctrl+V 粘贴" while nothing can be pasted
-            self.urls.configure(text_color=ui_theme.FAINT, fg_color=ui_theme.SURFACE)
-            self.link_placeholder.configure(text=placeholder, fg_color=ui_theme.SURFACE)
+            self.current_title.configure(text=i18n.t(FOREIGN_KEYS[foreign]))
+            self.metrics.configure(text='', text_color=ui_theme.MUTED)
+            self.set_hint('')
             self.hide_clipboard()
         else:
             saved, self.foreign_saved = self.foreign_saved, None
@@ -761,24 +685,16 @@ class DownloadUI:
                 self.current_title.configure(text=saved[0])
                 self.metrics.configure(text=saved[1], text_color=saved[2])
                 self.progress.set(saved[3], immediate=True)
-            self.stop_button.configure(text=i18n.t('common.stop'))
-            ui_theme.fit(self.link_hint, i18n.t('download.hint.default'))
-            self.urls.configure(text_color=ui_theme.INK, fg_color=ui_theme.SURFACE_ALT)
-            self.link_placeholder.configure(text=i18n.t('download.placeholder'), fg_color=ui_theme.SURFACE_ALT)
+        self.urls.set_dimmed(foreign is not None)
+        self.link_box.configure(fg_color=ui_theme.SURFACE if foreign is not None else ui_theme.SURFACE_ALT)
+        self._show_note()
+        self.refresh_task_view()
 
     # ================================================================ notices
     def show_notice(self, kind, text, actions=(), timeout=None):
+        """The notice above the task area (one at a time: a new one takes the place of the last)."""
         self.notice_kind = kind
-        ui_theme.fit(self.notice_text, text)
-        actions = list(actions)[:2]
-        for number, button in enumerate(self.notice_buttons):
-            if number < len(actions):
-                label, command = actions[number]
-                button.configure(text=label, command=command)
-                button.grid()
-            else:
-                button.grid_remove()
-        self.notice_bar.grid()
+        self.notice_bar.show(text, list(actions)[:2], tone='warn' if kind in WARN_NOTICES else 'idle')
         _cancel(self, self.notice_after)
         self.notice_after = None
         if timeout:
@@ -787,7 +703,7 @@ class DownloadUI:
     def hide_notice(self, kind=None):
         if kind is not None and self.notice_kind != kind:
             return
-        self.notice_bar.grid_remove()
+        self.notice_bar.hide()
         self.notice_kind = None
         if kind != 'bot' and self.bot_retry is not None and self.bot_retry.get('deadline') is not None:
             self.render_bot_notice()
@@ -796,20 +712,23 @@ class DownloadUI:
 
     # Hints other pages put on this page; their texts are the download page's (catalog i18n_download).
     def hint_history_loaded(self):
-        """The links of a history record were put into the box (library page, 继续未完成 / 载入)."""
+        """The links of a history record were put into the box (library page, 继续 / 载入)."""
         self.set_hint(i18n.t('download.hint.history_loaded'))
 
     def hint_subscription_check(self, name):
-        """A subscription check holds the window; ``name`` is the subscription's shown name."""
-        ui_theme.fit(self.link_hint, i18n.t('download.hint.subscription_check', name=name))
+        """A subscription check holds the window; ``name`` is the subscription's shown name.  It stays until
+        the check ends (collection_ui clears it with set_hint(''))."""
+        self.set_hint(i18n.t('download.hint.subscription_check', name=name), 'warn', timeout=None)
 
     def undo_launch(self):
         self.hide_notice('undo')
         if not self.last_submitted:
             return
         current = self.box_text()
+        self._undo_mark()
         self.urls.delete('1.0', 'end')
         self.urls.insert('1.0', self.last_submitted + ('\n' + current if current.strip() else ''))
+        self._undo_mark()
         self.links_changed()
 
     # ================================================================ rows (arch-14 reduced)
@@ -825,7 +744,7 @@ class DownloadUI:
         self.rows = []
         self.row_model = []
         self.selected_row = None
-        self.job_ended = False          # set by on_done: the rows are those of a job that has ended
+        self.place_row_menu()
         self.row_footer.grid_remove()
         # Back to the top: a list scrolled down would keep its old scroll region, and the few new
         # rows would sit above the viewport (the canvas never redisplays an item it cannot see).
@@ -848,7 +767,7 @@ class DownloadUI:
             playlist = own.playlist if own is not None else False
             self.row_model.append({'index': len(self.row_model), 'url': url, 'key': links.link_key(url, playlist),
                                    'options': own, 'state': 'waiting', 'title': link_title(url),
-                                   'detail': i18n.t('download.detail.waiting'), 'chip': None, 'tone': None,
+                                   'detail': '', 'chip': None, 'tone': None,
                                    'icon': None, 'path': '', 'error': '', 'entry': None})
         self._append_tail(tail)
         self._rows_changed(start)
@@ -857,12 +776,14 @@ class DownloadUI:
     def _unfinished_model(self, entry):
         """The row model of a stored unfinished entry (state 'unfinished', below the job's rows)."""
         # (1.7.0, I18N.md 9.3) The reason word and the format in the running language; the entry
-        # keeps its stored values (format key, canonical mode string).
+        # keeps its stored values (format key, mode: a preset id).
         reason = i18n.t(REASON_KEYS.get(entry.get('reason'), 'download.reason.failed'))
         try:
-            label = i18n.label('format', formats.by_key(entry.get('format', '')).label)
+            label = i18n.t('format.' + formats.by_key(entry.get('format', '')).id)
         except ValueError:
-            label = i18n.label('mode', str((entry.get('options') or {}).get('mode', '')))
+            mode = str((entry.get('options') or {}).get('mode', ''))
+            # an unknown id shows itself
+            label = i18n.t('format.' + mode) if mode in formats.MODES else messages.show(messages.raw(mode))
         url = entry.get('url', '')
         return {'index': len(self.row_model), 'url': url, 'key': entry.get('key', ''),
                 'options': self._entry_options(entry, log=False), 'state': 'unfinished',
@@ -902,7 +823,7 @@ class DownloadUI:
         if options is None:
             return None
         try:
-            preset = formats.by_mode(options.mode)
+            preset = formats.by_id(options.mode)
             return model['key'], formats.format_key(preset, options.resolution)
         except (ValueError, AttributeError):
             return None
@@ -942,6 +863,7 @@ class DownloadUI:
         for index in range(start, keep):
             self.rows[index]['index'] = index
             self._paint_row(self.rows[index], self.row_model[index])
+        self.place_row_menu()
         self.row_queue = []
         self._schedule_rows()
 
@@ -1019,7 +941,7 @@ class DownloadUI:
                                     height=ui_theme.LABEL_H['caption'])
             detail.grid(row=1, column=1, sticky='ew', pady=(0, 6))
             badge = ui_theme.chip(frame, '', 'idle')
-            badge.grid(row=0, column=2, rowspan=2, padx=(8, 12))
+            badge.grid(row=0, column=3, rowspan=2, padx=(ui_theme.INLINE, 12))     # column 2: the row '⋯'
             row = {'frame': frame, 'icon': icon, 'title': title, 'detail': detail, 'badge': badge, 'state': None,
                    'index': index, 'url': '', 'key': '', 'path': '', 'error': '', 'look': None, 'selected': False}
             for widget in (frame, icon, title, detail, badge):
@@ -1028,19 +950,20 @@ class DownloadUI:
                 widget.bind('<Button-3>', lambda event, r=row: self.row_context(event, r['index']), add='+')
             self.row_pool.append(row)
         row['index'] = index
-        row['frame'].grid(row=index, column=0, sticky='ew', padx=4, pady=2)
+        row['frame'].grid(row=index, column=0, sticky='ew', padx=0, pady=2)
         self._paint_row(row, self.row_model[index])
         return row
 
     def _paint_row(self, row, model):
         state = model['state']
-        icon_code, tone, _chip = STATE_LOOK.get(state, STATE_LOOK['waiting'])
+        icon_code, tone = STATE_LOOK.get(state, STATE_LOOK['waiting'])
         chip_text = i18n.label('row_state', state if state in STATE_LOOK else 'waiting')
         tone = model.get('tone') or tone
         icon_code = model.get('icon') or icon_code
         chip_text = model.get('chip') or chip_text
         detail = model.get('detail') or ''
-        detail_text = detail if state == 'unfinished' else f"{model['index'] + 1:02d}  ·  {detail}"
+        number = f"{model['index'] + 1:02d}"
+        detail_text = detail if state == 'unfinished' else f'{number} · {detail}' if detail else number
         row.update(state=state, url=model['url'], key=model['key'], path=model.get('path', ''),
                    error=model.get('error', ''))
         look = (icon_code, tone)
@@ -1071,26 +994,11 @@ class DownloadUI:
             self._paint_row(self.rows[index], model)
 
     def _update_footer(self):
-        if len(self.row_model) > self.row_cap() and not self.row_queue:
-            start = self._tail_start()
-            hidden_job = max(0, start - len(self.rows))
-            hidden_tail = len(self.row_model) - max(start, len(self.rows))
-            parts = []
-            if hidden_job:
-                # (final-fix-ui, polish-function-4) "会照常下载" only until the job has ended; then
-                # the hidden rows that did not finish point at 重试未完成.
-                if not self.job_ended:
-                    parts.append(i18n.t('download.footer.hidden_running', hidden=hidden_job))
-                elif self.unfinished and any(model['state'] in RETRYABLE and not model.get('cleared')
-                                             for model in self.row_model[len(self.rows):start]):
-                    parts.append(i18n.t('download.footer.hidden_retry', hidden=hidden_job))
-                else:
-                    parts.append(i18n.t('download.footer.hidden', hidden=hidden_job))
-            if hidden_tail:
-                parts.append(i18n.t('download.footer.tail_other', hidden=hidden_tail) if hidden_job
-                             else i18n.t('download.footer.tail', hidden=hidden_tail))
-            ui_theme.fit(self.row_footer, i18n.sep('clause_sep').join(parts))
-            self.row_footer.grid(row=len(self.rows), column=0, sticky='ew', padx=12, pady=(4, 8))
+        """"还有 N 条" below the rows when the list holds more than the rows that get widgets (they download as usual)."""
+        hidden = len(self.row_model) - len(self.rows)
+        if len(self.row_model) > self.row_cap() and not self.row_queue and hidden > 0:
+            self.row_footer.configure(text=i18n.t('download.footer.hidden', hidden=hidden))
+            self.row_footer.grid(row=len(self.rows), column=0, sticky='ew', padx=12, pady=ui_theme.INLINE)
         else:
             self.row_footer.grid_remove()
 
@@ -1146,150 +1054,77 @@ class DownloadUI:
             pass
 
     def refresh_task_view(self):
-        if self.row_model:
-            self.empty.grid_remove()
-        else:
-            self.empty.grid()
-        self.refresh_stats()
+        """What the task area shows: the task header while there are rows or the window is busy (any
+        activity), else the empty state; the progress bar once a download ran; the rows when there are
+        some.  Rows that are only the unfinished leftovers of earlier jobs are titled 未完成.  Cheap: it
+        only grids or hides on a change (it runs on every row change and every set_busy)."""
+        rows = bool(self.row_model)
+        header = rows or self.busy
+        ui_theme.show(self.empty, not header)
+        ui_theme.show(self.task_header, header)
+        # another activity's title is not over the last download's bar (its value is kept for the end)
+        ui_theme.show(self.progress, header and (self.busy or self.job_ran) and not self.foreign_activity)
+        # a ScrollArea grids its outer frame (CTkScrollableFrame); the inner frame always reports a manager
+        ui_theme.show(self.task_list, rows)
+        if rows and not self.busy and all(model['state'] == 'unfinished' for model in self.row_model):
+            title = i18n.t('common.unfinished')
+            if ui_theme.full_text(self.current_title) != title:
+                self.current_title.configure(text=title)
+                self.metrics.configure(text='', text_color=ui_theme.MUTED)
+        self.place_task_actions()
 
-    def refresh_stats(self, final=None):
-        if final is not None:
-            # (final fix round 1, ENV-1) The finished job's stats follow the room rule of 10.5 too.
-            forms = self.final_stats_forms()
-            self._show_stats(final, short=forms[1:] if final == forms[0] else None, title_first=self._title_first())
+    def place_task_actions(self):
+        """With a metrics line the task buttons sit at its right end; without one (only unfinished, another
+        activity, a done job) the line goes and the buttons sit at the right end of the title's line.  Only
+        grids on a change."""
+        inline = not ui_theme.full_text(self.metrics)
+        if inline == self.actions_inline:
             return
-        if not self.row_model:
-            self._show_stats(i18n.t('download.stats.none'))
-            return
-        states = [row['state'] for row in self.row_model]
-        if all(state == 'unfinished' for state in states):
-            self._show_stats(i18n.t('download.stats.unfinished', count=len(states)))
-            return
-        if not self.busy and not states.count('waiting') and not states.count('active'):
-            forms = self.final_stats_forms()
-            self._show_stats(forms[0], short=forms[1:], title_first=self._title_first())
-            return
-        text = i18n.t('download.stats.running', done=states.count('done'), active=states.count('active'),
-                      waiting=states.count('waiting'))
-        if states.count('unfinished'):
-            # (I18N.md 10.5) Without its unfinished part when the title would get less than TITLE_MIN:
-            # 重试未完成 (N) beside it shows the same count.
-            self._show_stats(text + i18n.t('download.stats.running_unfinished', unfinished=states.count('unfinished')),
-                             short=text)
-            return
-        self._show_stats(text)
-
-    def _show_stats(self, text, short=None, title_first=False):
-        """Show the stats line; ``short`` is its form without the unfinished part (10.5), or a
-        sequence of ever shorter forms (a finished job's stats, final fix round 1 ENV-1): the first
-        of ``text`` and the shorter forms that leaves the title its room is shown, else the last.
-
-        (final fix round 3, ENV3-1) ``title_first`` (a finished job's stats in English, _title_first):
-        the first form that leaves the task title room for its whole text is shown, else the shortest
-        one, so a longer stats form never cuts a title that a shorter one would show in full, and a
-        wider window never gives the title less room than a narrower one."""
-        if short is not None and not isinstance(short, str):
-            short = tuple(form for form in short if form != text) or None
-        self.stats_texts = (text, short)
-        self.stats_title_first = bool(title_first and short is not None)
-        if short is not None:
-            forms = (short,) if isinstance(short, str) else short
-            if self.stats_title_first:
-                need = self._title_need()
-                text = next((form for form in (text,) + tuple(forms[:-1]) if self._stats_fit(form, need)), forms[-1])
-            elif not self._stats_fit(text):
-                text = next((form for form in forms[:-1] if self._stats_fit(form)), forms[-1])
-        if self.queue_stats.cget('text') != text:
-            self.queue_stats.configure(text=text)
-
-    def _stats_fit(self, text, title=0):
-        """Whether ``text`` leaves the task title at least TITLE_MIN logical px of the header, and at
-        least ``title`` physical px when given (always True while the header has no width yet: a
-        window that is not shown)."""
-        try:
-            width = self.task_header.winfo_width()
-            if width <= 1:
-                return True
-            scale = ui_theme._scaling(self.task_header) or 1.0
-            buttons = sum(button.winfo_reqwidth() for button in (self.retry_button, self.clear_unfinished_button,
-                                                                  self.stop_button) if button.winfo_manager())
-            room = width - buttons - round(STATS_GAPS * scale) - max(round(TITLE_MIN * scale), title)
-            measure = ui_theme._measure_font(self.queue_stats, self.queue_stats.cget('font'))
-            return measure.measure(text) + 2 <= room
-        except (tk.TclError, AttributeError):
-            return True
-
-    @staticmethod
-    def _title_first():
-        """(final fix round 3, ENV3-1) A finished job's stats form is chosen by the title in English
-        only: the Chinese header keeps the room rule of round 1 (its 1.6.0 look, pixel for pixel)."""
-        return i18n.language() != 'zh'
-
-    def _title_alternatives(self, title, forms=()):
-        """(final fix round 3, ENV3-1) English: the shorter forms (longest first) a finished job's
-        ``title`` shows whole when it would be cut; the counts they leave out are in the stats line
-        and on 重试未完成 (N) beside it.  Chinese: none (its header looks as before)."""
-        forms = [form for form in forms if form != title] if self._title_first() else []
-        ui_theme.fit_alternatives(self.current_title, title, forms)
-
-    def _title_need(self):
-        """Physical px the task title needs to show its whole text (ui_theme.fit's room of the label)."""
-        try:
-            label = self.current_title
-            scale = ui_theme._scaling(label) or 1.0
-            inset = min(label.cget('corner_radius'), round(label.cget('height') / 2))
-            measure = ui_theme._measure_font(label, label.cget('font'))
-            return measure.measure(ui_theme.full_text(label).replace('\n', ' ')) + 2 * round(inset * scale) + 2
-        except (tk.TclError, AttributeError):
-            return 0
-
-    def _stats_resized(self, _event=None):
-        """The header changed width, or a button beside the stats did: measure the room again
-        once the layout is done (at most one pending check)."""
-        if getattr(self, 'stats_after', None) is None:
-            try:
-                self.stats_after = self.after_idle(self._stats_refit)
-            except tk.TclError:
-                pass
-
-    def _stats_refit(self):
-        self.stats_after = None
-        text, short = self.stats_texts
-        if short is not None:
-            self._show_stats(text, short, title_first=self.stats_title_first)
-
-    def final_stats(self):
-        """The stats line of a finished job, counted from the rows (polish, ui-daily-flow-1): its
-        未完成 counts every row that 重试未完成 would retry, the unfinished rows below the job included."""
-        return self.final_stats_forms()[0]
-
-    def final_stats_forms(self):
-        """(final fix round 1, ENV-1) The finished job's stats line and its shorter forms, longest
-        first: the full line; without the 跳过 / 已移出 parts; only 成功 and 共 (the unfinished count
-        is on 重试未完成 (N) beside it, the skipped and removed rows keep their chips).  The room rule
-        of I18N.md 10.5 shows the first one that leaves the task title TITLE_MIN px."""
-        states = [row['state'] for row in self.row_model]
-        cleared = sum(1 for row in self.row_model if row.get('cleared'))
-        # (a row still waiting or active when the job has ended did not finish either)
-        unfinished = sum((row['state'] in RETRYABLE or row['state'] in ('waiting', 'active')) and not row.get('cleared')
-                         for row in self.row_model)
-        base = i18n.t('download.stats.final', done=states.count('done'), unfinished=unfinished, total=len(states))
-        text = base
-        if states.count('skipped'):
-            text += i18n.t('download.stats.final_skipped', skipped=states.count('skipped'))
-        if cleared:
-            text += i18n.t('download.stats.final_cleared', cleared=cleared)
-        forms = [text]
-        for form in (base, i18n.t('download.stats.final_short', done=states.count('done'), total=len(states))):
-            if form not in forms:
-                forms.append(form)
-        return forms
+        self.actions_inline = inline
+        row = 0 if inline else 1
+        self.current_title.grid_configure(columnspan=1 if inline else 4)
+        # (final polish) the metrics line keeps the height of a button line even without buttons (the YouTube
+        # check ending), its sentence centred in it as beside the buttons; grid minsize is in device pixels
+        line = round(ui_theme.CONTROL_H * (ui_theme._scaling(self.task_header) or 1.0))
+        self.task_header.grid_rowconfigure(1, minsize=0 if inline else line)
+        ui_theme.show(self.metrics, not inline)
+        for widget in (self.retry_button, self.task_menu, self.stop_button):
+            if widget.winfo_manager():
+                widget.grid_configure(row=row)
+            else:               # a hidden widget keeps its place: grid it there and hide it again
+                widget.grid(row=row)
+                widget.grid_remove()
 
     def select_row(self, index):
         previous, self.selected_row = self.selected_row, index
         for number in {previous, index}:
             if number is not None and 0 <= number < len(self.rows):
                 self._paint_row(self.rows[number], self.row_model[number])
+        self.place_row_menu()
+
+    def place_row_menu(self):
+        """The row '⋯' sits in the selected row (when it has widgets) and nowhere else."""
+        index = self.selected_row
+        menu = self.row_menu
+        if index is None or not 0 <= index < len(self.rows):
+            if menu.winfo_manager():
+                menu.grid_remove()
+            self.row_menu_at = None
+            return
+        frame = self.rows[index]['frame']
+        if self.row_menu_at is not frame or not menu.winfo_manager():
+            menu.grid(in_=frame, row=0, column=2, rowspan=2, padx=(ui_theme.INLINE, 0))
+            menu.lift(frame)        # a pooled row frame made later would cover it
+            self.row_menu_at = frame
+
+    def open_row_menu(self):
+        """Shift+F10 / the menu key: the selected row's menu, at its bottom-left corner."""
+        index = self.selected_row
+        if index is None or not 0 <= index < len(self.rows):
+            return
+        frame = self.rows[index]['frame']
+        ui_theme.popup(frame, lambda: self.row_menu_items(index), frame.winfo_rootx() + 8,
+                       frame.winfo_rooty() + frame.winfo_height())
 
     def open_row(self, index):
         if index is None or not 0 <= index < len(self.row_model):
@@ -1306,32 +1141,37 @@ class DownloadUI:
         except OSError as error:
             messagebox.showerror(i18n.t('dialog.open_file_failed'), messages.error_text(error), parent=self)
 
+    def row_menu_items(self, index):
+        """The menu of one task row (its '⋯', its right click, Shift+F10): 播放, 在文件夹中显示, 复制链接, 查看原因,
+        then 重试 (仍然下载 for a row skipped as downloaded before) and 移除 (red)."""
+        if index is None or not 0 <= index < len(self.row_model):
+            return []
+        model = self.row_model[index]
+        state, path = model['state'], model.get('path')
+        other_busy = not self.links_usable()
+        item = ui_theme.MenuItem
+        items = [item(i18n.t('download.menu.play'), lambda: self.open_row(index),
+                      enabled=state in ('done', 'skipped') and bool(path)),
+                 item(i18n.t('download.menu.show'), lambda: procutil.reveal_in_folder(path), enabled=bool(path)),
+                 item(i18n.t('download.menu.copy_link'), lambda: self.copy_text(model['url'])),
+                 item(i18n.t('download.menu.reason'), lambda: self.show_row_reason(index),
+                      enabled=state in REASON_STATES),
+                 ui_theme.SEPARATOR]
+        if state == 'skipped':
+            items.append(item(i18n.t('download.menu.anyway'), lambda: self.retry_row(index), enabled=not other_busy))
+        else:
+            items.append(item(i18n.t('download.menu.retry'), lambda: self.retry_row(index),
+                              enabled=state in RETRYABLE and not other_busy))
+        items.append(item(i18n.t('download.menu.remove'), lambda: self.remove_row(index), enabled=not self.busy,
+                          danger=True))
+        return items
+
     def row_context(self, event, index):
+        """A right click on a task row: select it, then its menu at the mouse."""
         if index is None or not 0 <= index < len(self.row_model):
             return
         self.select_row(index)
-        model = self.row_model[index]
-        state, path = model['state'], model.get('path')
-        other_busy = self.busy and self.operation != 'download'
-        menu = self._menu()
-
-        def enabled(flag):
-            return 'normal' if flag else 'disabled'
-        menu.add_command(label=i18n.t('download.menu.play'), command=lambda: self.open_row(index),
-                         state=enabled(state in ('done', 'skipped') and bool(path)))
-        menu.add_command(label=i18n.t('download.menu.show'), command=lambda: procutil.reveal_in_folder(path),
-                         state=enabled(bool(path)))
-        menu.add_command(label=i18n.t('download.menu.copy_link'), command=lambda: self.copy_text(model['url']))
-        menu.add_command(label=i18n.t('download.menu.reason'), command=lambda: self.show_row_reason(index),
-                         state=enabled(state in REASON_STATES))
-        menu.add_separator()
-        menu.add_command(label=i18n.t('download.menu.retry'), command=lambda: self.retry_row(index),
-                         state=enabled(state in RETRYABLE and not other_busy))
-        menu.add_command(label=i18n.t('download.menu.anyway'), command=lambda: self.retry_row(index),
-                         state=enabled(state == 'skipped' and not other_busy))
-        menu.add_command(label=i18n.t('download.menu.remove'), command=lambda: self.remove_row(index),
-                         state=enabled(not self.busy))
-        self._popup(menu, event)
+        ui_theme.popup(self, lambda: self.row_menu_items(index), event.x_root, event.y_root)
 
     def row_reason(self, index):
         """The whole reason of an unfinished row (the row itself may show it cut) and the engine's error."""
@@ -1393,7 +1233,7 @@ class DownloadUI:
                 self.totals_changed()
                 self.set_hint(i18n.t('download.hint.queued', count=len(accepted)))
             else:
-                self.set_hint(i18n.t('download.hint.already_queued'))
+                self.set_hint(i18n.t('download.hint.already_queued'), 'warn')
             return
         if self.busy:
             return
@@ -1486,7 +1326,7 @@ class DownloadUI:
                 context = known.get(url) or known.get(result.origin.get(url, url))
                 if context:
                     contexts[url] = context
-        preset = formats.by_mode(self.mode.get())
+        preset = formats.by_id(self.mode.get())
         options = Options(Path(output).expanduser().resolve(), self.mode.get(), self.resolution.get(), playlist,
                           self.proxy.get().strip(), self.batch_safe.get(), referers=referers,
                           archive_root=str(Path(root).expanduser().resolve()) if archive else '',
@@ -1503,6 +1343,10 @@ class DownloadUI:
         return result.urls, options, dict(result.origin)
 
     def start(self):
+        """开始下载 / 加入队列 (button, Enter, Ctrl+Enter).  Nothing happens without a link in the box: the button
+        is grey then (refresh_start); the count is taken now, a typing pause may not have counted yet."""
+        if not self.box_links():
+            return
         if self.busy and self.operation == 'download':
             self.enqueue_links()
             return
@@ -1520,7 +1364,6 @@ class DownloadUI:
             self.urls.delete('1.0', 'end')
             self.links_changed()
             self.set_hint('')
-            self.undo_count = len(urls)
             self.show_notice('undo', i18n.t('download.notice.started', count=len(urls)),
                              [(i18n.t('download.notice.restore_links'), self.undo_launch)], timeout=10000)
 
@@ -1571,18 +1414,17 @@ class DownloadUI:
             data = {**options.to_dict(), 'urls': urls}
             if overrides:
                 data['overrides'] = {url: own.to_dict() for url, own in overrides.items()}
-            # (1.8.0, D-F45) A message: stored as its zh text in every language (H2) with its key.
-            title = messages.msg('value.job_title.placeholder', count=len(urls),
-                                 mode=messages.value('mode', options.mode))
             library = self.library
             # (1.7.0 U1) A library locked by another program: the download starts at once and its
-            # record (a PendingJob until then) is written as soon as the lock is gone.
-            job_id = self.history_create(lambda: library.create_job('download', title, data))
+            # record (a PendingJob until then) is written as soon as the lock is gone.  (2.0.0) No
+            # title yet: the history names the job after its links until the first media title.
+            job_id = self.history_create(lambda: library.create_job('download', '', data))
         except Exception as error:
             applog.get('ui').exception('create_job failed')
             self.append_log(i18n.t('log.history_write_failed', error=messages.error_text(error)))
         self.download_job = job_id
         try:
+            self.job_ran = True
             self.job_options = (options, overrides)
             self.populate_queue(urls, options, overrides)
             self.show_unfinished_tail()             # the leftovers of earlier jobs stay in view
@@ -1595,8 +1437,9 @@ class DownloadUI:
             self.clear_wait()
             self.current_title.configure(text=i18n.t('shell.status.downloading'))
             self.metrics.configure(text=i18n.t('download.metrics.connecting'))
+            self.place_task_actions()
             self.set_window_title()
-            label = i18n.label('format', formats.by_mode(options.mode).label)
+            label = i18n.t('format.' + formats.by_id(options.mode).id)
             self.append_log(i18n.t('log.task_started', count=len(urls), format=label,
                                    folder=options.archive_root or options.output))
             proxied = any(str(own.proxy or '').strip() for own in [options, *overrides.values()])
@@ -1624,8 +1467,8 @@ class DownloadUI:
             except Exception:
                 applog.get('ui').exception('task list reset failed')
             self.close_history_job(job_id)
-            self.current_title.configure(text=i18n.t('download.title.ready'))
-            self.metrics.configure(text=i18n.t('download.metrics.idle'))
+            self.metrics.configure(text='')
+            self.refresh_task_view()
             messagebox.showerror(i18n.t('dialog.start_failed'), messages.error_text(error), parent=self)
             return False
 
@@ -1680,11 +1523,11 @@ class DownloadUI:
         try:
             urls, options, origins = self.read_form()
         except (ValueError, OSError) as error:
-            self.set_hint(messages.error_text(error))
+            self.set_hint(messages.error_text(error), 'warn')       # the whole reason, wrapped
             return 0
         runner = self.runner
         if runner is None or not hasattr(runner, 'enqueue'):
-            self.set_hint(i18n.t('download.hint.busy'))
+            self.set_hint(i18n.t('download.hint.busy'), 'warn')
             return 0
         runner.origins.update(origins)
         accepted = runner.enqueue(urls, options)
@@ -1697,9 +1540,9 @@ class DownloadUI:
             self.set_hint(i18n.t('download.hint.queued', count=len(accepted)))
             self.append_log(i18n.t('log.queued', count=len(accepted)))
         elif runner.closed or runner.cancelled.is_set():
-            self.set_hint(i18n.t('download.hint.queue_ended'))
+            self.set_hint(i18n.t('download.hint.queue_ended'), 'warn')
         else:
-            self.set_hint(i18n.t('download.hint.already_queued'))
+            self.set_hint(i18n.t('download.hint.already_queued'), 'warn')
         return len(accepted)
 
     def record_enqueued(self, runner, accepted, options):
@@ -1738,25 +1581,66 @@ class DownloadUI:
         """Links joined the running job: the task header, the window title and the sidebar count
         them at once, not only when the next item starts (final-fix-ui, final-e2e-ui-2)."""
         if not (self.busy and self.operation == 'download') or self.active_index is None:
-            self.refresh_stats()
             return
         index = self.active_index + 1
         total = max(self.job_row_count(), index)
         if not self.foreign_activity:
             self.current_title.configure(text=self._active_title(index, total))
         self.set_window_title(f'{index}/{total}')
-        self.refresh_stats()
         self.refresh_shell()
 
     # ================================================================ unfinished list (ux-7)
+    def refresh_start(self):
+        """The start button: 加入队列 during a download, else 开始下载; usable with a link in the box while links can
+        be added; and the one solid button of the page moves with the stage (00-system 2.6): an empty box, idle,
+        with unfinished links -> 重试未完成 (N) is solid and the start button soft.  Called from refresh_shell (so
+        at the end of every set_busy), links_changed and refresh_failed_button (when the unfinished count changes)."""
+        # (I18N.md 8.7) compared with the texts of the running language, not with Chinese literals
+        text = i18n.t('download.start.queue') if self.busy and self.operation == 'download' else i18n.t('download.start')
+        state = 'normal' if self.link_total and self.links_usable() else 'disabled'
+        changes = {}
+        if self.start_button.cget('text').strip() != text:
+            changes['text'] = text
+        if str(self.start_button.cget('state')) != state:
+            changes['state'] = state
+        if changes:
+            self.start_button.configure(**changes)
+        retry_first = bool(self.unfinished) and not self.link_total and not self.busy
+        self.start_button.set_kind('soft' if retry_first else 'primary')
+        self.retry_button.set_kind('primary' if retry_first else 'soft')
+
     def refresh_failed_button(self):
+        """The task header's buttons: 停止 only while busy (any activity); 重试未完成 (N) and the task '⋯' only while
+        there are unfinished links, 重试 usable when idle.  Then the task area's parts (refresh_task_view)."""
+        # (2.0.0 S4 A2, moved here from set_busy) every other caller of this method runs while idle (remove_row,
+        # clear_unfinished, start-up), where the stop button is hidden.
+        ui_theme.show(self.stop_button, self.busy)
+        state = 'normal' if self.busy else 'disabled'
+        if str(self.stop_button.cget('state')) != state:
+            self.stop_button.configure(state=state)
         count = len(self.unfinished)
-        text = i18n.t('download.retry_unfinished_n', count=count) if count else i18n.t('download.retry_unfinished')
-        resized = self.retry_button.cget('text') != text
-        self.retry_button.configure(text=text, state='normal' if count and not self.busy else 'disabled')
-        self.clear_unfinished_button.configure(state='normal' if count and not self.busy else 'disabled')
-        if resized and getattr(self, 'stats_texts', ('', None))[1] is not None:
-            self._stats_resized()       # the Retry button changed width: the stats line's room did too
+        if count:
+            text = i18n.t('download.retry_unfinished_n', count=count)
+            if self.retry_button.cget('text') != text:
+                # the width follows the text, or a redraw could cut the label (00-system 2.3)
+                self.retry_button.configure(text=text, width=ui_theme.fitted_width(self.retry_button.master, text))
+        state = 'normal' if count and not self.busy else 'disabled'
+        if str(self.retry_button.cget('state')) != state:
+            self.retry_button.configure(state=state)
+        ui_theme.show(self.retry_button, bool(count))
+        ui_theme.show(self.task_menu, bool(count))
+        self.refresh_task_view()
+        if count != self.retry_count:
+            self.retry_count = count
+            self.refresh_start()
+
+    def task_menu_items(self):
+        """The task header's '⋯': 清除未完成 (red, with its confirmation), kept behind '⋯' so it is not clicked by
+        mistake.  (final polish) No 重试未完成 (N) here: the button beside it is shown exactly when this menu is,
+        never turns into another action, and the header has no right-click menu, so the copy only repeated it."""
+        usable = bool(self.unfinished) and not self.busy
+        return [ui_theme.MenuItem(i18n.t('download.clear_unfinished'), self.clear_unfinished, enabled=usable,
+                                  danger=True)]
 
     def retry_failed(self, entries=None, auto=False):
         """Retry unfinished entries with their own options; the form, the box and the settings stay as they are."""
@@ -1791,6 +1675,7 @@ class DownloadUI:
         return self.launch(urls, first, overrides=overrides, auto=auto)
 
     def clear_unfinished(self):
+        """清除未完成 (task '⋯', after a confirmation).  The title stays: it never counts the unfinished links."""
         count = len(self.unfinished)
         if self.busy or not count:
             return
@@ -1809,45 +1694,21 @@ class DownloadUI:
         else:
             # (final-fix-ui, polish-function-2) The last job's rows that did not finish are no longer
             # counted as unfinished: 重试未完成 has nothing left to retry.  They keep their reason
-            # (查看原因) and 重试此条 in their menu.
+            # (查看原因) and 重试 in their menu.
             for index, model in enumerate(self.row_model):
                 if model['state'] in RETRYABLE and not model.get('tail') and not model.get('cleared'):
-                    # A failure keeps its reason; 已保留到未完成列表 and the YouTube wait no longer hold.
+                    # A failure keeps its reason; 已保留在未完成 and the YouTube wait no longer hold.
                     reason = str(model.get('detail') or '') if model['state'] == 'failed' else ''
                     cleared = i18n.t('download.detail.cleared')
                     self.update_row(index, cleared=True, chip=i18n.t('download.chip.cleared'), tone='idle',
                                     icon=ui_theme.ICON_PENDING, detail=f'{cleared} · {reason}' if reason else cleared)
             self.show_unfinished_tail()
+            # "the links are kept" no longer holds
             if ui_theme.full_text(self.metrics) in (i18n.t('download.metrics.finished_unfinished'),
                                                     i18n.t('download.metrics.bot'), i18n.t('download.metrics.bot_cookies')):
-                self.metrics.configure(text=i18n.t('download.metrics.cleared'), text_color=ui_theme.MUTED)
-            self.refresh_stats(final=self.final_stats())
-        # (final fix round 1, rv-findings-1-1) The header of the finished job no longer names
-        # unfinished links that the stats line has stopped counting.  (1.7.0, I18N.md 8.7) It is
-        # rendered from the job's numbers, not cut out of the shown text.
-        success = self._finished_success(ui_theme.full_text(self.current_title))
-        if success is not None:
-            title = i18n.t('download.title.finished_cleared', success=success)
-            self._title_alternatives(title, (i18n.t('download.title.finished'),))
-            self.current_title.configure(text=title)
+                self.metrics.configure(text='', text_color=ui_theme.MUTED)
         self.refresh_failed_button()
         self.cancel_bot_retry()
-
-    def _finished_success(self, title):
-        """The success count when ``title`` is the header of a job that left links unfinished
-        (download.title.finished_unfinished in the running language), else None.  The numbers of
-        the job that ended last (on_done) come first; a header written otherwise is read with
-        the template, numbers only."""
-        summary = getattr(self, 'job_summary', None)
-        if summary is not None:
-            success, unfinished = summary
-            if title == i18n.t('download.title.finished_unfinished', success=success, unfinished=unfinished):
-                return success
-        shape = i18n.t('download.title.finished_unfinished', success='\x00', unfinished='\x01')
-        pattern = ''.join({'\x00': r'(?P<success>\d+)', '\x01': r'\d+'}.get(part, re.escape(part))
-                          for part in re.split('([\x00\x01])', shape))
-        match = re.fullmatch(pattern, title)
-        return int(match.group('success')) if match else None
 
     # ================================================================ bot-check retry (SPEC 3.11)
     def arm_bot_retry(self, round_number):
@@ -1948,7 +1809,8 @@ class DownloadUI:
             return
         self.wait_seconds = seconds
         reason = messages.show(self.wait_context['reason'])        # a core message (core.wait.*)
-        self.live_metrics(i18n.t('download.metrics.wait', reason=reason, time=time_text(seconds)))
+        # the time first: a narrow window cuts the end of the reason, never the countdown
+        self.live_metrics(i18n.t('download.metrics.wait', reason=reason, time=time_text(seconds)), ui_theme.WARN)
         self.update_row(self.active_index, chip=i18n.t('download.chip.waiting'), tone='warn', icon=ui_theme.ICON_CLOCK,
                         detail=f'{reason} · {time_text(seconds)}')
         self.refresh_shell()
@@ -1964,22 +1826,20 @@ class DownloadUI:
                 self.progress.configure(mode='determinate')
 
     # ================================================================ event handlers
-    def live_metrics(self, text):
-        """The metrics line while an item runs.  An item whose row has no widgets (beyond the row
-        cap) is also named here, where a narrow window still has room for its title; the task
-        title can keep only a few of its characters (final-fix-ui, polish-visual-3)."""
-        self.metrics_base = text
-        row = self.active_index
-        if self.operation == 'download' and row is not None and len(self.rows) <= row < len(self.row_model):
-            text = i18n.t('download.metrics.current', text=text, title=self.row_model[row]['title'])
-        self.metrics.configure(text=text)
+    def live_metrics(self, text, color=ui_theme.MUTED):
+        """The metrics line while an item runs (WARN while it waits)."""
+        if self.metrics.cget('text_color') != color:
+            self.metrics.configure(text=text, text_color=color)
+        else:
+            self.metrics.configure(text=text)
+        self.place_task_actions()
 
     def on_log(self, value):
         self.append_log(value)
         if self.operation == 'download' and str(value).startswith(CONVERTING):
             self.clear_wait()
             self.update_row(self.active_index, chip=i18n.t('download.chip.converting'), tone='info', icon=None)
-            self.live_metrics(i18n.t('download.metrics.converting'))
+            self.live_metrics(i18n.t('download.chip.processing'))
             self.animate(True)
 
     def on_item(self, value):
@@ -1997,7 +1857,6 @@ class DownloadUI:
         self.append_log(i18n.t('log.link_n', index=index, total=total, url=value['url']))
         self.set_window_title(f'{index}/{total}')
         self.title_stamp = time.monotonic()
-        self.refresh_stats()
         self.refresh_shell()
         self.follow_row(self.active_index)
 
@@ -2014,11 +1873,9 @@ class DownloadUI:
     def on_title(self, value):
         if self.operation == 'download' and self.active_index is not None:
             self.update_row(self.active_index, title=messages.show(value))
-            if self.active_index >= len(self.rows):
+            if self.active_index >= len(self.rows) and not self.foreign_activity:
                 total = max(self.job_row_count(), self.active_index + 1)
                 self.current_title.configure(text=self._active_title(self.active_index + 1, total))
-                if self.busy and not self.foreign_activity and self.metrics_base:
-                    self.live_metrics(self.metrics_base)
 
     def on_waiting(self, value):
         # The engine repeats 'waiting' every second of a wait: follow the active row only when the wait
@@ -2034,7 +1891,7 @@ class DownloadUI:
 
     def on_resuming(self, value):
         self.clear_wait()
-        self.live_metrics(i18n.t('download.metrics.resuming'))
+        self.live_metrics(i18n.t('download.chip.processing'))
         self.update_row(self.active_index, chip=i18n.t('download.chip.processing'), tone='info', icon=None)
         self.animate(True)
         self.refresh_shell()
@@ -2045,11 +1902,12 @@ class DownloadUI:
         self.animate(fraction is None)
         if fraction is not None:
             self.progress.set(fraction)
-        percent = f'{100 * fraction:.1f}%' if fraction is not None else i18n.t('download.chip.downloading')
+        # whole percent, rounded down: 100% only when it is all there
+        percent = f'{math.floor(100 * fraction)}%' if fraction is not None else i18n.t('download.chip.downloading')
         speed = bytes_text(value.get('speed')) + '/s' if value.get('speed') is not None else '—'
         text = i18n.t('download.metrics.progress', percent=percent, done=bytes_text(value.get('downloaded')),
                       total=bytes_text(value.get('total')), speed=speed, eta=time_text(value.get('eta')))
-        if not self.foreign_activity:       # an update's legacy progress event keeps the update header
+        if not self.foreign_activity:       # another activity (collect / update) keeps its header
             self.live_metrics(text)
         if self.operation == 'download':
             self.update_row(self.active_index,
@@ -2141,8 +1999,7 @@ class DownloadUI:
         if skipped == 'downloaded':
             # The title is on the line above; the earlier file (when known) says where it is.
             earlier = Path(path).name if path else i18n.t('download.detail.skipped')
-            self.update_row(index, state='skipped', detail=i18n.t('download.detail.skipped_anyway', earlier=earlier),
-                            **fields)
+            self.update_row(index, state='skipped', detail=earlier, **fields)
         elif skipped == 'bot_check':
             self.update_row(index, state='blocked', detail=i18n.t('download.detail.blocked'), **fields)
         elif value['cancelled']:
@@ -2173,7 +2030,6 @@ class DownloadUI:
                 reason = (i18n.t('download.detail.stale_update', reason=reason) if canonical == engine.STALE_REASON
                           else i18n.t('download.detail.stale_maybe', reason=reason))
             self.update_row(index, state='failed', detail=reason, error=value.get('error') or '', **fields)
-        self.refresh_stats()
 
     def _row_proxy(self, model):
         """The proxy the row's link was downloaded through ('' for none)."""
@@ -2187,7 +2043,6 @@ class DownloadUI:
             self.animate(False)
             if 'failed_urls' in value:
                 self.unfinished = engine.load_unfinished()
-            self.job_ended = True
         finally:
             self.set_busy(False)
         cancelled = bool(value['cancelled'])
@@ -2202,37 +2057,31 @@ class DownloadUI:
         success = value['success']
         unfinished = max(len(value['pending_urls']) if 'pending_urls' in value else 0, value['failed'])
         skipped = value.get('skipped') or 0
-        self.job_summary = (success, unfinished)
         color = ui_theme.MUTED
         # (polish, ui-daily-flow-1) The leftovers of earlier jobs come back below this job's rows.
         self.show_unfinished_tail()
-        shorter = ()        # (final fix round 3, ENV3-1) shorter forms of the title (_title_alternatives)
+        # The title: the first that holds of stopped, engine error, YouTube check, unfinished, all downloaded
+        # before, done.  No summary line: the success count is in the title, the unfinished count on
+        # 重试未完成 (N), the rest on the row chips.
         if cancelled:
             title, metrics = i18n.t('download.title.stopped'), i18n.t('download.metrics.stopped')
         elif engine_error:
-            title, metrics, color = (i18n.t('download.title.engine_error'), i18n.t('download.metrics.engine_error'),
-                                     ui_theme.WARN)
+            # The way out where it exists: 恢复内置引擎 is in Settings only while an updated engine is in use.
+            title, color = i18n.t('download.title.engine_error'), ui_theme.WARN
+            metrics = (i18n.t('download.metrics.engine_error') if getattr(self, 'engine_updated', False)
+                       else i18n.t('download.detail.see_log'))
         elif value.get('bot_check'):
             title = i18n.t('download.title.bot')
             metrics = i18n.t('download.metrics.bot_cookies') if self.cookies.get().strip() else i18n.t('download.metrics.bot')
             color = ui_theme.WARN
         elif unfinished:
-            title = i18n.t('download.title.finished_unfinished', success=success, unfinished=unfinished)
+            title = i18n.t('download.title.finished_n', success=success)
             metrics = i18n.t('download.metrics.finished_unfinished')
-            shorter = (i18n.t('download.title.finished_unfinished_short', unfinished=unfinished),
-                       i18n.t('download.title.finished'))
         elif skipped and not success:
             # (polish, ui-daily-flow-4; WP4 has no text for a job that only skipped links)
-            title, metrics = i18n.t('download.title.all_skipped', skipped=skipped), i18n.t('download.metrics.skipped')
-        elif skipped:
-            title = i18n.t('download.title.done_skipped', success=success, skipped=skipped)
-            metrics = i18n.t('download.metrics.files_saved')
-            shorter = (i18n.t('download.title.done_skipped_short', skipped=skipped), i18n.t('download.title.done_short'))
+            title, metrics = i18n.t('download.title.all_skipped', skipped=skipped), ''
         else:
-            title = i18n.t('download.title.done', success=success)
-            metrics = i18n.t('download.metrics.files_saved')
-            shorter = (i18n.t('download.title.done_short'),)
-        self._title_alternatives(title, shorter)
+            title, metrics = i18n.t('download.title.done', success=success), ''
         if value.get('archive_errors'):
             metrics, color = i18n.t('download.metrics.archive_errors'), ui_theme.WARN
         if not cancelled and not value['failed'] and not unfinished:
@@ -2242,14 +2091,11 @@ class DownloadUI:
             self.progress.set(success / (success + unfinished))
         self.current_title.configure(text=title)
         self.metrics.configure(text=metrics, text_color=color)
-        self.refresh_stats(final=self.final_stats())
+        self.place_task_actions()
         self.append_log(title)
         if value.get('failed_path') and (value.get('unfinished') or unfinished):
             # (polish, ui-wording-consistency-8; WP4.md:77 says 失败清单) the list is 未完成 everywhere else.
             self.append_log(i18n.t('log.unfinished_list', path=value['failed_path']))
-        if self.notice_kind == 'undo':
-            # (polish, ui-daily-flow-3) The job has ended: the undo no longer reads as a start.
-            ui_theme.fit(self.notice_text, i18n.t('download.notice.undo', count=self.undo_count))
         try:
             self.notify_result(success, 0 if cancelled else unfinished)
         except Exception:
@@ -2269,5 +2115,7 @@ class DownloadUI:
             self.show_unfinished_rows()
         since = time.time() - float(self.prefs.get('bot_check_at') or 0)
         if 0 <= since < 1800:
-            self.metrics.configure(text=i18n.t('download.metrics.bot_recent', minutes=max(1, int(since // 60))))
+            # a notice: the task header may be hidden at start-up; 知道了 puts it away
+            self.show_notice('bot_recent', i18n.t('download.notice.bot_recent', minutes=max(1, int(since // 60))),
+                             [(i18n.t('common.got_it'), lambda: self.hide_notice('bot_recent'))])
         self.after(300, self.check_clipboard)

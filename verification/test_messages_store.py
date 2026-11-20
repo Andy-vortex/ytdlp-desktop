@@ -1,18 +1,25 @@
-"""1.8.0 store, collector IPC and updater messages (MESSAGES.md 2.8, 3.3, 3.4, 4.3-4.7, 7.5; WP-3).
+# quick
+"""Store, collector IPC and updater messages (MESSAGES.md 2.8, 3.3, 7.5; WP-3; 2.0.0 S2: format 2).
 
     python -X utf8 -B test_messages_store.py
 
-Every Library writer / reader pair for every record kind of 4.3 and every value type (Message, Raw,
-Value, plain text): sidecar entries, null entries only for liftable Raw texts, orphan pruning, the
-column texts (columns=), legacy rows lifted per field kind and never persisted, foreign entries kept
-byte for byte (I11), _storable with lone surrogates, the 2 KB cap, a 2000-link page; the required I10
-test of 3.4 (a 1.6.0-only-format job through every read-modify-write: the stored options keep their
-bytes); contexts -> Archive -> 资料信息.json -> the owner's files; the collector IPC round trip (worker
--> request.events -> CollectionRunner, a malformed line skipped); str(UpdateError) == updater.MSG_*;
-I2 (schema and user_version), I3, I7, I8 (a library, and settings.json with the failed list, written by
-the frozen 1.7.0 code, read by 1.8.0); the store channels of G4 (every core.collect / core.library /
-core.archive / core.update / value key stored and read back: en without Chinese, zh = the stored
-text).  No window, no network; the I8 children run release-sources/1.7.0 with -B.
+(2.0.0 S2 P2, S2-DESIGN.md 1.1-1.2, 4.1) The library is format 2: every Library writer / reader pair
+for every record kind, each text slot holding a message ({"k", "p"}) or the text itself, and nothing
+else; the store census (a Message fed to every writer lands as {"k"}, a Raw as a string, nothing else
+of a record is read as a message); the job title column holds text only (title_links / via say how the
+history names a job); I10 in format 2 (a job whose options carry an archive-context title message
+through every read-modify-write: the options keep their bytes, extend_job changes only the links);
+unknown keys and params of a later version kept through every write; _storable with lone surrogates;
+a 2000-link page; contexts -> Archive -> 资料信息.json -> the owner's files; the collector IPC round
+trip ({"$m": {"k", "p"}}, a malformed line skipped); str(UpdateError) == its zh catalog text; I2 (the schema
+of 1.7.0, frozen here, user_version 2); I7 (no proxy credential in any stored or IPC byte); the census
+of the unfinished list; the store channels of G4 (every core.collect / core.library / core.archive /
+core.update / value key stored and read back: en without Chinese, zh the message's text).  No window,
+no network.
+
+(2.0.0 S2 P4) The I8 tests that let the frozen 1.7.0 code write a library and a
+failed list and read them back are gone: 2.0.0 does not read the stores of older versions (S2 Q1).  The
+1.5.1 events of the updater are gone too, and so is what this file pinned of the 1.8.0 store codec.
 """
 import _sandbox
 import ast
@@ -22,6 +29,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import string
 import subprocess
@@ -36,17 +44,37 @@ import formats
 import i18n
 import library
 import messages
+import paths
 import updater
 from library import Archive, Library
-from messages import Message, Raw, Value, msg, raw, value
+from messages import Message, Raw, msg, raw
 
 CJK = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
 FORMATTER = string.Formatter()
 A, B, C = ('https://example.invalid/' + name for name in 'abc')
 PAGE = 'https://example.invalid/list'
 MEDIA = 'https://cdn.example.invalid/clip.mp4'
-OLD_170 = _sandbox.release_src('1.7.0')
+# (2.0.0 S2 P4) library.py's SCHEMA of 1.7.0 (git archive 07c9603), frozen: the tables
+# and columns never change (PLAN 5)
+SCHEMA_OF_1_7_0 = """
+    CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, kind TEXT, title TEXT,
+        status TEXT, updated REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS pages(job TEXT, url TEXT, data TEXT, PRIMARY KEY(job,url));
+    CREATE TABLE IF NOT EXISTS subscriptions(id TEXT PRIMARY KEY, name TEXT,
+        enabled INTEGER, interval INTEGER, next_check REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS entries(subscription TEXT, key TEXT, pending INTEGER,
+        data TEXT, PRIMARY KEY(subscription,key));
+    CREATE TABLE IF NOT EXISTS archives(folder TEXT PRIMARY KEY, updated REAL, data TEXT);
+    CREATE TABLE IF NOT EXISTS downloads(key TEXT, format TEXT, url TEXT, title TEXT, path TEXT,
+        finished REAL, job TEXT, PRIMARY KEY(key, format));
+"""
 NUMERIC = {'count', 'code', 'page', 'status', 'length', 'seconds', 'attempt', 'limit', 'line', 'pages', 'links'}
+FALLBACK = {'k': 'value.page_title.fallback'}
+DIRECT = {'k': 'value.link_kind.direct'}
+
+
+# (2.0.0 S3 W4) the zh / en text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import en_t, zh_t
 
 
 @contextlib.contextmanager
@@ -73,10 +101,6 @@ def zh(value_):
 
 def plain(text):
     return str.__str__(text)
-
-
-def compact(entry):
-    return json.dumps(entry, ensure_ascii=False, separators=(',', ':'))
 
 
 class StoreCase(unittest.TestCase):
@@ -108,18 +132,16 @@ class StoreCase(unittest.TestCase):
             return [json.loads(text) for (text,) in db.execute('SELECT data FROM entries WHERE subscription=? ORDER BY rowid',
                                                                 (key,))]
 
-    def download_job(self, links=(A, B), title=None, **options):
-        title = title if title is not None else msg('value.job_title.placeholder', count=len(links),
-                                                     mode=value('mode', formats.MODES[0]))
+    def download_job(self, links=(A, B), title='', **options):
         return self.store.create_job('download', title, dict(urls=list(links), output=str(self.root), **options))
 
-    def collect_job(self, title=None):
+    def collect_job(self, title=None, via=None):
         return self.store.create_job('collect', title if title is not None else raw(PAGE),
-                                     dict(urls=[PAGE], dynamic=False, scrolls=0, selector='', max_pages=1))
+                                     dict(urls=[PAGE], dynamic=False, scrolls=0, selector='', max_pages=1), via=via)
 
-    def assertMessage(self, item, key, origin='stored'):
+    def assertMessage(self, item, key):
         self.assertIsInstance(item, Message, item)
-        self.assertEqual((item.key, item.origin), (key, origin), item)
+        self.assertEqual(item.key, key, item)
 
     def assertEnglish(self, item, expected=None):
         shown = en(item)
@@ -132,31 +154,31 @@ class StoreCase(unittest.TestCase):
 # ============================================================================ jobs (record kind job)
 
 class JobTests(StoreCase):
-    def test_create_job_writes_the_column_entry_and_reads_it_back(self):
+    def test_create_job_writes_the_title_text_and_reads_it_back(self):
         job = self.download_job()
         title, data, _text = self.raw_job(job)
-        self.assertEqual(title, '2 条 · ' + formats.MODES[0])
-        self.assertEqual(data['msgs'], {title: {'k': 'value.job_title.placeholder',
-                                                'p': {'count': 2, 'mode': {'g': 'mode', 'v': formats.MODES[0]}}}})
+        self.assertEqual(title, '', 'no title yet: the history names it after its links')
+        self.assertEqual((data['done'], data['errors'], data['files']), ([], [], []))
+        for key in ('msgs', 'completed', 'completed_variants', 'titled', 'last_reason', 'via', 'title_links'):
+            self.assertNotIn(key, data)
         for record in (self.store.job(job), self.store.history()[0]):
-            self.assertMessage(record['title'], 'value.job_title.placeholder')
-            self.assertIsInstance(record['title'].params['mode'], Value)
-            self.assertNotIn('msgs', record['data'])
-            self.assertEnglish(record['title'])
-            self.assertTrue(en(record['title']).startswith('Links: 2 · '), en(record['title']))
-        # A collect job named by its first link (raw): no entry, the plain text reads back.
+            self.assertEqual(record['title'], '')
+            self.assertEqual(library.title_parts(record), ('multi_link', A, 2))
+        # A collect job named by its first link: the link itself, read back as raw text.
         collect = self.collect_job()
-        self.assertNotIn('msgs', self.raw_job(collect)[1])
-        self.assertEqual(self.store.job(collect)['title'], PAGE)
-        # A subscription check names its job with the decoded subscription name (C-F40, nested).
-        named = self.collect_job(msg('value.job_title.subscription', name=msg('value.subscription.untitled')))
+        self.assertEqual(self.raw_job(collect)[0], PAGE)
+        self.assertIs(type(self.store.job(collect)['title']), Raw)
+        # A subscription check: the subscription's own name ('' for the untitled one) and via.
+        named = self.collect_job('', via='subscription')
         title, data, _text = self.raw_job(named)
-        self.assertEqual(data['msgs'][title], {'k': 'value.job_title.subscription',
-                                               'p': {'name': {'k': 'value.subscription.untitled'}}})
-        self.assertEnglish(self.store.job(named)['title'], 'Subscription: Untitled subscription')
-        # A raw title that reads like an app text gets a null entry (E2) and stays raw.
+        self.assertEqual((title, data['via']), ('', 'subscription'))
+        self.assertEqual(library.title_parts(self.store.job(named)), ('subscription', ''))
+        # The title column holds text only: a message given as a title is stored as its zh text.
+        made = self.collect_job(msg('value.page_title.fallback'))
+        self.assertEqual(self.raw_job(made)[0], zh_t('value.page_title.fallback'))
+        self.assertIs(type(self.store.job(made)['title']), Raw)
+        # A raw title that reads like an app text stays the text it is, in every language.
         odd = self.collect_job(raw('订阅：x'))
-        self.assertEqual(self.raw_job(odd)[1]['msgs'], {'订阅：x': None})
         self.assertIs(type(self.store.job(odd)['title']), Raw)
         self.assertEqual(en(self.store.job(odd)['title']), '订阅：x')
 
@@ -166,24 +188,21 @@ class JobTests(StoreCase):
         self.store.download_event(single, 'title', 'Some Song')
         self.store.download_event(quirky, 'title', '网页')
         title, data, _text = self.raw_job(multi)
-        self.assertEqual(title, f'{"Some Song"} 等 {2} 条', 'the 1.7.0 bytes')
-        self.assertEqual(data['msgs'], {title: {'k': 'value.job_title.multi', 'p': {'title': 'Some Song', 'count': 2}}})
-        self.assertTrue(data['titled'])
-        self.assertEnglish(self.store.job(multi)['title'], 'Some Song and others (2 links)')
+        self.assertEqual((title, data['title_links']), ('Some Song', 2))
+        self.assertEqual(library.title_parts(self.store.job(multi)), ('multi', 'Some Song', 2))
         title, data, _text = self.raw_job(single)
         self.assertEqual(title, 'Some Song')
-        self.assertNotIn('msgs', data, 'the old placeholder entry is pruned, a raw title costs nothing')
+        self.assertNotIn('title_links', data)
         self.assertEqual(self.store.job(single)['title'], 'Some Song')
         record = self.store.job(quirky)
-        self.assertMessage(record['title'], 'value.job_title.multi')
-        self.assertIs(type(record['title'].params['title']), Raw)
-        self.assertEqual(en(record['title']), '网页 and others (2 links)', 'a media title is never translated')
+        self.assertIs(type(record['title']), Raw)
+        self.assertEqual(en(record['title']), '网页', 'a media title is never translated')
         # Later titles do not rename it; an empty title never does.
         self.store.download_event(multi, 'title', 'Other')
         self.store.download_event(single, 'title', '   ')
-        self.assertEqual(self.raw_job(multi)[0], 'Some Song 等 2 条')
+        self.assertEqual(self.raw_job(multi)[0], 'Some Song')
 
-    def test_item_done_errors_reasons_and_pruning(self):
+    def test_item_done_errors_and_reasons(self):
         job = self.download_job()
         error = msg('core.engine.cannot_start_link', error=msg('core.links.too_long', length=2100, url='youtu.be/x'))
         reason = msg('core.reason.http_403')
@@ -194,226 +213,158 @@ class JobTests(StoreCase):
         self.store.download_event(job, 'item_done', {'success': False, 'url': B, 'error': raw('找不到任务记录。'),
                                                      'reason': raw(' Qq ')})
         _title, data, _text = self.raw_job(job)
-        self.assertEqual(data['errors'], [plain(error), 'ERROR: [generic] b: boom', '找不到任务记录。'])
-        self.assertEqual(data['msgs'][plain(error)], {'k': 'core.engine.cannot_start_link', 'p': {
-            'error': {'k': 'core.links.too_long', 'p': {'length': 2100, 'url': 'youtu.be/x'}}}})
-        self.assertIsNone(data['msgs']['找不到任务记录。'], 'a raw text equal to an app text: null (E2)')
-        self.assertNotIn('ERROR: [generic] b: boom', data['msgs'])
-        self.assertEqual(data['last_reason'], {'error': '找不到任务记录。', 'reason': 'Qq'}, 'stripped, type kept')
+        self.assertEqual(data['errors'], [
+            {'error': {'k': 'core.engine.cannot_start_link',
+                       'p': {'error': {'k': 'core.links.too_long', 'p': {'length': 2100, 'url': 'youtu.be/x'}}}},
+             'reason': {'k': 'core.reason.http_403'}},
+            {'error': 'ERROR: [generic] b: boom', 'reason': None},
+            {'error': '找不到任务记录。', 'reason': 'Qq'}])
         record = self.store.job(job)['data']
-        self.assertMessage(record['errors'][0], 'core.engine.cannot_start_link')
-        self.assertIs(type(record['errors'][1]), str)
-        self.assertIs(type(record['errors'][2]), Raw)
-        self.assertIs(type(record['last_reason']['reason']), str, 'no entry for Qq: it reads back as plain text')
-        # The reason of an error, with one entry for the text both fields hold (collision, L-5).
-        other = self.download_job()
-        self.store.download_event(other, 'item_done', {'success': False, 'url': A, 'error': error, 'reason': reason})
-        _title, data, _text = self.raw_job(other)
-        self.assertEqual(data['last_reason'], {'error': plain(error), 'reason': plain(reason)})
-        self.assertEqual(data['msgs'][plain(reason)], {'k': 'core.reason.http_403'})
-        last = self.store.job(other)['data']['last_reason']
-        self.assertMessage(last['reason'], 'core.reason.http_403')
-        self.assertEnglish(last['reason'], 'The site refused access (403)')
-        # errors[-20:]: the entry of a dropped error is pruned with it (E4).
-        third = self.download_job()
-        self.store.download_event(third, 'item_done', {'success': False, 'url': A, 'error': msg('core.collect.too_large')})
-        self.assertIn('页面超过 8 MB，请缩小采集范围。', self.raw_job(third)[1]['msgs'])
+        self.assertMessage(record['errors'][0]['error'], 'core.engine.cannot_start_link')
+        self.assertEqual(plain(record['errors'][0]['error']), plain(error))
+        self.assertMessage(record['errors'][0]['reason'], 'core.reason.http_403')
+        self.assertEnglish(record['errors'][0]['reason'], en_t('core.reason.http_403'))
+        self.assertIs(type(record['errors'][1]['error']), Raw)
+        self.assertIsNone(record['errors'][1]['reason'])
+        self.assertIs(type(record['errors'][2]['error']), Raw, 'the source said it: raw, never an app text')
+        self.assertEqual(en(record['errors'][2]['error']), '找不到任务记录。')
+        # errors[-20:]
         for number in range(25):
-            self.store.download_event(third, 'item_done', {'success': False, 'url': A,
-                                                           'error': msg('core.engine.error', error=f'e{number}')})
-        title, data, _text = self.raw_job(third)
-        self.assertEqual(len(data['errors']), 20)
-        self.assertEqual(set(data['msgs']), set(data['errors']) | {title})
-        self.assertNotIn('页面超过 8 MB，请缩小采集范围。', data['msgs'])
+            self.store.download_event(job, 'item_done', {'success': False, 'url': A,
+                                                         'error': msg('core.engine.error', error=f'e{number}')})
+        errors = self.raw_job(job)[1]['errors']
+        self.assertEqual(len(errors), 20)
+        self.assertEqual(errors[-1], {'error': {'k': 'core.engine.error', 'p': {'error': 'e24'}}, 'reason': None})
 
-    def test_item_done_cut_reason_is_stored_stripped(self):
-        # (fix round 1, WP3-R1-01) A reason cut to 70 characters (D-F28) can end in a space or a
-        # newline; 1.7.0 stored reason.strip(), so the stored bytes are the stripped zh text and the
-        # key is kept (en shows the whole message, as for cut).
+    def test_a_cut_reason_is_stored_as_its_message(self):
+        """(2.0.0, S2-DESIGN.md D7) A reason the task row cut to 70 characters (D-F28) keeps its key and
+        params; stored as {"k", "p"}, it reads back whole (en always showed it whole; the note cuts its
+        own text to 130 characters)."""
         error = msg('core.engine.cannot_start_link',
                     error=msg('core.cookies.missing', file='C:/x' + 'a' * 18 + ' b/cookies.txt'))
-        text = plain(error)
-        cases = {'space': text.index('→ ') + 2, 'newline': text.index('\n') + 1}
-        for name, length in cases.items():
-            with self.subTest(name):
-                reason = messages.cut(error, length)
-                self.assertMessage(reason, 'core.engine.cannot_start_link', 'live')
-                self.assertNotEqual(plain(reason), plain(reason).strip(), 'the cut ends in whitespace')
-                job = self.download_job()
-                self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': error,
-                                                             'reason': reason})
-                _title, data, _text = self.raw_job(job)
-                self.assertEqual(data['last_reason'], {'error': text, 'reason': plain(reason).strip()}, '1.7.0 bytes')
-                self.assertEqual(data['msgs'][plain(reason).strip()], data['msgs'][text], 'the key is kept')
-                last = self.store.job(job)['data']['last_reason']['reason']
-                self.assertMessage(last, 'core.engine.cannot_start_link')
-                self.assertEqual(zh(last), plain(reason).strip())
-                self.assertEqual(en(last), en(error), 'en shows the whole message')
-                self.assertEnglish(last)
-        # A reason without edge whitespace is stored as it is (the same object).
-        self.assertIs(library._stripped_reason(error), error)
-        self.assertEqual(library._stripped_reason(value('mode', ' x ')), 'x')
-        self.assertIs(type(library._stripped_reason(value('mode', ' x '))), Value)
+        reason = messages.cut(error, 70)
+        self.assertNotEqual(plain(reason), plain(error))
+        job = self.download_job()
+        self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': error, 'reason': reason})
+        stored = self.raw_job(job)[1]['errors'][0]
+        self.assertEqual(stored['reason'], messages.to_json(error))
+        last = self.store.job(job)['data']['errors'][0]['reason']
+        self.assertMessage(last, 'core.engine.cannot_start_link')
+        self.assertEqual((zh(last), en(last)), (plain(error), en(error)))
+        self.assertEnglish(last)
 
     def test_library_errors_are_messages(self):
         with self.assertRaises(ValueError) as caught:
             self.store.job('no-such-job')
-        self.assertMessage(caught.exception.args[0], 'core.library.no_job', 'live')
-        self.assertEqual(str(caught.exception), '找不到任务记录。')
+        self.assertMessage(caught.exception.args[0], 'core.library.no_job')
+        self.assertEqual(str(caught.exception), zh_t('core.library.no_job'))
         for call in (lambda: self.store.subscription('x', {}, interval=5),
                      lambda: self.store.configure_subscription('x', True, 5)):
             with self.assertRaises(ValueError) as caught:
                 call()
-            self.assertMessage(caught.exception.args[0], 'core.library.bad_interval', 'live')
+            self.assertMessage(caught.exception.args[0], 'core.library.bad_interval')
         folder = self.root / 'not-a-database'
         folder.mkdir()
         store, warning = library.open_library(folder)
-        self.assertMessage(warning, 'core.library.temporary', 'live')
-        self.assertTrue(plain(warning).startswith('历史记录本次不保存：'), warning)
+        self.assertMessage(warning, 'core.library.temporary')
+        self.assertTrue(plain(warning).startswith(zh_t('core.library.temporary', error='')), warning)
         self.assertIs(type(warning.params['error']), str, 'the sqlite / OS text is a raw param')
         self.assertNotEqual(store.path.parent, folder)
 
     def test_collection_events_pages_and_errors(self):
         job = self.collect_job()
         page = {'url': PAGE, 'title': msg('value.page_title.fallback'), 'text': '', 'markdown': '',
-                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE},
-                          {'url': A, 'title': raw('Song A'), 'kind': '视频页面', 'source': PAGE},
-                          {'url': B, 'title': raw('网页'), 'kind': '网页链接', 'source': PAGE}],
+                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE},
+                          {'url': A, 'title': raw('Song A'), 'kind': 'video_page', 'source': PAGE},
+                          {'url': B, 'title': raw('网页'), 'kind': 'web', 'source': PAGE}],
                 'next': None, '_checkpoint': {'visited': [PAGE], 'todo': []}}
         self.store.collection_event(job, 'collect_page', page)
         self.store.collection_event(job, 'collect_error', msg('core.collect.http_status', status=503))
         self.store.collection_event(job, 'collect_error', 'curl: (7) Failed to connect')
         self.store.collection_event(job, 'collect_checkpoint', {'visited': [PAGE], 'todo': [{'url': C, 'depth': 0}]})
         stored = self.raw_pages(job)[0]
-        self.assertEqual(stored['msgs'], {'网页': {'k': 'value.page_title.fallback'}, '媒体直链': {'k': 'value.link_kind.direct'}},
-                         'a message wins over the null of the raw link titled 网页 (L-5)')
+        self.assertEqual(stored['title'], FALLBACK)
+        self.assertEqual([link['title'] for link in stored['links']], [DIRECT, 'Song A', '网页'])
+        self.assertEqual([link['kind'] for link in stored['links']], ['media', 'video_page', 'web'])
         self.assertNotIn('_checkpoint', stored)
+        self.assertNotIn('msgs', stored)
         _title, data, _text = self.raw_job(job)
         self.assertEqual(data['checkpoint'], {'visited': [PAGE], 'todo': [{'url': C, 'depth': 0}]})
-        self.assertEqual(data['errors'], ['网站返回 HTTP 503，可尝试动态模式或稍后重试。', 'curl: (7) Failed to connect'])
-        self.assertEqual(data['msgs'], {data['errors'][0]: {'k': 'core.collect.http_status', 'p': {'status': 503}}})
+        self.assertEqual(data['errors'], [{'error': {'k': 'core.collect.http_status', 'p': {'status': 503}}, 'reason': None},
+                                          {'error': 'curl: (7) Failed to connect', 'reason': None}])
         record = self.store.job(job)
         self.assertMessage(record['pages'][0]['title'], 'value.page_title.fallback')
         self.assertMessage(record['pages'][0]['links'][0]['title'], 'value.link_kind.direct')
-        self.assertIs(type(record['pages'][0]['links'][1]['title']), str)
-        self.assertNotIn('msgs', record['pages'][0])
-        self.assertEnglish(record['data']['errors'][0], 'The site returned HTTP 503. Try dynamic mode or try again later.')
-        # INSERT OR REPLACE: a page collected again with a raw title loses the old entries.
+        self.assertIs(type(record['pages'][0]['links'][1]['title']), Raw)
+        self.assertEqual(en(record['pages'][0]['links'][2]['title']), '网页', 'a link literally titled 网页 is raw')
+        self.assertEnglish(record['data']['errors'][0]['error'], en_t('core.collect.http_status', status=503))
+        # INSERT OR REPLACE: a page collected again replaces the row.
         self.store.collection_event(job, 'collect_page', dict(page, title=raw('Real title'), links=[], _checkpoint=None))
-        self.assertNotIn('msgs', self.raw_pages(job)[0])
-
-    def test_rename_job_updates_the_column_and_its_entry_together(self):
-        job = self.download_job()
-        _title, _data, before = self.raw_job(job)
-        self.store.rename_job(job, msg('value.job_title.subscription', name=raw('Qq')))
-        title, data, _text = self.raw_job(job)
-        self.assertEqual(title, '订阅：Qq')
-        self.assertEqual(data['msgs'], {'订阅：Qq': {'k': 'value.job_title.subscription', 'p': {'name': 'Qq'}}})
-        self.store.rename_job(job, 'Plain name')
-        title, data, text = self.raw_job(job)
-        self.assertEqual(title, 'Plain name')
-        self.assertNotIn('msgs', data)
-        self.assertEqual(json.loads(text), {key: item for key, item in json.loads(before).items() if key != 'msgs'})
-        self.store.rename_job(job, 'Another plain name')
-        self.assertEqual(self.raw_job(job)[2], text, 'an unchanged sidecar does not rewrite the record')
-        self.store.rename_job('no-such-job', 'x')           # as 1.7.0: nothing to rename, no error
-
-    def test_legacy_rows_are_lifted_per_field_kind_and_never_persisted(self):
-        data = {'options': {'urls': [A, B], 'mode': formats.MODES[0]}, 'subscription': None, 'checkpoint': None,
-                'errors': ['页面超过 8 MB，请缩小采集范围。', '此链接无法开始：链接过长（2100 个字符），无法交给下载引擎：youtu.be/x'],
-                'last_reason': {'error': '此链接无法开始：链接过长（2100 个字符），无法交给下载引擎：youtu.be/x',
-                                'reason': '此链接无法开始：链接过长（2100 个字符），无法交给下载引擎：youtu.be/x'[:70]},
-                'owner': 1, 'worker': None, 'completed': [], 'files': []}
-        text = json.dumps(data, ensure_ascii=False)
-        with opened(self.store.path) as db:
-            db.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?)', ('old', 'download', '2条 · 音频 · 原始最佳', 'partial', 1.0, text))
-            db.execute('INSERT INTO pages VALUES(?,?,?)', ('old', PAGE, json.dumps(
-                {'url': PAGE, 'title': '网页', 'links': [{'url': MEDIA, 'title': '动态页面媒体请求', 'kind': '媒体地址',
-                                                         'source': PAGE}]}, ensure_ascii=False)))
-        record = self.store.job('old')
-        self.assertMessage(record['title'], 'value.job_title.placeholder', 'legacy')
-        self.assertMessage(record['data']['errors'][0], 'core.collect.too_large', 'legacy')
-        self.assertMessage(record['data']['errors'][1], 'core.engine.cannot_start_link', 'legacy')
-        self.assertMessage(record['data']['last_reason']['reason'], 'core.engine.cannot_start_link', 'legacy')
-        self.assertEqual(record['data']['last_reason']['reason'], data['last_reason']['reason'], 'the stored text (I4)')
-        self.assertMessage(record['pages'][0]['title'], 'value.page_title.fallback', 'legacy')
-        self.assertMessage(record['pages'][0]['links'][0]['title'], 'value.link_kind.dynamic_request', 'legacy')
-        for item in (record['title'], *record['data']['errors'], record['data']['last_reason']['reason']):
-            self.assertEnglish(item)
-        self.store.change_job('old', status='interrupted')
-        self.assertEqual(self.raw_job('old')[2], text, 'a legacy guess is never written (I5): same bytes')
+        self.assertEqual(self.raw_pages(job)[0]['title'], 'Real title')
 
     def test_the_interrupted_marking_reads_the_row_again_for_writing(self):
         job = self.download_job()
         self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': msg('core.collect.too_large')})
         self.store.change_job(job, owner=None, worker=None)
-        _title, before, _text = self.raw_job(job)
+        _title, before, text = self.raw_job(job)
         rows = self.store.history()
         self.assertEqual(rows[0]['status'], 'interrupted')
-        self.assertNotIn('msgs', rows[0]['data'])
-        _title, after, _text = self.raw_job(job)
-        self.assertEqual(after, before)
+        self.assertMessage(rows[0]['data']['errors'][0]['error'], 'core.collect.too_large')
+        _title, after, after_text = self.raw_job(job)
+        self.assertEqual((after, after_text), (before, text))
         self.assertEqual(self.raw_row('jobs', 'id', job)['status'], 'interrupted')
 
 
-# ============================================================================ the required I10 test (3.4)
+# ============================================================================ the required I10 test (3.4), format 2
 
 class OptionsBytesTests(StoreCase):
-    """A job with a 1.6.0-only format through every read-modify-write: options keep their bytes."""
+    """(S2-DESIGN.md 4.1, review 16) A job whose options carry an archive-context title message, through
+    every read-modify-write: the options' JSON bytes stay; extend_job changes only the links."""
 
     def test_every_read_modify_write_keeps_the_stored_options(self):
         for mode in (formats.MODES[5], formats.MODES[6]):
             with self.subTest(mode=mode):
-                self.assertNotIn(mode, formats.LEGACY_MODES)
-                job = self.download_job((A, B), mode=mode, resolution='最佳',
+                job = self.download_job((A, B), mode=mode, resolution='best',
                                         archive_root=str(self.root / 'archive'),
-                                        archive_contexts={A: {'title': '网页', 'source': PAGE, 'job_id': 'j',
+                                        archive_contexts={A: {'title': msg('value.page_title.fallback'), 'source': PAGE,
+                                                              'job_id': 'j', 'page_url': PAGE},
+                                                          B: {'title': raw('Song B'), 'source': PAGE, 'job_id': 'j',
                                                               'page_url': PAGE}})
                 self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': msg('core.collect.too_large'),
                                                              'reason': msg('core.reason.network')})
 
                 def options_bytes():
-                    data = self.raw_job(job)[1]
-                    self.assertEqual(data['options']['mode_v2'], mode)
-                    self.assertIn(data['options']['mode'], formats.LEGACY_MODES)
-                    return json.dumps(data['options'], ensure_ascii=False)
+                    return json.dumps(self.raw_job(job)[1]['options'], ensure_ascii=False)
 
-                def entries():
-                    return self.raw_job(job)[1].get('msgs', {})
-
-                before, sidecar = options_bytes(), entries()
-                self.assertIn('页面超过 8 MB，请缩小采集范围。', sidecar)
-                self.assertNotIn('msgs', self.raw_job(job)[1]['options'])
-                # Display read: the real format and the lifted context title, nothing written.
+                before = options_bytes()
+                options = json.loads(before)
+                self.assertEqual(options['mode'], mode)
+                self.assertNotIn('mode_v2', options)
+                self.assertEqual(options['archive_contexts'][A]['title'], FALLBACK)
+                self.assertEqual(options['archive_contexts'][B]['title'], 'Song B')
                 shown = self.store.job(job)['data']['options']
-                self.assertEqual(shown['mode'], mode)
-                self.assertNotIn('mode_v2', shown)
-                self.assertMessage(shown['archive_contexts'][A]['title'], 'value.page_title.fallback', 'legacy')
+                self.assertMessage(shown['archive_contexts'][A]['title'], 'value.page_title.fallback')
+                self.assertIs(type(shown['archive_contexts'][B]['title']), Raw)
                 self.assertEqual(options_bytes(), before)
                 steps = [
                     ('history interrupted marking', lambda: (self.store.change_job(job, status='running', owner=None,
                                                                                    worker=None), self.store.history())),
                     ('change_job(status=...)', lambda: self.store.change_job(job, status='partial')),
                     ('change_job(worker=...)', lambda: self.store.change_job(job, worker=os.getpid())),
+                    ('change_job(options=read options)', lambda: self.store.change_job(
+                        job, options=self.store.job(job)['data']['options'])),
                     ('item_done', lambda: self.store.download_event(job, 'item_done', {'success': True, 'url': A})),
                     ('done', lambda: self.store.download_event(job, 'done', {'cancelled': False, 'failed': 1})),
                     ('title', lambda: self.store.download_event(job, 'title', 'Some Song')),
-                    ('rename_job', lambda: self.store.rename_job(job, msg('value.job_title.subscription', name=raw('Qq')))),
                 ]
                 for name, step in steps:
                     step()
                     self.assertEqual(options_bytes(), before, name)
-                    data = self.raw_job(job)[1]
-                    present = set(data['errors']) | set(data['last_reason'].values())
-                    kept = [text for text in sidecar if text in present]
-                    self.assertEqual(len(kept), 2, name)
-                    for text in kept:
-                        self.assertEqual(entries().get(text), sidecar[text], f'{name}: the entry of an unchanged text')
-                # extend_job changes the options on purpose (its own read_options / stored_options pair),
-                # so its check is that the format bytes stay and only the links change.
+                    errors = self.raw_job(job)[1]['errors']
+                    self.assertEqual(errors[0], {'error': {'k': 'core.collect.too_large'},
+                                                 'reason': {'k': 'core.reason.network'}}, name)
                 self.store.extend_job(job, [C])
                 after = self.raw_job(job)[1]['options']
-                self.assertEqual((after['mode'], after['mode_v2']), (json.loads(before)['mode'], mode))
                 self.assertEqual(after['urls'], [A, B, C])
                 self.assertEqual({key: item for key, item in after.items() if key != 'urls'},
                                  {key: item for key, item in json.loads(before).items() if key != 'urls'})
@@ -428,68 +379,65 @@ class SubscriptionTests(StoreCase):
 
     def test_names(self):
         untitled, typed, named = (self.store.subscription(name, self.options()) for name in ('  ', '未命名订阅', ' My list '))
-        name, data = self.raw_subscription(untitled)
-        self.assertEqual((name, data['msgs']), ('未命名订阅', {'未命名订阅': {'k': 'value.subscription.untitled'}}))
-        name, data = self.raw_subscription(typed)
-        self.assertEqual((name, data['msgs']), ('未命名订阅', {'未命名订阅': None}), 'the owner typed it: raw (E2)')
+        self.assertEqual(self.raw_subscription(untitled)[0], '', 'no name: the untitled one is shown')
+        self.assertEqual(self.raw_subscription(typed)[0], '未命名订阅', 'the owner typed it')
         name, data = self.raw_subscription(named)
         self.assertEqual(name, 'My list')
-        self.assertNotIn('msgs', data)
         self.assertEqual(json.dumps(data, ensure_ascii=False), json.dumps(
             dict(options=dict(self.options(), proxy=''), media_only=True, first_new=True, initialized=False,
                  last_check=None, last_error='', last_new=0), ensure_ascii=False), 'the 1.7.0 bytes')
         rows = {row['id']: row for row in self.store.subscriptions()}
         self.assertMessage(rows[untitled]['name'], 'value.subscription.untitled')
+        self.assertEqual(rows[untitled]['name_text'], '')
         self.assertIs(type(rows[typed]['name']), Raw)
-        self.assertEqual((en(rows[untitled]['name']), en(rows[typed]['name'])), ('Untitled subscription', '未命名订阅'))
-        self.assertIs(type(rows[named]['name']), str)
+        self.assertEqual((en(rows[untitled]['name']), en(rows[typed]['name'])), (en_t('value.subscription.untitled'), '未命名订阅'))
+        self.assertEqual((rows[named]['name'], rows[named]['name_text']), ('My list', 'My list'))
         self.assertNotIn('msgs', rows[untitled]['data'])
+        # Renaming writes the name column only; an empty name is the untitled one again.
+        _name, before = self.raw_subscription(named)
+        self.assertTrue(self.store.rename_subscription(named, '  ' + 'x' * 150))
+        self.assertEqual(self.raw_subscription(named), ('x' * 100, before))
+        self.assertTrue(self.store.rename_subscription(named, msg('value.page_title.fallback')))
+        self.assertEqual(self.raw_subscription(named)[0], zh_t('value.page_title.fallback'))
+        self.assertTrue(self.store.rename_subscription(named, ' '))
+        self.assertMessage(self.store.subscriptions()[2]['name'], 'value.subscription.untitled')
+        self.assertFalse(self.store.rename_subscription('no-such', 'x'))
 
     def test_last_error_clauses_and_the_entries_of_a_check(self):
         key = self.store.subscription('', self.options())
         joined = messages.clauses([msg('core.collect.needs_chrome'), msg('core.collect.http_status', status=503)])
         self.store.finish_subscription(key, [], False, joined)
         name, data = self.raw_subscription(key)
-        self.assertEqual(data['last_error'], '动态采集需要安装 Google Chrome；普通网页模式无需浏览器。；网站返回 HTTP 503，可尝试动态模式或稍后重试。')
-        self.assertEqual(data['msgs'][data['last_error']], {'k': 'common.clauses', 'p': {'parts': [
+        self.assertEqual(data['last_error'], {'k': 'common.clauses', 'p': {'parts': [
             {'k': 'core.collect.needs_chrome'}, {'k': 'core.collect.http_status', 'p': {'status': 503}}]}})
-        self.assertIn(name, data['msgs'], 'the column entry survives the write (columns=)')
+        self.assertEqual(name, '')
         row = self.store.subscriptions()[0]
         self.assertMessage(row['data']['last_error'], 'common.clauses')
+        self.assertEqual(plain(row['data']['last_error']),
+                         zh_t('core.collect.needs_chrome') + i18n.JOIN
+                         + zh_t('core.collect.http_status', status=503))
         self.assertEnglish(row['data']['last_error'])
         self.store.finish_subscription(key, [], False)
         data = self.raw_subscription(key)[1]
-        self.assertEqual(data['last_error'], '检查中断；下次重试，不更新已见记录')
-        self.assertEqual(set(data['msgs']), {'未命名订阅', data['last_error']}, 'the old last_error entry is pruned')
+        self.assertEqual(data['last_error'], {'k': 'value.subscription.interrupted'})
+        self.store.finish_subscription(key, [], False, raw('curl: (6) x'))
+        self.assertEqual(self.raw_subscription(key)[1]['last_error'], 'curl: (6) x')
         page = {'url': PAGE, 'title': msg('value.page_title.fallback'),
-                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE},
-                          {'url': A, 'title': raw('Song A'), 'kind': '视频页面', 'source': PAGE},
-                          {'url': B, 'title': raw('Web'), 'kind': '网页链接', 'source': PAGE}]}
+                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE},
+                          {'url': A, 'title': raw('Song A'), 'kind': 'video_page', 'source': PAGE},
+                          {'url': B, 'title': raw('Web'), 'kind': 'web', 'source': PAGE}]}
         self.assertEqual(self.store.finish_subscription(key, [page], True), 2)
         data = self.raw_subscription(key)[1]
         self.assertEqual(data['last_error'], '')
-        self.assertEqual(set(data['msgs']), {'未命名订阅'})
         entries = self.raw_entries(key)
-        self.assertEqual(entries[0]['msgs'], {'媒体直链': {'k': 'value.link_kind.direct'}, '网页': {'k': 'value.page_title.fallback'}})
-        self.assertEqual(entries[1]['msgs'], {'网页': {'k': 'value.page_title.fallback'}})
+        self.assertEqual([(entry['title'], entry['page_title']) for entry in entries], [(DIRECT, FALLBACK),
+                                                                                        ('Song A', FALLBACK)])
+        self.assertNotIn('msgs', entries[0])
         pending = self.store.pending(key)
         self.assertMessage(pending[0]['title'], 'value.link_kind.direct')
         self.assertMessage(pending[1]['page_title'], 'value.page_title.fallback')
-        self.assertIs(type(pending[1]['title']), str)
-        self.assertNotIn('msgs', pending[0])
-        self.assertEnglish(pending[0]['title'], 'Direct link')
-
-    def test_a_legacy_last_error_with_a_semicolon_inside_a_clause(self):
-        key = self.store.subscription('Qq', self.options())
-        legacy = '动态采集需要安装 Google Chrome；普通网页模式无需浏览器。；网站返回 HTTP 503，可尝试动态模式或稍后重试。'
-        with opened(self.store.path) as db:
-            data = json.loads(db.execute('SELECT data FROM subscriptions').fetchone()[0])
-            data['last_error'] = legacy
-            db.execute('UPDATE subscriptions SET data=?', (json.dumps(data, ensure_ascii=False),))
-        shown = self.store.subscriptions()[0]['data']['last_error']
-        self.assertMessage(shown, 'common.clauses', 'legacy')
-        self.assertEnglish(shown)
-        self.assertEqual([part.key for part in shown.params['parts']], ['core.collect.needs_chrome', 'core.collect.http_status'])
+        self.assertIs(type(pending[1]['title']), Raw)
+        self.assertEnglish(pending[0]['title'], en_t('value.link_kind.direct'))
 
 
 # ============================================================================ archive (contexts -> Archive -> files)
@@ -498,7 +446,7 @@ class ArchiveTests(StoreCase):
     def collected(self):
         job = self.collect_job()
         page = {'url': PAGE, 'title': msg('value.page_title.fallback'), 'text': 'Body', 'markdown': 'Body',
-                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE}],
+                'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE}],
                 'next': None, '_checkpoint': {'visited': [PAGE], 'todo': []}}
         self.store.collection_event(job, 'collect_page', page)
         return job
@@ -509,50 +457,50 @@ class ArchiveTests(StoreCase):
         self.assertMessage(context['title'], 'value.link_kind.direct')
         self.assertEqual((context['job_id'], context['source'], context['page_url']), (job, PAGE, PAGE))
         page = self.store.job(job)['pages'][0]
-        for lang, first, readme in (('zh', '网页', '媒体直链'), ('en', 'Web page', 'Direct link')):
+        for lang, first, readme in (('zh', zh_t('value.page_title.fallback'), zh_t('value.link_kind.direct')),
+                                    ('en', en_t('value.page_title.fallback'), en_t('value.link_kind.direct'))):
             with self.subTest(lang=lang), _sandbox.language(lang):
                 archive = Archive(self.root / f'archive-{lang}', self.store)
                 folder = archive.prepare(MEDIA, dict(context, page=page))
                 record = json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))
-                self.assertEqual((record['title'], record['page_title']), ('媒体直链', '网页'))
-                self.assertEqual(record['msgs'], {'媒体直链': {'k': 'value.link_kind.direct'},
-                                                  '网页': {'k': 'value.page_title.fallback'}})
+                self.assertEqual((record['title'], record['page_title']), (DIRECT, FALLBACK))
+                self.assertNotIn('msgs', record)
                 self.assertEqual((folder / '网页正文.txt').read_text(encoding='utf-8-sig').splitlines()[0], first)
                 self.assertEqual((folder / '阅读说明.txt').read_text(encoding='utf-8-sig').splitlines()[0], readme)
                 indexed = next(item for item in self.store.archives() if item['folder'] == str(folder))
                 self.assertMessage(indexed['title'], 'value.link_kind.direct')
                 self.assertNotIn('msgs', indexed)
-                # Archive.media: the media's own title (raw) replaces the app-made one; its entry goes.
+                # Archive.media: the media's own title (raw) replaces the app-made one.
                 clip = folder / 'clip.mp4'
                 clip.write_bytes(b'x')
                 archive.media(folder, {'filepath': str(clip), 'title': 'Clip', 'uploader': 'Qq'})
                 record = json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))
-                self.assertEqual(record['title'], 'Clip')
-                self.assertEqual(record['msgs'], {'网页': {'k': 'value.page_title.fallback'}})
+                self.assertEqual((record['title'], record['page_title']), ('Clip', FALLBACK))
                 self.assertEqual((folder / '阅读说明.txt').read_text(encoding='utf-8-sig').splitlines()[0], 'Clip')
                 transcript = self.root / f'notes-{lang}.txt'
                 transcript.write_text('notes', encoding='utf-8')
                 archive.attach(folder, transcript)
                 again = json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))
-                self.assertEqual(again['msgs'], record['msgs'])
+                self.assertEqual({key: item for key, item in again.items() if key != 'transcripts'},
+                                 {key: item for key, item in record.items() if key != 'transcripts'})
                 self.assertEqual(len(again['transcripts']), 1)
-                # A media literally titled 网页 is raw (null entry); the page title's message wins (L-5).
-                with _sandbox.fixture_texts('a media literally titled 网页: user data equal to an app text (L-11)'):
-                    archive.media(folder, {'filepath': str(clip), 'title': '网页'})
-                self.assertEqual(json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))['msgs'],
-                                 {'网页': {'k': 'value.page_title.fallback'}})
+                # A media literally titled 网页 is the media's own text: raw in every language.
+                archive.media(folder, {'filepath': str(clip), 'title': '网页'})
+                self.assertEqual(json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))['title'], '网页')
+                self.assertEqual((folder / '阅读说明.txt').read_text(encoding='utf-8-sig').splitlines()[0], '网页')
 
-    def test_plain_titles_are_written_like_stored_text(self):
-        """A caller that passes plain (keyless) titles gets the 1.7.0 file text: decoded, then shown."""
-        for lang, expected in (('zh', ('网页', '动态页面媒体请求')), ('en', ('Web page', 'Page request'))):
+    def test_plain_titles_are_the_texts_themselves(self):
+        """(2.0.0, S2-DESIGN.md 1.1) A string in a slot is the source's or the owner's own text: shown as it
+        is in every language (the program's own titles arrive as messages)."""
+        for lang in ('zh', 'en'):
             with self.subTest(lang=lang), _sandbox.language(lang):
                 archive = Archive(self.root / f'plain-{lang}')
-                folder = archive.prepare(MEDIA, {'source': PAGE, 'title': '动态页面媒体请求',
-                                                 'page': {'url': PAGE, 'title': '网页', 'text': 'B', 'markdown': 'B'}})
+                folder = archive.prepare(MEDIA, {'source': PAGE, 'title': 'Clip page',
+                                                 'page': {'url': PAGE, 'title': 'Page', 'text': 'B', 'markdown': 'B'}})
                 record = json.loads((folder / '资料信息.json').read_text(encoding='utf-8'))
-                self.assertNotIn('msgs', record, 'plain text is never given an entry (E3)')
-                self.assertEqual((folder / '网页正文.txt').read_text(encoding='utf-8-sig').splitlines()[0], expected[0])
-                self.assertEqual((folder / '阅读说明.txt').read_text(encoding='utf-8-sig').splitlines()[0], expected[1])
+                self.assertEqual((record['title'], record['page_title']), ('Clip page', 'Page'))
+                self.assertEqual((folder / '网页正文.txt').read_text(encoding='utf-8-sig').splitlines()[0], 'Page')
+                self.assertEqual((folder / '阅读说明.txt').read_text(encoding='utf-8-sig').splitlines()[0], 'Clip page')
 
     def test_an_unreadable_record_is_set_aside_with_a_message(self):
         archive = Archive(self.root / 'aside')
@@ -560,68 +508,53 @@ class ArchiveTests(StoreCase):
         record = folder / '资料信息.json'
         with mock.patch('library.os.rename', side_effect=FileExistsError), self.assertRaises(OSError) as caught:
             Archive._set_aside(record)
-        self.assertMessage(caught.exception.args[0], 'core.archive.cannot_set_aside', 'live')
-        self.assertEqual(str(caught.exception), f'无法保留损坏的资料信息文件：{record}')
+        self.assertMessage(caught.exception.args[0], 'core.archive.cannot_set_aside')
+        self.assertEqual(str(caught.exception), zh_t('core.archive.cannot_set_aside', record=record))
         with self.assertRaises(ValueError) as caught:
             archive.save(self.root, {})
-        self.assertMessage(caught.exception.args[0], 'core.archive.outside_root', 'live')
+        self.assertMessage(caught.exception.args[0], 'core.archive.outside_root')
 
 
-# ============================================================================ foreign entries (I11)
+# ============================================================================ keys of a later version (I11 in format 2)
 
-FOREIGN = {
-    '找不到任务记录。': {'k': 'core.future.unknown', 'p': {'a': [1, 2], 'b': 'x'}},
-    '网站返回 HTTP 7，可尝试动态模式或稍后重试。': {'k': 'core.collect.http_status', 'p': {'status': 7, 'extra': 1}},
-    '历史记录本次不保存：新': {'k': 'core.library.temporary', 'p': {'error': {'k': 'core.future.inner'}}},
-}
+FUTURE = {'k': 'core.future.unknown', 'p': {'a': 1, 'b': 'x', 'c': {'k': 'core.future.inner'}}}
+EXTRA = {'k': 'core.collect.http_status', 'p': {'status': 7, 'extra': 1}}
 
 
-class ForeignEntryTests(StoreCase):
-    def check(self, sidecar, texts=FOREIGN):
-        for text in texts:
-            self.assertEqual(compact(sidecar[text]), compact(FOREIGN[text]), text)
+class LaterKeyTests(StoreCase):
+    """(S2-DESIGN.md 1.1) A slot holding a key this version does not know (or a known key with an extra
+    param) shows the key / the known text, never raises, and is written back exactly as it was."""
 
-    def test_unknown_entries_survive_every_write(self):
+    def test_unknown_keys_survive_every_write(self):
         job = self.download_job()
-        texts = list(FOREIGN)
         with opened(self.store.path) as db:
             data = json.loads(db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()[0])
-            data['errors'] = texts
-            data['last_reason'] = {'error': texts[-1], 'reason': texts[0]}
-            data['msgs'] = dict(data['msgs'], **FOREIGN)
+            data['errors'] = [{'error': FUTURE, 'reason': EXTRA}]
             db.execute('UPDATE jobs SET data=? WHERE id=?', (json.dumps(data, ensure_ascii=False), job))
         record = self.store.job(job)['data']
-        for item in record['errors']:
-            self.assertEqual(item.origin, 'foreign')
-            self.assertIsInstance(en(item), str)                      # rendered, never an exception
-        self.assertEqual(en(record['errors'][0]), 'Task record not found.', 'the lift renders it')
-        self.assertEqual(en(record['errors'][1]), 'The site returned HTTP 7. Try dynamic mode or try again later.')
-        self.assertEqual(en(record['errors'][2]), 'History is not saved in this session: 新')
+        self.assertMessage(record['errors'][0]['error'], 'core.future.unknown')
+        self.assertEqual(en(record['errors'][0]['error']), 'core.future.unknown')
+        self.assertEqual(en(record['errors'][0]['reason']), en_t('core.collect.http_status', status=7))
         self.store.change_job(job, status='partial')
-        self.check(self.raw_job(job)[1]['msgs'])
         self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': msg('core.collect.too_large')})
-        self.check(self.raw_job(job)[1]['msgs'])
-        # Subscription: the name column keeps its foreign entry through finish_subscription.
+        self.assertEqual(self.raw_job(job)[1]['errors'][0], {'error': FUTURE, 'reason': EXTRA})
         key = self.store.subscription('x', {'urls': [PAGE]})
         with opened(self.store.path) as db:
             data = json.loads(db.execute('SELECT data FROM subscriptions').fetchone()[0])
-            data['msgs'] = {'找不到任务记录。': FOREIGN['找不到任务记录。']}
-            db.execute('UPDATE subscriptions SET name=?, data=?', ('找不到任务记录。', json.dumps(data, ensure_ascii=False)))
-        self.store.finish_subscription(key, [], False, msg('core.collect.too_large'))
-        self.store.finish_subscription(key, [{'url': PAGE, 'title': raw('P'), 'links': []}], True)
-        self.check(self.raw_subscription(key)[1]['msgs'], ['找不到任务记录。'])
-        self.assertEqual(self.store.subscriptions()[0]['name'].origin, 'foreign')
-        # Archive.media: the page title's foreign entry survives while the title changes.
+            data['last_error'] = FUTURE
+            db.execute('UPDATE subscriptions SET data=?', (json.dumps(data, ensure_ascii=False),))
+        self.store.finish_subscription(key, [], False, self.store.subscriptions()[0]['data']['last_error'])
+        self.assertEqual(self.raw_subscription(key)[1]['last_error'], FUTURE)
         archive = Archive(self.root / 'archive')
         folder = archive.prepare(MEDIA, {'source': PAGE})
         path = folder / '资料信息.json'
         data = json.loads(path.read_text(encoding='utf-8'))
-        data.update(page_title='找不到任务记录。', msgs={'找不到任务记录。': FOREIGN['找不到任务记录。']})
+        data.update(page_title=FUTURE)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
         clip = folder / 'c.mp4'
         clip.write_bytes(b'x')
         archive.media(folder, {'filepath': str(clip), 'title': 'Clip'})
-        self.check(json.loads(path.read_text(encoding='utf-8'))['msgs'], ['找不到任务记录。'])
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['page_title'], FUTURE)
 
 
 # ============================================================================ limits
@@ -634,34 +567,31 @@ class LimitTests(StoreCase):
                                                      'reason': raw('r \udc80')})
         self.store.download_event(job, 'title', 'Song \ud83d')
         title, data, _text = self.raw_job(job)
-        self.assertEqual(data['errors'], ['错误：bad ? text'])
-        self.assertEqual(data['msgs']['错误：bad ? text'], {'k': 'core.engine.error', 'p': {'error': 'bad ? text'}})
-        self.assertEqual(title, 'Song ? 等 2 条')
-        self.assertEqual(data['msgs'][title], {'k': 'value.job_title.multi', 'p': {'title': 'Song ?', 'count': 2}})
-        self.assertEqual(data['last_reason']['reason'], 'r ?')
-        repaired = library._storable({'e': broken, 'r': raw('\ud800'), 'v': value('mode', '\ud800'), 'p': '\ud800'})
-        self.assertEqual((type(repaired['e']), repaired['e'].key, repaired['e'].origin), (Message, 'core.engine.error', 'live'))
+        self.assertEqual(data['errors'], [{'error': {'k': 'core.engine.error', 'p': {'error': 'bad ? text'}},
+                                           'reason': 'r ?'}])
+        self.assertEqual((title, data['title_links']), ('Song ?', 2))
+        repaired = library._storable({'e': broken, 'r': raw('\ud800'), 'p': '\ud800'})
+        self.assertEqual((type(repaired['e']), repaired['e'].key), (Message, 'core.engine.error'))
         self.assertIs(type(repaired['e'].params['error']), Raw)
-        self.assertEqual((type(repaired['r']), type(repaired['v']), type(repaired['p'])), (Raw, Value, str))
-        self.assertEqual(repaired['v'].group, 'mode')
+        self.assertEqual((type(repaired['r']), type(repaired['p'])), (Raw, str))
         same = msg('core.collect.too_large')
         self.assertIs(library._storable(same), same)
 
-    def test_an_entry_over_2_kb_is_skipped(self):
+    def test_a_message_with_a_long_param_is_stored_whole(self):
         job = self.collect_job()
         big = msg('core.library.temporary', error=raw('x' * 3000))
         self.store.collection_event(job, 'collect_error', big)
-        data = self.raw_job(job)[1]
-        self.assertEqual(data['errors'], [plain(big)])
-        self.assertNotIn('msgs', data)
-        back = self.store.job(job)['data']['errors'][0]
-        self.assertMessage(back, 'core.library.temporary', 'legacy')
+        self.assertEqual(self.raw_job(job)[1]['errors'], [{'error': {'k': 'core.library.temporary', 'p': {'error': 'x' * 3000}},
+                                                           'reason': None}])
+        back = self.store.job(job)['data']['errors'][0]['error']
+        self.assertMessage(back, 'core.library.temporary')
+        self.assertEqual(plain(back), plain(big))
 
-    def test_a_2000_link_page_has_no_null_entries_for_ordinary_titles(self):
+    def test_a_2000_link_page(self):
         job = self.collect_job()
-        links = [{'url': f'https://example.invalid/v{n}', 'title': raw(f'Video number {n}'), 'kind': '视频页面',
+        links = [{'url': f'https://example.invalid/v{n}', 'title': raw(f'Video number {n}'), 'kind': 'video_page',
                   'source': PAGE} for n in range(collector.MAX_LINKS - 2)]
-        links += [{'url': MEDIA + str(n), 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE}
+        links += [{'url': MEDIA + str(n), 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE}
                   for n in range(2)]
         page = {'url': PAGE, 'title': raw('Example list'), 'text': '', 'markdown': '', 'links': links, 'next': None,
                 '_checkpoint': {'visited': [PAGE], 'todo': []}}
@@ -669,7 +599,7 @@ class LimitTests(StoreCase):
         self.store.collection_event(job, 'collect_page', page)
         elapsed = time.perf_counter() - started
         stored = self.raw_pages(job)[0]
-        self.assertEqual(stored['msgs'], {'媒体直链': {'k': 'value.link_kind.direct'}}, 'one entry for 2 links, no null')
+        self.assertEqual(sum(link['title'] == DIRECT for link in stored['links']), 2)
         self.assertEqual(len(stored['links']), collector.MAX_LINKS)
         self.assertLess(elapsed, 5.0)
         read = self.store.job(job)['pages'][0]
@@ -680,11 +610,7 @@ class LimitTests(StoreCase):
 # ============================================================================ invariants
 
 def schema_of_1_7_0():
-    tree = ast.parse((OLD_170 / 'library.py').read_text(encoding='utf-8'))
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'SCHEMA' for target in node.targets):
-            return node.value.value
-    raise AssertionError('SCHEMA not found in release-sources/1.7.0/src/library.py')
+    return SCHEMA_OF_1_7_0
 
 
 def master(path):
@@ -693,78 +619,128 @@ def master(path):
                 db.execute('PRAGMA user_version').fetchone()[0])
 
 
+TABLE_KINDS = {'jobs': 'job', 'pages': 'page', 'subscriptions': 'subscription', 'entries': 'entry', 'archives': 'archive'}
+
+
 def stored_objects(path, archive_roots=()):
-    """(where, object) of every JSON object 1.8.0 stores in a library and its archive folders."""
+    """(record kind, object) of every JSON object a library and its archive folders store."""
     found = []
     with opened(path) as db:
-        for table, column in (('jobs', 'data'), ('pages', 'data'), ('subscriptions', 'data'), ('entries', 'data'),
-                              ('archives', 'data')):
-            for (text,) in db.execute(f'SELECT {column} FROM {table}'):
-                found.append((table, json.loads(text)))
+        for table, kind in TABLE_KINDS.items():
+            for (text,) in db.execute(f'SELECT data FROM {table}'):
+                found.append((kind, json.loads(text)))
     for root in archive_roots:
         for record in Path(root).rglob('资料信息.json'):
-            found.append(('资料信息.json', json.loads(record.read_text(encoding='utf-8'))))
+            found.append(('archive', json.loads(record.read_text(encoding='utf-8'))))
     return found
 
 
-def walk(item, path=()):
-    yield path, item
-    if isinstance(item, dict):
+def is_message(value) -> bool:
+    """A stored message form: {"k": <non-empty key>} with an optional object "p", nothing else."""
+    return (isinstance(value, dict) and isinstance(value.get('k'), str) and bool(value['k'])
+            and not set(value) - {'k', 'p'} and isinstance(value.get('p', {}), dict))
+
+
+def message_paths(item, path=()):
+    """The paths of the outermost message forms ({"k", "p"?}) in a stored object."""
+    if is_message(item):
+        yield path
+    elif isinstance(item, dict):
         for key, child in item.items():
-            yield from walk(child, path + (key,))
+            yield from message_paths(child, path + (key,))
     elif isinstance(item, list):
         for index, child in enumerate(item):
-            yield from walk(child, path + (index,))
+            yield from message_paths(child, path + (index,))
+
+
+def stored_message_keys(item) -> set:
+    """The keys of every message form in a stored object, the ones in a message's params included."""
+    found = set()
+    if is_message(item):
+        found.add(item['k'])
+        item = item.get('p', {})
+    if isinstance(item, dict):
+        for child in item.values():
+            found |= stored_message_keys(child)
+    elif isinstance(item, list):
+        for child in item:
+            found |= stored_message_keys(child)
+    return found
+
+
+def on_slot(path, slots):
+    """Is ``path`` one of the places ``slots`` names ('*': any key or index)?"""
+    return any(len(slot) == len(path) and all(part == '*' or part == step for part, step in zip(slot, path))
+               for slot in slots)
 
 
 class InvariantTests(StoreCase):
-    def scenario(self):
-        """Every writer once, with messages, raw and plain texts."""
-        download, collect = self.download_job(mode=formats.MODES[5]), self.collect_job()
+    def scenario(self, title=None):
+        """Every writer once; ``title`` (default: messages) is the text each writer gets."""
+        texts = (lambda key: msg(key)) if title is None else (lambda key: title)
+        download, collect = self.download_job(mode=formats.MODES[5], archive_contexts={
+            A: {'title': texts('value.page_title.fallback'), 'source': PAGE, 'job_id': 'j', 'page_url': PAGE}}), \
+            self.collect_job()
         self.store.download_event(download, 'item', {'url': A})
         self.store.download_event(download, 'title', 'Song')
-        self.store.download_event(download, 'item_done', {'success': False, 'url': A, 'error': msg('core.collect.too_large'),
-                                                          'reason': msg('core.reason.network')})
-        self.store.download_event(download, 'done', {'cancelled': False, 'failed': 1,
+        self.store.download_event(download, 'item_done', {'success': False, 'url': A, 'error': texts('core.collect.too_large'),
+                                                          'reason': texts('core.reason.network')})
+        self.store.download_event(download, 'done', {'cancelled': False, 'failed': 1, 'engine_error': 'x',
                                                      'archive_errors': [plain(msg('core.archive.media_mismatch'))]})
         self.store.extend_job(download, [C])
         self.store.collection_event(collect, 'collect_page', {
-            'url': PAGE, 'title': msg('value.page_title.fallback'), 'text': '', 'markdown': '', 'next': None,
-            'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE}],
+            'url': PAGE, 'title': texts('value.page_title.fallback'), 'text': '', 'markdown': '', 'next': None,
+            'links': [{'url': MEDIA, 'title': texts('value.link_kind.direct'), 'kind': 'media', 'source': PAGE}],
             '_checkpoint': {'visited': [PAGE], 'todo': [{'url': B, 'depth': 0}]}})
-        self.store.collection_event(collect, 'collect_error', msg('core.collect.too_large'))
+        self.store.collection_event(collect, 'collect_error', texts('core.collect.too_large'))
         self.store.change_job(collect, status='partial')
         key = self.store.subscription('', {'urls': [PAGE]})
         self.store.finish_subscription(key, self.store.job(collect)['pages'], True)
-        self.store.finish_subscription(key, [], False, msg('core.collect.needs_chrome'))
+        self.store.finish_subscription(key, [], False, texts('core.collect.needs_chrome'))
         archive = Archive(self.root / 'archive', self.store)
         folder = archive.prepare(MEDIA, dict(self.store.contexts([MEDIA])[MEDIA], page=self.store.job(collect)['pages'][0]))
         return download, collect, key, folder
 
-    def test_i2_schema_and_user_version_unchanged(self):
+    def test_i2_schema_unchanged_and_user_version_2(self):
         self.scenario()
         reference = self.root / 'reference.sqlite3'
         with opened(reference) as db:
             db.executescript(schema_of_1_7_0())
-        self.assertEqual(master(self.store.path), master(reference))
-        self.assertEqual(master(self.store.path)[1], 0)
+        self.assertEqual(master(self.store.path)[0], master(reference)[0], 'the tables and columns of 1.7.0')
+        self.assertEqual(master(self.store.path)[1], 2, 'format 2 (S2-DESIGN.md 1.2)')
         self.assertEqual(library.SCHEMA, schema_of_1_7_0())
 
-    def test_i3_sidecars_only_where_allowed(self):
+    def test_store_census_messages_only_on_slots(self):
+        """(S2-DESIGN.md 4.1, store census) Every writer fed messages: each lands as {"k"} on one of the
+        slots of its record kind (library.SLOTS) and nowhere else; no 'msgs' anywhere; the result's
+        engine_error is a flag.  Fed raw texts: the same slots hold the strings, no message form at all."""
         self.scenario()
-        objects = stored_objects(self.store.path, [self.root / 'archive'])
-        with_sidecar = 0
-        for where, item in objects:
-            for path, node in walk(item):
-                if path and path[-1] == 'msgs':
-                    self.assertEqual(len(path), 1, f'{where}: msgs only at the top of the object, found at {path}')
-                    with_sidecar += 1
-                    self.assertIsInstance(node, dict)
-                if path and path[0] in ('options', 'checkpoint', '_checkpoint', 'result'):
-                    self.assertNotEqual(path[-1], 'msgs', f'{where}: {path}')
-            if where == 'archives':
-                self.assertNotIn('folder', item)
-        self.assertGreaterEqual(with_sidecar, 6)
+        found, keys = {}, set()
+        for kind, item in stored_objects(self.store.path, [self.root / 'archive']):
+            for path in message_paths(item):
+                self.assertTrue(on_slot(path, library.SLOTS[kind]), (kind, path))
+                found.setdefault(kind, set()).add(path[:1])
+            keys |= stored_message_keys(item)
+            self.assertNotIn('msgs', json.dumps(item, ensure_ascii=False))
+            if kind == 'job' and 'result' in item:
+                self.assertIs(item['result']['engine_error'], True)
+        # (S2-AMEND 3.4 Q3-7) every key the writers stored, nested ones included, is in the key registry
+        registry = set(json.loads((_sandbox.GOLDEN / 'stored-keys.json').read_text(encoding='utf-8'))['keys'])
+        self.assertEqual(keys, {'core.collect.needs_chrome', 'core.collect.too_large', 'core.reason.network',
+                                'value.link_kind.direct', 'value.page_title.fallback'})
+        self.assertLessEqual(keys, registry, sorted(keys - registry))
+        self.assertEqual(sorted(found), ['archive', 'entry', 'job', 'page', 'subscription'])
+        self.assertEqual(found['job'], {('errors',), ('options',)})
+        # The same writers fed raw texts: strings on the slots, no message form anywhere.
+        store = self.store = Library(self.root / 'raw.sqlite3')
+        archive_root = self.root / 'archive'
+        shutil.rmtree(archive_root)
+        self.scenario(raw('网页'))
+        for kind, item in stored_objects(store.path, [archive_root]):
+            self.assertEqual(list(message_paths(item)), [], (kind, item))
+        objects = dict((kind, item) for kind, item in stored_objects(store.path) if kind in ('page', 'entry'))
+        self.assertEqual(objects['page']['title'], '网页')
+        self.assertEqual(objects['entry']['title'], '网页')
 
     def test_i7_no_proxy_credentials_in_any_stored_or_ipc_byte(self):
         secret = 'http://owner:hunter2secret@127.0.0.1:9'
@@ -789,67 +765,18 @@ class InvariantTests(StoreCase):
         for blob in (events, store_bytes):
             self.assertNotIn(b'hunter2secret', blob)
             self.assertNotIn(b'owner:', blob)
-        error = Library(history).job(job)['data']['errors'][0]
+        error = Library(history).job(job)['data']['errors'][0]['error']
         self.assertIn(messages.PROXY_TOKEN, error)
-        self.assertEqual(error, 'curl: (7) Failed to connect to [代理] via [代理]')
-        self.assertEqual(en(error), 'curl: (7) Failed to connect to [proxy] via [proxy]')
-        # A message param masked by its producer (P8) reaches the sidecar masked.
+        mask, en_mask = messages.PROXY_TOKEN, en_t('core.proxy_mask')     # stored: the token; shown: the catalog text
+        self.assertEqual(error, f'curl: (7) Failed to connect to {mask} via {mask}')
+        self.assertEqual(en(error), f'curl: (7) Failed to connect to {en_mask} via {en_mask}')
+        # A message param masked by its producer (P8) is stored masked.
         masked = messages.masked(msg('core.library.temporary', error=raw(f'proxy {secret} refused')),
                                  [(secret, messages.PROXY_TOKEN)])
         self.store.collection_event(self.collect_job(), 'collect_error', masked)
         self.assertNotIn(b'hunter2secret', Path(self.store.path).read_bytes())
-        self.assertEqual(Library(self.store.path).job(self.store.history()[0]['id'])['data']['errors'][0].params['error'],
-                         'proxy [代理] refused')
-
-
-I8_CHILD = '''
-import json, os, sys, time
-sys.path.insert(0, sys.argv[1])
-import library
-db, root, out = sys.argv[2], sys.argv[3], sys.argv[4]
-A, B, PAGE, MEDIA = 'https://example.invalid/a', 'https://example.invalid/b', 'https://example.invalid/list', 'https://cdn.example.invalid/clip.mp4'
-store = library.Library(db)
-job = store.create_job('download', '2 条 · 音频 · 原始最佳', {'urls': [A, B], 'mode': '音频 · M4A 原生', 'output': root})
-store.download_event(job, 'item', {'url': A})
-store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': '此链接无法开始：找不到 cookies 文件：C:\\\\x\\\\c.txt', 'reason': '找不到 cookies 文件'})
-store.download_event(job, 'done', {'cancelled': False, 'failed': 1})
-collect = store.create_job('collect', PAGE, {'urls': [PAGE], 'dynamic': False, 'scrolls': 0, 'selector': '', 'max_pages': 1})
-page = {'url': PAGE, 'title': '网页', 'text': 'Body', 'markdown': 'Body', 'next': None,
-        'links': [{'url': MEDIA, 'title': '媒体直链', 'kind': '媒体地址', 'source': PAGE}]}
-store.collection_event(collect, 'collect_page', dict(page, _checkpoint={'visited': [PAGE], 'todo': []}))
-store.collection_event(collect, 'collect_error', '页面超过 8 MB，请缩小采集范围。')
-store.change_job(collect, status='partial')
-sub = store.subscription('', {'urls': [PAGE]})
-store.finish_subscription(sub, [page], True)
-store.finish_subscription(sub, [], False, '动态采集需要安装 Google Chrome；普通网页模式无需浏览器。；网站返回 HTTP 503，可尝试动态模式或稍后重试。')
-archive = library.Archive(os.path.join(root, 'archive'), store)
-archive.prepare(MEDIA, {'source': PAGE, 'title': '媒体直链', 'page': page, 'job_id': collect, 'page_url': PAGE})
-running = store.create_job('download', '1 条 · 音频 · FLAC', {'urls': [A], 'mode': '音频 · FLAC', 'output': root})
-with open(out, 'w', encoding='utf-8') as handle:
-    json.dump({'running': running, 'jobs': [job, collect, running], 'subscription': sub}, handle)
-'''
-
-
-I8_STATE_CHILD = '''
-import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-import paths
-state = Path(sys.argv[2])
-paths.STATE_DIR = state
-import engine, settings, unfinished
-A, B = 'https://example.invalid/a', 'https://example.invalid/b'
-settings.save(dict(settings.load(), mode='音频 · FLAC', proxy='', check_engine_updates=False))
-options = engine.Options(state / 'out').to_dict()
-results = [{'url': A, 'key': 'ka', 'format': 'audio_flac', 'options': options, 'outcome': 'failed', 'title': 'Song A',
-            'error': '此链接无法开始：找不到 cookies 文件：C:\\\\x\\\\c.txt', 'referer': ''},
-           {'url': B, 'key': 'kb', 'format': 'audio_flac', 'options': options, 'outcome': 'blocked', 'title': '',
-            'error': '网站要求验证身份，请更换节点或稍后重试。', 'referer': ''}]
-with unfinished.LOCK:
-    unfinished.save(unfinished.merge(unfinished.load_for_merge(), results))
-(state / 'failed-downloads.bad-20261117-120000.json').write_text('{"version": 2, "entries": [', encoding='utf-8')
-(state / 'failed-downloads.overflow-20261117-120000.json').write_bytes(paths.failed_file().read_bytes())
-'''
+        self.assertEqual(Library(self.store.path).job(self.store.history()[0]['id'])['data']['errors'][0]['error']
+                         .params['error'], f'proxy {mask} refused')
 
 
 def tree_hashes(*roots):
@@ -867,86 +794,38 @@ def table_dump(path):
                 for table in ('jobs', 'pages', 'subscriptions', 'entries', 'archives', 'downloads')}
 
 
-class UpgradeReadTests(StoreCase):
-    def test_i8_reading_a_1_7_0_library_writes_nothing(self):
-        folder = self.root / 'old'
-        folder.mkdir()
-        script = folder / 'write_1_7_0.py'
-        script.write_text(I8_CHILD, encoding='utf-8')
-        db, out = folder / 'library.sqlite3', folder / 'ids.json'
-        subprocess.run([sys.executable, '-X', 'utf8', '-B', str(script), str(OLD_170), str(db), str(folder), str(out)],
-                       check=True, timeout=120, cwd=str(folder), env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-        ids = json.loads(out.read_text(encoding='utf-8'))
-        files_before = tree_hashes(folder / 'archive')
-        rows_before = table_dump(db)
-        store = Library(db)
-        rows = store.history()
-        self.assertEqual({row['id'] for row in rows}, set(ids['jobs']))
-        for job in ids['jobs']:
-            store.job(job)
-        store.history_count()
-        store.history(search='Song')
-        subscriptions = store.subscriptions()
-        store.pending(ids['subscription'])
-        archives = store.archives()
-        contexts = store.contexts(['https://cdn.example.invalid/clip.mp4'])
-        store.find_download(['k'], 'audio_best')
-        self.assertEqual(tree_hashes(folder / 'archive'), files_before)
-        rows_after = table_dump(db)
-        for table in rows_before:
-            if table != 'jobs':
-                self.assertEqual(rows_after[table], rows_before[table], table)
-        before = {row[0]: row for row in rows_before['jobs']}
-        after = {row[0]: row for row in rows_after['jobs']}
-        for job, row in before.items():
-            if job == ids['running']:
-                # history() marks a running job of a gone process interrupted (the 1.7.0 behaviour).
-                self.assertEqual((after[job][3], after[job][5]), ('interrupted', row[5]), 'status only; data bytes kept')
-            else:
-                self.assertEqual(after[job], row)
-        # Every text of the old rows is decoded; in en nothing Chinese is left of the app texts.
-        shown = [store.job(job) for job in ids['jobs']]
-        self.assertMessage(shown[1]['pages'][0]['title'], 'value.page_title.fallback', 'legacy')
-        self.assertMessage(shown[1]['data']['errors'][0], 'core.collect.too_large', 'legacy')
-        self.assertMessage(subscriptions[0]['name'], 'value.subscription.untitled', 'legacy')
-        self.assertMessage(subscriptions[0]['data']['last_error'], 'common.clauses', 'legacy')
-        self.assertMessage(archives[0]['title'], 'value.link_kind.direct', 'legacy')
-        self.assertMessage(contexts['https://cdn.example.invalid/clip.mp4']['title'], 'value.link_kind.direct', 'legacy')
-        for item in (shown[1]['pages'][0]['title'], shown[1]['data']['errors'][0], subscriptions[0]['name'],
-                     subscriptions[0]['data']['last_error'], archives[0]['title'], shown[0]['title']):
-            self.assertEnglish(item)
-
-    def test_i8_reading_1_7_0_settings_and_failed_list_writes_nothing(self):
-        """(final review, RV-FD1-1; MESSAGES.md 4.7 I8) settings.json, failed-downloads.json and a bad
-        and an overflow file written by the frozen 1.7.0 code keep every byte when 1.8.0 reads them:
-        unfinished.load, settings.load, i18n.stored_choice and the 1.5.1 view engine.load_failed_job."""
+class UnfinishedCensusTests(StoreCase):
+    def test_unfinished_census_messages_only_in_the_error_slot(self):
+        """(S2-DESIGN.md 4.1 P3, store census) unfinished.merge / save fed messages: the file holds each as
+        {"k"} in the entry's error slot (unfinished.SLOTS) and nowhere else, no 'msgs', no 1.5.1 view;
+        read back, it is the same message.  Fed raw texts: strings, no message form."""
         import engine
-        import settings
         import unfinished
         state = self.root / 'state'
-        state.mkdir()
-        script = self.root / 'write_state_1_7_0.py'
-        script.write_text(I8_STATE_CHILD, encoding='utf-8')
-        subprocess.run([sys.executable, '-X', 'utf8', '-B', str(script), str(OLD_170), str(state)], check=True,
-                       timeout=120, cwd=str(self.root), env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-        names = sorted(path.name for path in state.iterdir())
-        self.assertEqual(names, ['failed-downloads.bad-20261117-120000.json', 'failed-downloads.json',
-                                 'failed-downloads.overflow-20261117-120000.json', 'settings.json'])
-        before = tree_hashes(state)
-        with _sandbox.state_patch(state):
-            entries = unfinished.load()
-            prefs = settings.load()
-            choice = i18n.stored_choice(prefs)
-            legacy = engine.load_failed_job()
-            again = unfinished.load()
-        self.assertEqual(tree_hashes(state), before, 'reading writes nothing (I8)')
-        self.assertEqual(sorted(path.name for path in state.iterdir()), names)
-        self.assertEqual([item['url'] for item in entries], ['https://example.invalid/a', 'https://example.invalid/b'])
-        self.assertEqual([item['error'] for item in again], [item['error'] for item in entries])
-        self.assertMessage(entries[0]['error'], 'core.engine.cannot_start_link', 'legacy')
-        self.assertEqual(prefs['mode'], '音频 · FLAC')
-        self.assertIn(choice, i18n.CHOICES)
-        self.assertIsNotNone(legacy)
+        options = engine._entry_options(engine.Options(self.root / 'out'))
+        for fed, form in ((msg('core.engine.cannot_start_link', error=msg('core.collect.too_large')), dict),
+                          (raw('网页'), str)):
+            with self.subTest(fed=type(fed).__name__), _sandbox.state_patch(state):
+                results = [{'url': A, 'key': 'ka', 'format': 'audio_best', 'options': options, 'outcome': 'failed',
+                            'error': fed, 'title': 'Song', 'referer': '', 'media_keys': []}]
+                with unfinished.LOCK:
+                    unfinished.save(unfinished.merge(unfinished.load_for_merge(), results))
+                data = json.loads(paths.failed_file().read_text(encoding='utf-8'))
+                self.assertEqual(list(data), ['version', 'entries'])
+                self.assertEqual(data['version'], 2)
+                self.assertNotIn('msgs', json.dumps(data, ensure_ascii=False))
+                entry = data['entries'][0]
+                self.assertIsInstance(entry['error'], form)
+                self.assertEqual([path for path in message_paths(data)], [('entries', 0, 'error')] if form is dict else [])
+                if form is dict:
+                    self.assertEqual(entry['error'], messages.to_json(fed))
+                    loaded = unfinished.load()[0]['error']
+                    self.assertMessage(loaded, fed.key)
+                    self.assertEqual(loaded.params['error'].key, 'core.collect.too_large')
+                    self.assertEnglish(loaded)
+                else:
+                    self.assertEqual(entry['error'], '网页')
+                paths.failed_file().unlink()
 
 
 # ============================================================================ collector IPC (2.8)
@@ -955,9 +834,9 @@ class IpcTests(StoreCase):
     def fake_collect(self, options, emit):
         emit('collect_status', msg('core.collect.page_n', page=1))
         emit('collect_page', {'url': PAGE, 'title': msg('value.page_title.fallback'), 'text': 'x', 'markdown': 'x',
-                              'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE},
-                                        {'url': A, 'title': raw('Song A'), 'kind': '视频页面', 'source': PAGE},
-                                        {'url': B, 'title': raw('Web'), 'kind': '网页链接', 'source': PAGE}],
+                              'links': [{'url': MEDIA, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE},
+                                        {'url': A, 'title': raw('Song A'), 'kind': 'video_page', 'source': PAGE},
+                                        {'url': B, 'title': raw('Web'), 'kind': 'web', 'source': PAGE}],
                               'next': None, '_checkpoint': {'visited': [PAGE], 'todo': []}})
         emit('collect_error', msg('core.library.temporary', error=msg('core.collect.http_status', status=503)))
         emit('collect_error', 'curl: (6) Could not resolve host')
@@ -975,34 +854,34 @@ class IpcTests(StoreCase):
         lines = request.with_suffix('.events').read_bytes().split(b'\n')
         lines = [line for line in lines if line]
         self.assertEqual(len(lines), 5)
-        self.assertIn('"$m"', lines[0].decode('utf-8'))
+        self.assertEqual(json.loads(lines[0]), ['collect_status', {'$m': {'k': 'core.collect.page_n', 'p': {'page': 1}}}])
         received = []
         runner = collector.CollectionRunner(lambda kind, value_: received.append((kind, value_)))
-        malformed = [b'not json', b'["collect_error", {"$m": [1]}]', b'["collect_page", {"$r": 5}]',
-                     b'["collect_status", {"$v": ["mode"]}]', b'[1]']
+        malformed = [b'not json', b'["collect_error", {"$m": [1]}]', b'["collect_page", {"$m": {"k": ""}}]',
+                     b'["collect_status", {"$m": {"k": "core.collect.page_n", "p": [1]}}]', b'[1]']
         for line in malformed[:2] + lines[:2] + malformed[2:] + lines[2:]:
             runner._forward(line)
         self.assertEqual([kind for kind, _value in received],
                          ['collect_status', 'collect_page', 'collect_error', 'collect_error', 'collect_checkpoint'])
         status, page, nested, plain_error = (value_ for _kind, value_ in received[:4])
-        self.assertMessage(status, 'core.collect.page_n', 'live')
-        self.assertEqual(plain(status), '正在采集第 1 页…')
-        self.assertMessage(page['title'], 'value.page_title.fallback', 'live')
-        self.assertMessage(page['links'][0]['title'], 'value.link_kind.direct', 'live')
-        self.assertIs(type(page['links'][1]['title']), Raw)
-        self.assertIs(type(page['links'][2]['title']), Raw)
-        self.assertMessage(nested, 'core.library.temporary', 'live')
+        self.assertMessage(status, 'core.collect.page_n')
+        self.assertEqual(plain(status), zh_t('core.collect.page_n', page=1))
+        self.assertMessage(page['title'], 'value.page_title.fallback')
+        self.assertMessage(page['links'][0]['title'], 'value.link_kind.direct')
+        self.assertEqual([type(page['links'][index]['title']) for index in (1, 2)], [str, str],
+                         'a source text arrives as its plain text')
+        self.assertMessage(nested, 'core.library.temporary')
         self.assertEqual(nested.params['error'].key, 'core.collect.http_status')
         self.assertEqual(nested.params['error'].params['status'], 503)
         self.assertIs(type(plain_error), str)
-        self.assertEnglish(nested, 'History is not saved in this session: The site returned HTTP 503. Try dynamic mode or try again later.')
-        # The worker's own store write received the in-memory values (I9, same codec).
+        self.assertEnglish(nested, en_t('core.library.temporary', error=en_t('core.collect.http_status', status=503)))
+        # The worker's own store write received the in-memory values (I9).
         with opened(history) as db:
             row = json.loads(db.execute('SELECT data FROM pages').fetchone()[0])
             data = json.loads(db.execute('SELECT data FROM jobs').fetchone()[0])
-        self.assertEqual(row['msgs'], {'网页': {'k': 'value.page_title.fallback'}, '媒体直链': {'k': 'value.link_kind.direct'}})
-        self.assertEqual(data['msgs'][plain(nested)], {'k': 'core.library.temporary', 'p': {
-            'error': {'k': 'core.collect.http_status', 'p': {'status': 503}}}})
+        self.assertEqual((row['title'], [link['title'] for link in row['links']]), (FALLBACK, [DIRECT, 'Song A', 'Web']))
+        self.assertEqual(data['errors'][0], {'error': {'k': 'core.library.temporary', 'p': {
+            'error': {'k': 'core.collect.http_status', 'p': {'status': 503}}}}, 'reason': None})
         self.assertEqual(Library(history).job(job)['status'], 'partial')
 
     def test_the_parse_page_titles(self):
@@ -1037,11 +916,11 @@ class IpcTests(StoreCase):
             fallback = collector.parse_page(Response('', 'file:///page'), 'file:///page')
         self.assertIs(type(titled['title']), Raw)
         self.assertEqual(titled['title'], 'Some   page')
-        self.assertMessage(titled['links'][0]['title'], 'value.link_kind.dynamic_request', 'live')
-        self.assertEqual(titled['links'][0]['kind'], '媒体地址')
+        self.assertMessage(titled['links'][0]['title'], 'value.link_kind.dynamic_request')
+        self.assertEqual(titled['links'][0]['kind'], 'media')
         self.assertEqual((type(untitled['title']), untitled['title']), (Raw, 'example.invalid'), 'the host name')
-        self.assertMessage(fallback['title'], 'value.page_title.fallback', 'live')
-        self.assertEqual(plain(fallback['title']), '网页')
+        self.assertMessage(fallback['title'], 'value.page_title.fallback')
+        self.assertEqual(plain(fallback['title']), zh_t('value.page_title.fallback'))
 
 
 # ============================================================================ updater
@@ -1050,10 +929,10 @@ class UpdaterTests(unittest.TestCase):
     def test_update_errors_keep_the_templates_and_carry_keys(self):
         import urllib.error
         cases = [
-            (urllib.error.URLError(TimeoutError()), 'core.update.no_github', updater.MSG_NETWORK.format(reason='连接超时')),
+            (urllib.error.URLError(TimeoutError()), 'core.update.no_github', zh_t('core.update.no_github', reason=zh_t('core.update.timeout'))),
             (urllib.error.HTTPError(updater.RELEASE_URL, 503, 'x', {}, None), 'core.update.no_github',
-             updater.MSG_NETWORK.format(reason='HTTP 503')),
-            (ValueError('not json'), 'core.update.bad_release', updater.MSG_RELEASE),
+             zh_t('core.update.no_github', reason='HTTP 503')),
+            (ValueError('not json'), 'core.update.bad_release', zh_t('core.update.bad_release')),
         ]
         for failure, key, text in cases:
             with self.subTest(key=key, text=text), mock.patch('urllib.request.urlopen', side_effect=failure), \
@@ -1072,10 +951,10 @@ class UpdaterTests(unittest.TestCase):
         engine = updater.EngineUpdater(lambda *_: None, mock.MagicMock(is_set=lambda: False))
         timeout = subprocess.TimeoutExpired('x', 60)
         for outcome, reason_key, text in (
-                (timeout, 'core.update.start_timeout', updater.MSG_START.format(reason='60 秒内没有结束')),
-                (OSError('no'), 'core.update.start_cannot', updater.MSG_START.format(reason='无法启动')),
-                ((3, b'', b''), 'core.update.start_exit', updater.MSG_START.format(reason='退出码 3')),
-                ((0, b'hello', b''), 'core.update.start_no_version', updater.MSG_START.format(reason='没有给出版本号'))):
+                (timeout, 'core.update.start_timeout', zh_t('core.update.start_failed', reason=zh_t('core.update.start_timeout', timeout=60))),
+                (OSError('no'), 'core.update.start_cannot', zh_t('core.update.start_failed', reason=zh_t('core.update.start_cannot'))),
+                ((3, b'', b''), 'core.update.start_exit', zh_t('core.update.start_failed', reason=zh_t('core.update.start_exit', code=3))),
+                ((0, b'hello', b''), 'core.update.start_no_version', zh_t('core.update.start_failed', reason=zh_t('core.update.start_no_version')))):
             with self.subTest(reason=reason_key):
                 patch = mock.patch.object(updater, '_version_output', side_effect=outcome) \
                     if isinstance(outcome, BaseException) else mock.patch.object(updater, '_version_output', return_value=outcome)
@@ -1093,9 +972,9 @@ class UpdaterTests(unittest.TestCase):
         with mock.patch.object(updater, '_remove_updated', return_value=False), \
                 self.assertRaises(updater.UpdateError) as caught:
             updater.restore_bundled()
-        self.assertEqual(str(caught.exception), updater.MSG_RESTORE)
+        self.assertEqual(str(caught.exception), zh_t('core.update.restore_failed'))
         self.assertEqual(caught.exception.args[0].key, 'core.update.restore_failed')
-        self.assertEqual(updater.BUILTIN, '已内置')
+        self.assertEqual(updater.BUILTIN, zh_t('core.update.builtin'))
         self.assertEqual(updater.BUILTIN.key, 'core.update.builtin')
         with mock.patch.object(updater, 'engine_path', side_effect=OSError):
             self.assertIs(updater.engine_version(), updater.BUILTIN)
@@ -1105,19 +984,16 @@ class UpdaterTests(unittest.TestCase):
             engine.run()
         self.assertEqual([kind for kind, _item in events], ['update_status', 'update_error', 'update_done'])
         self.assertEqual(events[0][1].key, 'core.update.checking')
-        self.assertEqual((events[1][1].key, events[1][1]), ('core.update.no_exe', updater.MSG_NO_ASSET))
-        legacy = []
-        engine = updater.EngineUpdater(lambda kind, item: legacy.append((kind, item)), mock.MagicMock(is_set=lambda: False),
-                                       legacy_events=True)
+        self.assertEqual((events[1][1].key, events[1][1]), ('core.update.no_exe', zh_t('core.update.no_exe')))
+        # (2.0.0 S2 P4) the 1.5.1 events (legacy_events) are gone; an unexpected error is its plain text
+        plain = []
+        engine = updater.EngineUpdater(lambda kind, item: plain.append((kind, item)), mock.MagicMock(is_set=lambda: False))
         with mock.patch.object(updater, 'check_latest', side_effect=RuntimeError('boom')):
             engine.run()
-        self.assertEqual(legacy[0], ('title', '正在检查官方更新…'))
-        self.assertEqual(legacy[0][1].key, 'core.update.checking')
-        self.assertEqual(legacy[1], ('update_error', 'boom'))
-        self.assertIs(type(legacy[1][1]), str)
-        if messages.GUARD:
-            self.assertTrue(hasattr(engine.emit, '__wrapped__'), 'the G2 emit hook (3.3)')
-            self.assertTrue(hasattr(collector.CollectionRunner(lambda *_: None).emit, '__wrapped__'))
+        self.assertEqual(plain[0], ('update_status', zh_t('core.update.checking')))
+        self.assertEqual(plain[0][1].key, 'core.update.checking')
+        self.assertEqual(plain[1], ('update_error', 'boom'))
+        self.assertIs(type(plain[1][1]), str)
 
 
 # ============================================================================ G4: the store channels
@@ -1128,7 +1004,8 @@ def sample_params(key):
         if name in NUMERIC:
             params[name] = 7
         elif name == 'mode':
-            params[name] = value('mode', formats.MODES[1])
+            # (2.0.0 S2 P4) no Value any more: a format is its display message
+            params[name] = msg('format.' + formats.MODES[1])      # (2.0.0 S4 A1) the one name of a format
         elif name in ('error', 'reason'):
             params[name] = msg('core.collect.too_large')
         elif name == 'name':
@@ -1147,6 +1024,9 @@ class ChannelMatrixTests(StoreCase):
         return sorted(key for key in i18n.CATALOG['zh'] if key.startswith(CHANNEL_PREFIXES))
 
     def test_every_key_through_every_store_field(self):
+        """Five message slots (job error and reason, page title, link title, subscription last_error) for
+        every key: stored as the message's JSON form, read back as that message.  (2.0.0) The title
+        column holds text only (the job title is never a message)."""
         keys = self.keys()
         self.assertGreater(len(keys), 40)
         job, collect = self.download_job(), self.collect_job()
@@ -1157,24 +1037,23 @@ class ChannelMatrixTests(StoreCase):
             with self.subTest(key=key):
                 self.store.download_event(job, 'item_done', {'success': False, 'url': A, 'error': message, 'reason': message})
                 self.store.collection_event(collect, 'collect_page', {'url': PAGE, 'title': message, 'links': [
-                    {'url': MEDIA, 'title': message, 'kind': '媒体地址', 'source': PAGE}], '_checkpoint': None})
+                    {'url': MEDIA, 'title': message, 'kind': 'media', 'source': PAGE}], '_checkpoint': None})
                 self.store.finish_subscription(subscription, [], False, messages.clauses([message, msg('core.collect.too_large')]))
-                self.store.rename_job(collect, message)
                 record, collected = self.store.job(job), self.store.job(collect)
                 subscription_row = self.store.subscriptions()[0]
-                values = [record['data']['errors'][-1], record['data']['last_reason']['reason'], collected['title'],
+                values = [record['data']['errors'][-1]['error'], record['data']['errors'][-1]['reason'],
                           collected['pages'][0]['title'], collected['pages'][0]['links'][0]['title'],
                           subscription_row['data']['last_error']]
                 for item in values:
                     self.assertIsInstance(item, Message)
-                    self.assertEqual(item.origin, 'stored')
                     shown = en(item)
                     self.assertEqual(CJK.findall(shown), [], f'{key}: {shown}')
                     self.assertEqual(zh(item), plain(item))
                     checked += 1
                 self.assertEqual(values[0].key, key)
                 self.assertEqual(plain(values[0]), plain(message))
-        self.assertEqual(checked, 6 * len(keys))
+                self.assertEqual(self.raw_job(job)[1]['errors'][-1]['error'], messages.to_json(message))
+        self.assertEqual(checked, 5 * len(keys))
 
 
 if __name__ == '__main__':

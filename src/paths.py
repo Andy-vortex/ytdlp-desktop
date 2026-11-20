@@ -4,7 +4,7 @@ RESOURCE_ROOT, VENDOR, BIN, APP_DIR and STATE_DIR are plain module attributes, s
 test (or a portable setup) can replace them.  Every function below reads them when it
 is called.  The path functions leave nothing behind (catalog_path tries a write with a
 file that deletes itself); the ones that write say so: own_dir, run_dir and
-atomic_write_text create folders, the purge functions delete.
+atomic_write_text create folders, set_aside renames, the purge functions delete.
 Other modules therefore use ``paths.X`` / ``paths.x()`` at call time and never
 ``from paths import X``.
 
@@ -42,8 +42,8 @@ STATE_DIR = Path(os.path.abspath(_env('YTDLP_DESKTOP_STATE')
                                  or os.path.join(_env('LOCALAPPDATA') or os.path.expanduser('~'), STATE_NAME)))
 
 RUN_FOLDER = re.compile(r'^run-(\d+)-')
-# What an engine update downloads into: the fixed name of 1.5.1, or <pid>.<serial> of 1.6.0.
-ENGINE_DOWNLOAD = re.compile(r'^yt-dlp\.download(?:\.(\d+)\.\d+\.exe)?$')
+# What an engine update downloads into: <pid>.<serial> (1.6.0 on; 2.0.0 S2 P4 dropped the fixed name of 1.5.1).
+ENGINE_DOWNLOAD = re.compile(r'^yt-dlp\.download\.(\d+)\.\d+\.exe$')
 # The one age rule of both work folders (STATE\work and APP_DIR\data\work, see clean_work):
 # a resumable partial download, a finished format part of a stopped merge, the original before
 # an audio extraction and every other file stay WORK_MAX_AGE, as long as a stopped entry is
@@ -217,6 +217,36 @@ def _replace(source, target) -> None:
             time.sleep(REPLACE_PAUSE)
 
 
+def free_names(path, kind) -> list:
+    """The names a file is set aside under, in order: <stem>.<kind>-<time><suffix>, then -2 … -99
+    (failed-downloads.bad-<time>.json, library.bad-<time>.sqlite3)."""
+    path = Path(path)
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    stem, suffix = path.name.split('.', 1)[0], path.suffix
+    return [path.with_name(f'{stem}.{kind}-{stamp}{suffix}')] + [
+        path.with_name(f'{stem}.{kind}-{stamp}-{number}{suffix}') for number in range(2, 100)]
+
+
+def set_aside(path, kind):
+    """(2.0.0) Rename ``path`` to the first free name of free_names (never replaces a file: os.rename
+    on Windows).  PermissionError (somebody is reading it this very moment) is retried REPLACE_ATTEMPTS
+    times, then raised.  Returns the new path; None when every name is taken."""
+    for target in free_names(path, kind):
+        if os.path.lexists(target):
+            continue
+        for attempt in range(REPLACE_ATTEMPTS):
+            try:
+                os.rename(path, target)
+                return target
+            except FileExistsError:
+                break
+            except PermissionError:
+                if attempt + 1 >= REPLACE_ATTEMPTS:
+                    raise
+                time.sleep(REPLACE_PAUSE)
+    return None
+
+
 def is_link(path) -> bool:
     """Is ``path`` a symbolic link, a junction or any other reparse point?  Never follows it.
     A path whose own entry cannot be read counts as one: the cleanups leave it alone."""
@@ -339,8 +369,8 @@ def clean_work(folder, now=None) -> int:
 def purge_engine_downloads(alive) -> None:
     """Delete what interrupted engine updates left in the engines folder; never raises.
 
-    Only the names the updater itself uses: 'yt-dlp.download' (1.5.1) and
-    'yt-dlp.download.<pid>.<n>.exe', the latter only when that process is gone.  The file
+    Only the names the updater itself uses: 'yt-dlp.download.<pid>.<n>.exe', only when that
+    process is gone.  The file
     of an update that is running right now, here or in a second instance, is closed
     between its download and its installation and must not disappear then.  Likewise the
     temp file of the update receipt, 'yt-dlp.json.<pid>.tmp', when that process is gone
@@ -354,7 +384,7 @@ def purge_engine_downloads(alive) -> None:
                 match = ENGINE_DOWNLOAD.match(entry.name) or ENGINE_TEMP.match(entry.name)
                 if not match or not _plain_file(entry):
                     continue
-                if match.group(1) and alive(int(match.group(1))):
+                if alive(int(match.group(1))):
                     continue
                 entry.unlink()
             except Exception:

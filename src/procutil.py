@@ -385,16 +385,19 @@ def _find_window(title_suffix):
     return found[0] if found else None
 
 
-def focus_window(title_suffix='YT-DLP 下载器', timeout=3.0) -> bool:
+def focus_window(title_suffix, timeout=3.0) -> bool:
     """Bring the running instance's window forward; False when none shows up in time.
 
     (1.7.0) ``title_suffix`` may be a tuple: the running window may show its title in the other
-    language (app.py passes ``i18n.all_values('app.title')``; this module imports paths only).
+    language (app.py passes ``i18n.all_values('app.title')``; this module imports paths only).  An empty
+    tuple finds nothing.
     """
     if os.name != 'nt':
         return False
     if isinstance(title_suffix, (list, tuple)):
-        title_suffix = tuple(str(item) for item in title_suffix if item) or ('YT-DLP 下载器',)
+        title_suffix = tuple(str(item) for item in title_suffix if item)
+        if not title_suffix:
+            return False
     deadline = time.monotonic() + timeout
     while True:
         try:

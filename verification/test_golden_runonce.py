@@ -1,3 +1,4 @@
+# quick
 """Golden transcripts of the real engine.Runner._run_once (1.6.0 WP0).
 
 The protected loop (sleep / rate-limit state machine) is NOT patched here: it reads
@@ -42,8 +43,10 @@ import unittest
 from unittest.mock import patch
 
 import engine
+import paths
+from messages import msg
 
-GOLDEN_NAME = 'runonce-1.5.1.json'
+GOLDEN_NAME = 'runonce.json'          # (S2 review) was runonce-1.5.1.json; content unchanged
 WATCHDOG_SECONDS = 60
 PRELUDE = ('import json, os, sys, time\n'
            'sys.stdout.reconfigure(encoding="utf-8", newline="\\n")\n'
@@ -98,7 +101,7 @@ class FakeArchive:
     def media(self, folder, metadata):
         self.calls.append([str(folder), copy.deepcopy(metadata)])
         if 'filepath' not in metadata:
-            raise ValueError('归档文件与本条资料目录不匹配。')
+            raise ValueError(msg('core.archive.media_mismatch'))
 
 
 class GoldenRunOnceTests(unittest.TestCase):
@@ -156,7 +159,7 @@ class GoldenRunOnceTests(unittest.TestCase):
                 record['archive_calls'] = archive.calls
                 record['archive_errors'] = list(runner.archive_errors)
             replacements = [(form, '<TMP>') for form in _sandbox.path_forms(root)]
-            replacements += [(form, '<BIN>') for form in _sandbox.path_forms(engine.BIN)]
+            replacements += [(form, '<BIN>') for form in _sandbox.path_forms(paths.BIN)]
             return _sandbox.normalise(record, replacements)
 
     def test_run_once_transcripts_match_golden(self):
@@ -272,7 +275,8 @@ class GoldenRunOnceTests(unittest.TestCase):
                 'say("__GUI_PROGRESS__50|200|100|10|5|downloading")\n'
                 'say("__GUI_ARCHIVE__" + json.dumps({"id": "x1", "title": "T"}))\n'),
         }
-        _sandbox.check_golden(self, GOLDEN_NAME, result)
+        # (2.0.0 S3) keyed: catalog texts are recorded as their keys, so a wording change needs no re-record
+        _sandbox.check_golden(self, GOLDEN_NAME, result, keyed=True)
 
 
 if __name__ == '__main__':

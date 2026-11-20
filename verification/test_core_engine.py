@@ -1,5 +1,7 @@
+# quick
 """Engine-side changes of 1.6.0 WP1: the child process of _run_once (private TEMP, job
-object, clean-up when emit raises: R12), Runner.__init__, the names 1.5.1 importers use,
+object, clean-up when emit raises: R12), Runner.__init__, the engine's own constants (2.0.0 S2 P4: the names
+kept for 1.5.1 importers are gone),
 the collector's final event, and the additive diagnostics keys.
 
 The children are ``python -c`` scripts; no website and no yt-dlp process is involved.
@@ -42,14 +44,6 @@ CHILD = ('import json, os, subprocess, sys, time\n'
          '    grandchild.kill()\n'
          '    sys.exit(0)\n'
          'time.sleep(120)\n')
-
-NAMES_OF_1_5_1 = ('APP_NAME', 'APP_VERSION', 'RESOURCE_ROOT', 'VENDOR', 'BIN', 'APP_DIR', 'STATE_DIR', 'MODES',
-                  'RESOLUTIONS', 'HIDDEN', 'RATE_LIMIT_COOLDOWN', 'MAX_RATE_LIMIT_COOLDOWN', 'MAX_RATE_LIMIT_RETRIES',
-                  'RATE_LIMIT_PATTERN', 'SLEEP_PATTERN', 'RETRY_AFTER_PATTERN', 'BOT_CHECK_PATTERN', 'BOT_CHECK_HINT',
-                  'BOT_CHECK_STALE_HINT', 'engine_path', 'engine_version', 'parse_urls', 'read_url_file', 'Options',
-                  'check_cookie_file', 'store_failed_job', 'load_failed_job', 'build_command', 'number', 'parse_line',
-                  'process_environment', 'Runner', 'diagnostics')
-BACKUP = _sandbox.release_src('1.5.1')
 
 
 class EngineCase(unittest.TestCase):
@@ -262,7 +256,7 @@ class RunOnceTests(EngineCase):
             runner.download(['https://example.invalid/a'], engine.Options(self.root / 'out'))
         self.assertEqual(logs.records[0].getMessage(), 'download queue aborted')
         self.assertIs(logs.records[0].exc_info[0], RuntimeError)
-        self.assertIn(('log', '错误：boom'), self.events, 'the line shown to the user is unchanged')
+        self.assertIn(('log', _sandbox.zh_t('core.engine.error', error='boom')), self.events, 'the line shown to the user is unchanged')
         self.assertEqual(self.events[-1][0], 'done')
 
 
@@ -299,49 +293,57 @@ class RunnerInitTests(EngineCase):
         self.assertEqual(len(store.archives()), 1)
         self.assertEqual(self.events[-1][1]['success'], 1)
 
+    def test_a_download_into_an_old_archive_record_logs_that_it_was_kept(self):
+        """(S2 review B5, PLAN 3.10) Runner.download hands Archive its log: a 资料信息.json that is not
+        version 2 is renamed with its bytes, rebuilt, and the log page gets core.archive.kept_aside."""
+        store = library.Library(self.root / 'history.sqlite3')
+        archive = self.root / 'archive'
+        options = engine.Options(self.root / 'out', batch_safe=False, archive_root=str(archive))
+        url = 'https://example.invalid/a'
+        runner = engine.Runner(self.emit, library=store)
+        with mock.patch.object(runner, '_run_once', return_value=(0, False, None)):
+            runner.download([url], options)
+        [record] = archive.rglob('资料信息.json')
+        old = json.dumps({'url': url, 'title': '旧标题', 'files': [], 'transcripts': [], 'msgs': {}},
+                         ensure_ascii=False).encode('utf-8')
+        record.write_bytes(old)
+        self.events.clear()
+        runner = engine.Runner(self.emit, library=store)
+        with mock.patch.object(runner, '_run_once', return_value=(0, False, None)):
+            runner.download([url], options)
+        kept = [value for kind, value in self.events
+                if kind == 'log' and getattr(value, 'key', None) == 'core.archive.kept_aside']
+        self.assertEqual(len(kept), 1, self.events)
+        self.assertEqual((kept[0].params['target'], kept[0].params['folder']),
+                         ('资料信息.bad.json', str(record.parent)))
+        self.assertEqual((record.parent / '资料信息.bad.json').read_bytes(), old)
+        self.assertEqual(json.loads(record.read_text(encoding='utf-8'))['version'], 2)
+        self.assertEqual(self.events[-1][1]['success'], 1)
+
 
 class CompatibilityTests(unittest.TestCase):
-    def test_every_engine_name_of_1_5_1_is_still_there(self):
-        for name in NAMES_OF_1_5_1:
-            self.assertTrue(hasattr(engine, name), name)
-        namespace = {}
-        exec('from engine import ' + ', '.join(NAMES_OF_1_5_1), namespace)
+    """(2.0.0 S2 P4) The names kept for 1.5.1 importers (paths / procutil / updater copies, store_failed_job,
+    load_failed_job, Runner.update) are gone; what is left here pins the engine's own constants and objects."""
+
+    def test_the_engine_constants(self):
         self.assertEqual(engine.APP_NAME, 'YT-DLP下载器')
-        # WP2 appends formats: the five of 1.5.1 keep their strings and their positions.
-        self.assertEqual(engine.MODES[:5], ('音频 · 原始最佳', '音频 · WAV 32 位', '音频 · FLAC', '音频 · MP3 320K',
-                                            '视频 · 最佳画质 MKV'))
-        self.assertEqual(engine.RESOLUTIONS, ('最佳', '2160p / 4K', '1440p', '1080p', '720p', '480p'))
+        # (2.0.0 S2 P5) The stored formats are the preset ids, in the order of the table (app.py's
+        # download self-test takes MODES[1]); 'best' is no height limit.
+        self.assertEqual(engine.MODES, ('audio_best', 'audio_wav', 'audio_flac', 'audio_mp3', 'video_mkv',
+                                        'audio_m4a', 'video_mp4'))
+        self.assertEqual(engine.RESOLUTIONS, ('best', '2160p / 4K', '1440p', '1080p', '720p', '480p'))
         self.assertEqual((engine.RATE_LIMIT_COOLDOWN, engine.MAX_RATE_LIMIT_COOLDOWN, engine.MAX_RATE_LIMIT_RETRIES),
                          (300, 900, 2))
+        for name in ('RESOURCE_ROOT', 'VENDOR', 'BIN', 'APP_DIR', 'STATE_DIR', 'engine_version', 'store_failed_job',
+                     'load_failed_job'):
+            self.assertFalse(hasattr(engine, name), name)
+        self.assertFalse(hasattr(engine.Runner, 'update'))
 
-    def test_names_defined_by_the_1_5_1_modules_are_still_there(self):
-        """Compared with the untouched 1.5.1 sources: every module-level name and every method."""
-        self.assertTrue(BACKUP.is_dir(), BACKUP)
-        for module in (engine, library, collector):
-            tree = ast.parse((BACKUP / f'{module.__name__}.py').read_text(encoding='utf-8'))
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    names = [node.name]
-                elif isinstance(node, ast.Assign):
-                    names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-                else:
-                    continue
-                for name in names:
-                    self.assertTrue(hasattr(module, name), f'{module.__name__}.{name}')
-                if isinstance(node, ast.ClassDef):
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef):
-                            self.assertTrue(hasattr(getattr(module, node.name), item.name),
-                                            f'{module.__name__}.{node.name}.{item.name}')
-
-    def test_old_names_are_the_new_objects(self):
-        self.assertEqual((engine.RESOURCE_ROOT, engine.VENDOR, engine.BIN), (paths.RESOURCE_ROOT, paths.VENDOR, paths.BIN))
-        self.assertEqual(engine.APP_DIR, paths.APP_DIR)
-        self.assertEqual(engine.STATE_DIR, paths.STATE_DIR)
+    def test_shared_objects(self):
+        # engine uses these unqualified (Runner._run_once, diagnostics): the procutil / updater objects
         self.assertIs(engine.HIDDEN, procutil.HIDDEN)
         self.assertIs(engine.process_environment, procutil.process_environment)
         self.assertIs(engine.engine_path, updater.engine_path)
-        self.assertIs(engine.engine_version, updater.engine_version)
         self.assertIs(engine.Runner._terminate_process, procutil.terminate_tree)
         self.assertIs(library.alive, procutil.alive)
         positional = engine.Options(Path('D:/out'), engine.MODES[4], '1080p', True, 'http://127.0.0.1:1', False,
@@ -562,6 +564,16 @@ class DiagnosticsTests(EngineCase):
         self.assertTrue(all(keywords['cwd'] == paths.BIN for _command, keywords in commands))
         json.dumps(result)   # the self-test report is written as JSON
         self.assertFalse(paths.STATE_DIR.exists(), 'diagnostics creates nothing')
+        # (S2 review F1) The library file beside the app is named, not probed for writing: the installed
+        # self-test (install_release.post_install_gate) creates nothing beside the owner's data.
+        data = self.root / 'app' / 'data'
+        data.mkdir(parents=True)
+        (data / 'library.sqlite3').write_bytes(b'')
+        probe = mock.patch.object(paths, '_writable', side_effect=AssertionError('diagnostics probed the library'))
+        with mock.patch.object(subprocess, 'run', side_effect=run), probe:
+            result = engine.diagnostics()
+        self.assertEqual(Path(result['catalog']), data / 'library.sqlite3')
+        self.assertEqual(sorted(item.name for item in data.iterdir()), ['library.sqlite3'])
 
 
 if __name__ == '__main__':

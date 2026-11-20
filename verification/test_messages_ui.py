@@ -5,15 +5,20 @@
 The three UI modules are converted (WP-6 removed the staging flag MESSAGES_READY) and clean under
 G1 and G5; the 1.7.0 code that 6.4 deletes is gone (the key-prefix lists, stored_text, every localize call, library.PAGE_TITLE_KEYS)
 and the ids keep their values.  G4: every core.* / value.* / download.reason.* key through every
-channel of these pages, live and as a stored record with its sidecar (en: no Chinese, zh: the
+channel of these pages, live and as a stored record (en: no Chinese, zh: the
 message's own zh text in the 1.7.0 composition).  The consumer census of the collect_* and
 update_* events and of Library.collection_event (a Message, a Raw and a plain str: no exception,
-the same zh state and stored bytes; en: the key rendered, the other two as they are).  C-F39 /
+the same zh state; en: the key rendered, the other two as they are; see below for the stored forms).  C-F39 /
 C-F40 / C-F41 and the raw title of a collect job.  History titles (CR2-2) and notes (R4 rows) in
-both languages for rows written by the frozen 1.5.1, 1.6.0 and 1.7.0 Library (child processes on
-release-sources, -B) and by 1.8.0: en exact, zh equal to what the frozen 1.7.0 page functions show
-for the same rows.  The 6.2b dialogs in en.  The three pages in en with that data show no Chinese
+English for stored rows.  The 6.2b dialogs in en.  The three pages in en with that data show no Chinese
 outside user data.  Smoke apps, never on screen; no network; no real engine.
+
+(2.0.0 S2 P2) The library is format 2: the stored legs write v2 records (a job's title column holds
+text only, so it is no message channel any more; a subscription check's job is via='subscription');
+the census pins the format-2 forms (a message as {"k", "p"}, a Raw or plain text as the text).  (S2 P4)
+The rows of 1.5.1 / 1.6.0 / 1.7.0 written by their frozen Library in child processes and compared with
+the frozen 1.7.0 page functions are gone (2.0.0 does not read older stores); the stored rows here are
+the ones this tree writes.
 """
 import _sandbox
 import contextlib
@@ -24,8 +29,6 @@ import re
 import shutil
 import sqlite3
 import string
-import subprocess
-import sys
 import time
 import tkinter as tk
 import unittest
@@ -45,7 +48,8 @@ import ui_theme
 import updater
 import urls
 from collector import CollectOptions
-from messages import Message, cut, msg, raw, value
+from messages import Message, cut, msg, raw
+from _sandbox import zh_t
 
 CJK = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
 FORMATTER = string.Formatter()
@@ -56,7 +60,6 @@ PAGE = 'https://example.invalid/list'
 NUMERIC = {'count', 'code', 'page', 'status', 'length', 'seconds', 'attempt', 'limit', 'line', 'pages', 'links',
            'dropped', 'new', 'pending', 'total', 'shown', 'completed', 'errors', 'percent', 'added', 'skipped'}
 LONG = 'D:\\Media\\' + 'a' * 60 + '\\cookies.txt'
-CENSUS = 'census: text from an unconverted producer'
 OPTIONS = {'urls': [PAGE], 'dynamic': False, 'scrolls': 0, 'selector': '', 'max_pages': 1, 'proxy': ''}
 
 
@@ -72,7 +75,7 @@ def sample_params(key):
         if name in NUMERIC:
             params[name] = 7
         elif name == 'mode':
-            params[name] = value('mode', formats.MODES[1])
+            params[name] = msg('format.' + formats.MODES[1])   # (2.0.0 S2 P4) no Value; (S4 A1) one name
         elif name in ('error', 'reason', 'problem'):
             params[name] = msg('core.collect.too_large')
         elif name == 'name':
@@ -121,6 +124,8 @@ def texts_of(root):
     for widget in walk(root):
         if isinstance(widget, ctk.CTkLabel):
             found.append(ui_theme.full_text(widget))
+        elif isinstance(widget, ui_theme.PathButton) and widget.path:
+            pass                                        # (2.0.0 S4) a path is user data
         elif isinstance(widget, (ctk.CTkButton, ctk.CTkCheckBox, ctk.CTkSwitch)):
             found.append(widget.cget('text'))
         if isinstance(widget, ctk.CTkOptionMenu):
@@ -199,15 +204,13 @@ class ReadyTests(unittest.TestCase):
         for module in MODULES:
             self.assertEqual(i18n_tool.allow_stale(context, module), [], module)
             allow = i18n_tool.load_allow(module)
-            self.assertEqual(allow['pending_keys'], {}, module)
             for text, entry in allow['sinks'].items():
                 self.assertTrue(entry.get('reason'), (module, text))
         self.assertEqual(set(i18n_tool.load_allow('library_ui')['raises']), {'the history job was never written', 'no options'},
                          'G1e: the two English internal raises of library_ui stay')
 
     def test_the_deleted_code_is_gone_and_the_ids_keep_their_values(self):
-        lines = [line for line in i18n_tool.localize_lines() if line.split(':')[0][:-3] in MODULES]
-        self.assertEqual(lines, [], 'no localize call line left in the three modules')
+        # (S3 review fix) the localize line count went with the WP-6 leftovers: i18n has no localize (C12)
         for module, names in ((collection_ui, ('PAGE_TITLE_KEYS', 'stored_text')),
                               (library_ui, ('JOB_TITLE_KEYS', 'NAME_KEYS', 'TITLED_JOB_KEYS', 'UNTITLED_JOB_KEYS',
                                             'COLLECT_JOB_KEYS', 'PAGE_TITLE_KEYS', 'stored_text')),
@@ -217,9 +220,9 @@ class ReadyTests(unittest.TestCase):
         for module in MODULES:
             source = (SRC / f'{module}.py').read_text(encoding='utf-8')
             self.assertNotIn('localize(', source, module)
-        self.assertEqual(collection_ui.WEB_LINK, '网页链接')
+        self.assertEqual(collection_ui.WEB_LINK, 'web')
         self.assertEqual((library_ui.TAB_HISTORY, library_ui.TAB_SUBSCRIPTIONS, library_ui.TAB_ARCHIVE),
-                         ('任务历史与续采', '增量订阅', '统一资料归档'))
+                         ('history', 'subscriptions', 'archive'))
         for constant in (collection_ui.WEB_LINK, library_ui.TAB_HISTORY):
             self.assertNotIsInstance(constant, Message, 'ids and compared stored values are not messages')
 
@@ -229,7 +232,8 @@ class ReadyTests(unittest.TestCase):
         pages, successful, error = collection_ui.subscription_result(record, False)
         self.assertEqual((pages, successful), ([{'url': PAGE}], False))
         self.assertEqual(error.key, 'common.clauses')
-        self.assertEqual(error, messages.zh(errors[1]) + '；' + messages.zh(errors[2]), 'the 1.7.0 join of the last two')
+        self.assertEqual(error, messages.zh(errors[1]) + i18n.JOIN + messages.zh(errors[2]),
+                         'the 1.7.0 join of the last two')
         one = collection_ui.subscription_result({'status': 'partial', 'pages': [], 'data': {'errors': errors[:1]}}, False)[2]
         self.assertIs(one, errors[0], 'one error: that message itself')
         for cancelled, key in ((True, 'value.subscription.stopped'), (False, 'value.subscription.unfinished')):
@@ -263,15 +267,15 @@ class ChannelMatrixTests(AppCase):
                     self.assertEqual(shown, messages.zh(m), key)
                 with self.subTest(lang=lang, key=key, leg='live'):
                     checked += self.live_channels(app, key, m, shown, lang, index)
-            # -------------------------------------------------- stored legs (sidecars)
+            # -------------------------------------------------- stored legs
             jobs, downloads, folders = {}, {}, {}
             pending_sub = store.subscription(raw('Pending feed'), OPTIONS, 3600, True, True)
             note_sub = store.subscription(raw('Note feed'), OPTIONS, 3600, True, True)
             page_links = []
             for index, key in enumerate(all_keys):
                 m = samples[key]
-                job = store.create_job('collect', m, dict(OPTIONS, urls=[f'{PAGE}/{index}']))
-                store.change_job(job, status='partial', errors=[m])
+                job = store.create_job('collect', raw(f'Page {index}'), dict(OPTIONS, urls=[f'{PAGE}/{index}']))
+                store.change_job(job, status='partial', errors=[{'error': m, 'reason': None}])
                 jobs[key] = job
                 download = store.create_job('download', raw(f'Song {index}'),
                                             {'urls': [f'{A}/{index}'], 'output': 'x', 'mode': formats.MODES[3]})
@@ -283,7 +287,7 @@ class ChannelMatrixTests(AppCase):
                 store.archive_index(str(folder), {'url': f'{A}/{index}.mp4', 'source': PAGE, 'title': m, 'uploader': '',
                                                   'files': [], 'transcripts': []})
                 folders[str(folder)] = key
-                page_links.append({'url': f'https://cdn.example.invalid/{index}.mp3', 'title': m, 'kind': '媒体地址',
+                page_links.append({'url': f'https://cdn.example.invalid/{index}.mp3', 'title': m, 'kind': 'media',
                                    'source': PAGE})
             store.finish_subscription(pending_sub, [{'url': PAGE, 'title': raw('List'), 'links': page_links}], True)
             app.refresh_library()
@@ -292,17 +296,15 @@ class ChannelMatrixTests(AppCase):
                 shown = messages.show(m)
                 with self.subTest(lang=lang, key=key, leg='stored'):
                     record = store.job(jobs[key])
-                    self.assertEqual(record['title'].key, key)
-                    self.assertEqual(record['title'].origin, 'stored')
-                    self.assertShown(app.history_tree.full_values(jobs[key])[1], shown, lang, 'history title')
+                    self.assertEqual(record['data']['errors'][0]['error'].key, key)
                     done = i18n.t('library.history.downloaded', completed=0)
                     self.assertShown(library_ui.LibraryUI.history_note_text(record),
                                      i18n.t('library.history.pages', pages=0, done=done)
                                      + i18n.t('library.history.last_error', error=shown[:130]), lang, 'history note')
                     self.assertShown(library_ui.LibraryUI.history_note_text(store.job(downloads[key])),
                                      done + i18n.t('library.history.last_error', error=shown[:130]), lang,
-                                     'download note (last_reason)')
-                    checked += 3
+                                     'download note (errors[-1].reason)')
+                    checked += 2
             rows = {row['folder']: row for row in store.archives()}
             for n, row in enumerate(app.visible_archives):
                 key = folders[row['folder']]
@@ -334,8 +336,7 @@ class ChannelMatrixTests(AppCase):
                 note = ui_theme.full_text(app.subscription_note)
                 row = next(r for r in store.subscriptions() if r['id'] == note_sub)
                 self.assertEqual(row['data']['last_error'].key, key)
-                self.assertShown(note, i18n.t('library.subscription.status', new=0, pending=0) + messages.show(m), lang,
-                                 f'subscription note {key}')
+                self.assertShown(note, messages.show(m), lang, f'subscription note {key}')
                 checked += 1
             self.assertGreater(checked, 20 * len(all_keys))
 
@@ -353,7 +354,7 @@ class ChannelMatrixTests(AppCase):
         app.collected_pages.clear()
         media = f'https://cdn.example.invalid/live-{index}.mp4'
         page = {'url': PAGE, 'title': m, 'text': 'Body', 'markdown': 'Body', 'next': None,
-                'links': [{'url': media, 'title': m, 'kind': '媒体地址', 'source': PAGE}]}
+                'links': [{'url': media, 'title': m, 'kind': 'media', 'source': PAGE}]}
         app.handle('collect_page', page)
         rows = [app.collect_tree.full_values(iid) for iid in app.collect_tree.get_children()]
         self.assertEqual(len(rows), 1)
@@ -368,16 +369,17 @@ class ChannelMatrixTests(AppCase):
         if lang == 'en':
             self.assertEqual(chinese(content), [], content)
         checked += 6
-        # history title, history note and subscription name (the page functions)
-        self.assertShown(library_ui.history_title({'kind': 'collect', 'title': m, 'data': {}}), shown, lang, 'history title')
+        # history note and subscription name (the page functions); (2.0.0) a job's title column holds
+        # text only (no message channel)
         done = i18n.t('library.history.downloaded', completed=0)
-        self.assertShown(library_ui.LibraryUI.history_note_text({'kind': 'collect', 'pages': [], 'data': {'errors': [m]}}),
+        self.assertShown(library_ui.LibraryUI.history_note_text({'kind': 'collect', 'pages': [], 'data': {
+            'errors': [{'error': m, 'reason': None}]}}),
                          i18n.t('library.history.pages', pages=0, done=done)
                          + i18n.t('library.history.last_error', error=shown[:130]), lang, 'history note')
         cells = library_ui.subscription_row({'name': m, 'enabled': True, 'interval': 900, 'data': {'last_check': 0},
-                                             'pending': 0})
+                                             'pending': 0, 'next_check': time.time() + 3600})
         self.assertShown(cells[0], shown, lang, 'subscription name')
-        checked += 3
+        checked += 2
         # update status and error, and their log line
         app.busy, app.operation = True, 'update'
         try:
@@ -437,11 +439,11 @@ class ChannelMatrixTests(AppCase):
         self.assertShown(dialogs.showwarning.call_args.args[1], shown, lang, 'restore dialog')
         with mock.patch.object(app.library, 'history', side_effect=RuntimeError(m)):
             app.refresh_library()
-        self.assertShown(ui_theme.full_text(app.library_warning_label), i18n.t('library.unreadable', error=shown), lang,
+        self.assertShown(app.library_notice.full_text, i18n.t('library.unreadable', error=shown), lang,
                          'library.unreadable (refresh_library)')
         with mock.patch.object(app.library, 'history', side_effect=RuntimeError(m)):
             app.refresh_history()
-        self.assertShown(ui_theme.full_text(app.library_warning_label), i18n.t('library.unreadable', error=shown), lang,
+        self.assertShown(app.library_notice.full_text, i18n.t('library.unreadable', error=shown), lang,
                          'library.unreadable (refresh_history)')
         app.show_library_problem('')
         return checked + 10
@@ -465,27 +467,25 @@ class SubscriptionTests(AppCase):
                 rows = {row['id']: row for row in store.subscriptions()}
                 name = messages.show(rows[untitled]['name'])
                 self.assertEqual(name, i18n.t('value.subscription.untitled'))
-                # C-F40: the job title is a message holding the decoded name; the hint and the note show it
+                # (2.0.0) the job is the subscription's (via) with its stored name ('' here); the hint and the
+                # note show the name
                 with mock.patch.object(app, 'launch_collection') as launch:
                     app.check_subscription(rows[untitled], automatic=True)
-                title = launch.call_args.kwargs['title']
-                self.assertEqual((title.key, title.params['name']), ('value.job_title.subscription', rows[untitled]['name']))
-                self.assertEqual(messages.show(title), i18n.t('value.job_title.subscription', name=name))
-                self.assertEqual(ui_theme.full_text(app.link_hint), i18n.t('download.hint.subscription_check', name=name))
+                self.assertEqual((launch.call_args.kwargs['title'], launch.call_args.kwargs['via']), ('', 'subscription'))
+                self.assertEqual(app.link_note.cget('text'), i18n.t('download.hint.subscription_check', name=name))
                 self.assertEqual(ui_theme.full_text(app.collect_note), i18n.t('collect.background', name=name))
                 app.refresh_collect_note()
                 # the stored job: create_job with that title (the real launch, the runner stubbed)
                 with mock.patch('collection_ui.CollectionRunner') as runner, mock.patch.object(app, 'set_busy'):
                     runner.return_value.run = lambda options: None
                     app.active_subscription = named
-                    self.assertTrue(app.launch_collection(CollectOptions([PAGE]),
-                                                          title=msg('value.job_title.subscription',
-                                                                    name=rows[named]['name'])))
+                    self.assertTrue(app.launch_collection(CollectOptions([PAGE]), title=rows[named]['name_text'],
+                                                          via='subscription'))
                     job = app.collection_job
                     app.collection_job = None
                     app.run_token += 1
                 stored = store.job(job)
-                self.assertEqual((stored['title'].key, stored['title'].origin), ('value.job_title.subscription', 'stored'))
+                self.assertEqual((stored['title'], stored['data']['via']), ('Night feed', 'subscription'))
                 self.assertEqual(library_ui.history_title(stored), i18n.t('value.job_title.subscription', name='Night feed'))
                 # the collect-job title without a title: the first start link, raw user data (3.3)
                 with mock.patch('collection_ui.CollectionRunner') as runner, mock.patch.object(app, 'set_busy'), \
@@ -497,11 +497,12 @@ class SubscriptionTests(AppCase):
                     app.collection_job, app.operation = None, None
                     app.run_token += 1
                 stored = store.job(job)
-                self.assertIsInstance(created.call_args.args[1], messages.Raw)
+                self.assertEqual(created.call_args.args[1], PAGE + '/start')
+                self.assertNotIn('via', stored['data'])
                 self.assertEqual(stored['title'], PAGE + '/start')
                 with sqlite3.connect(store.path) as db:
                     data = json.loads(db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()[0])
-                self.assertNotIn('msgs', data, 'an ordinary link needs no sidecar entry')
+                self.assertNotIn('msgs', data, 'format 2 has no msgs field')
                 # C-F41: a check that cannot start stores the error's message; log line and dialog show it
                 error = msg('core.collect.bad_address')
                 with mock.patch.object(library_ui, 'CollectOptions', side_effect=ValueError(error)), \
@@ -511,11 +512,11 @@ class SubscriptionTests(AppCase):
                 self.assertIn(i18n.t('log.subscription.failed', name='Night feed', error=messages.show(error)),
                               self.logged(app))
                 last = next(row for row in store.subscriptions() if row['id'] == named)['data']['last_error']
-                self.assertEqual((last.key, last.origin), ('core.collect.bad_address', 'stored'))
+                self.assertEqual(last.key, 'core.collect.bad_address')
                 app.refresh_library()
                 app.subscription_tree.selection_set(named)
                 app.subscription_selection()
-                self.assertTrue(ui_theme.full_text(app.subscription_note).endswith(messages.show(error)))
+                self.assertEqual(ui_theme.full_text(app.subscription_note), messages.show(error))
                 if lang == 'en':
                     self.assertEqual(chinese(ui_theme.full_text(app.subscription_note)), [])
                 self.close(app)
@@ -530,8 +531,8 @@ class CensusTests(AppCase):
 
     def forms(self):
         text = messages.zh(self.MESSAGE)
-        return (('message', self.MESSAGE, contextlib.nullcontext), ('raw', raw(text), lambda: messages.exempt(CENSUS)),
-                ('plain', text, lambda: messages.exempt(CENSUS)))
+        return (('message', self.MESSAGE, contextlib.nullcontext), ('raw', raw(text), contextlib.nullcontext),
+                ('plain', text, contextlib.nullcontext))
 
     def widget_state(self, app, item, guard):
         state = {}
@@ -543,7 +544,7 @@ class CensusTests(AppCase):
             app.collected_links.clear()
             app.collected_pages.clear()
             app.handle('collect_page', {'url': PAGE, 'title': item, 'text': '', 'markdown': '', 'next': None,
-                                        'links': [{'url': A + '.mp4', 'title': item, 'kind': '媒体地址', 'source': PAGE}]})
+                                        'links': [{'url': A + '.mp4', 'title': item, 'kind': 'media', 'source': PAGE}]})
             state['collect_page'] = app.collect_tree.full_values(app.collect_tree.get_children()[0])[1]
             app.busy, app.operation = True, 'update'
             try:
@@ -561,14 +562,12 @@ class CensusTests(AppCase):
             job = store.create_job('collect', raw(PAGE), OPTIONS)
             store.collection_event(job, 'collect_page', {'url': PAGE, 'title': item, 'text': '', 'markdown': '',
                                                          'next': None, '_checkpoint': None,
-                                                         'links': [{'url': A, 'title': item, 'kind': '媒体地址',
+                                                         'links': [{'url': A, 'title': item, 'kind': 'media',
                                                                     'source': PAGE}]})
             store.collection_event(job, 'collect_error', item)
         with sqlite3.connect(store.path) as db:
             data = json.loads(db.execute('SELECT data FROM jobs WHERE id=?', (job,)).fetchone()[0])
             page = json.loads(db.execute('SELECT data FROM pages WHERE job=?', (job,)).fetchone()[0])
-        data.pop('msgs', None)
-        page.pop('msgs', None)
         return json.dumps(data['errors'], ensure_ascii=False), json.dumps(page, ensure_ascii=False)
 
     def test_census(self):
@@ -577,9 +576,14 @@ class CensusTests(AppCase):
                 app = self.make_app(f'messages-ui-census-{lang}')
                 states = {name: self.widget_state(app, item, guard) for name, item, guard in self.forms()}
                 stored = {name: self.stored_state(app.library, item, guard) for name, item, guard in self.forms()}
-                self.assertEqual(stored['message'], stored['raw'], 'the stored bytes of the old fields')
-                self.assertEqual(stored['message'], stored['plain'])
+                # (2.0.0) format 2: the message as {"k", "p"}, a Raw or plain text as the text itself
                 text = messages.zh(self.MESSAGE)
+                form = {'k': 'core.collect.http_status', 'p': {'status': 503}}
+                self.assertEqual(json.loads(stored['message'][0]), [{'error': form, 'reason': None}])
+                self.assertEqual(json.loads(stored['message'][1])['title'], form)
+                self.assertEqual(json.loads(stored['raw'][0]), [{'error': text, 'reason': None}])
+                self.assertEqual(json.loads(stored['raw'][1])['links'][0]['title'], text)
+                self.assertEqual(stored['raw'], stored['plain'])
                 if lang == 'zh':
                     self.assertEqual(states['message'], states['raw'])
                     self.assertEqual(states['message'], states['plain'])
@@ -597,140 +601,24 @@ class CensusTests(AppCase):
                 self.close(app)
 
 
-# ============================================================================ legacy and 1.8.0 rows
-WRITER = r'''
-import json, os, sys
-src, version, db, root, out = sys.argv[1:6]
-sys.path.insert(0, src)
-import library
-A, B, C = ('https://example.invalid/' + name for name in 'abc')
-PAGE = 'https://example.invalid/list-' + version.replace('.', '-')
-MEDIA = 'https://cdn.example.invalid/clip-' + version.replace('.', '-') + '.mp4'
-REQUEST = 'https://cdn.example.invalid/hls-' + version.replace('.', '-') + '.m3u8'
-LONG = %(long)r
-OPTIONS = {'urls': [PAGE], 'dynamic': False, 'scrolls': 0, 'selector': '', 'max_pages': 1}
-store = library.Library(db)
-ids = {}
-if version == '1.5.1':
-    ids['placeholder'] = store.create_job('download', '3条 · 音频 · MP3 320K',
-                                          {'urls': [A, B, C], 'mode': '音频 · MP3 320K', 'output': root})
-    store.download_event(ids['placeholder'], 'done', {'cancelled': False, 'failed': 1})
-    sub = store.subscription('', OPTIONS)
-    ids['subscription'] = sub
-    ids['subscription_job'] = store.create_job('collect', '订阅：未命名订阅', OPTIONS, sub)
-    page = {'url': PAGE, 'title': '网页', 'text': 'Body', 'markdown': 'Body', 'next': None,
-            'links': [{'url': MEDIA, 'title': '网页', 'kind': '媒体地址', 'source': PAGE}]}
-    store.collection_event(ids['subscription_job'], 'collect_page', dict(page, _checkpoint={'visited': [PAGE], 'todo': []}))
-    store.collection_event(ids['subscription_job'], 'collect_error', '页面超过8MB，请缩小采集范围。')
-    store.change_job(ids['subscription_job'], status='partial')
-    store.finish_subscription(sub, [page], True)
-    store.finish_subscription(sub, [], False, '网站返回HTTP 503，可尝试动态模式或稍后重试。；页面超过8MB，请缩小采集范围。')
-    ids['collect'] = store.create_job('collect', PAGE, OPTIONS)
-    store.change_job(ids['collect'], status='completed')
-    store.archive_index(os.path.join(root, 'archive-1-5-1', 'page'),
-                        {'url': MEDIA, 'source': PAGE, 'title': '网页', 'uploader': '', 'files': [], 'transcripts': []})
-else:
-    import engine
-    ids['titled_form'] = store.create_job('download', '1 条 · 音频 · FLAC', {'urls': [A], 'mode': '音频 · FLAC', 'output': root})
-    store.download_event(ids['titled_form'], 'item', {'url': A})
-    store.download_event(ids['titled_form'], 'title', '订阅：Fake Channel Live' if version == '1.6.0' else '3 条 · 现场版')
-    # R4: a cookies error whose reason is explain_error's 70-character fallback (the D-H-2 rows), the
-    # error text made by the version's own code (engine.check_cookie_file and the item's f-string)
-    try:
-        engine.check_cookie_file(LONG)
-        raise SystemExit('the cookies file must be missing')
-    except (ValueError, OSError) as failure:
-        error = f'此链接无法开始：{failure}'
-    store.download_event(ids['titled_form'], 'item_done', {'success': False, 'url': A, 'error': error,
-                                                           'reason': engine.explain_error(error)})
-    store.download_event(ids['titled_form'], 'done', {'cancelled': False, 'failed': 1})
-    ids['multi'] = store.create_job('download', '2 条 · 音频 · MP3 320K', {'urls': [A, B], 'mode': '音频 · MP3 320K',
-                                                                          'output': root})
-    store.download_event(ids['multi'], 'item', {'url': A})
-    store.download_event(ids['multi'], 'title', 'Some Song' if version == '1.6.0' else 'Live set')
-    line = 'ERROR: [generic] abc: HTTP Error 404: Not Found'
-    store.download_event(ids['multi'], 'item_done', {'success': False, 'url': A, 'error': line,
-                                                     'reason': engine.explain_error(line)})
-    store.download_event(ids['multi'], 'done', {'cancelled': False, 'failed': 1})
-    ids['placeholder'] = store.create_job('download', '2 条 · 音频 · 原始最佳', {'urls': [A, B], 'mode': '音频 · 原始最佳',
-                                                                              'output': root})
-    store.download_event(ids['placeholder'], 'done', {'cancelled': False, 'failed': 1})
-    ids['no_link'] = store.create_job('download', '1 条 · 视频 · 最佳画质 MKV', {'urls': [], 'mode': '视频 · 最佳画质 MKV',
-                                                                             'output': root})
-    ids['collect'] = store.create_job('collect', PAGE, dict(OPTIONS, dynamic=True))
-    page = {'url': PAGE, 'title': '媒体直链', 'text': '', 'markdown': '', 'next': None,
-            'links': [{'url': MEDIA, 'title': '媒体直链', 'kind': '媒体地址', 'source': PAGE},
-                      {'url': REQUEST, 'title': '动态页面媒体请求', 'kind': '媒体地址', 'source': PAGE}]}
-    store.collection_event(ids['collect'], 'collect_page', dict(page, _checkpoint={'visited': [PAGE], 'todo': []}))
-    store.collection_event(ids['collect'], 'collect_error', '动态采集需要安装 Google Chrome；普通网页模式无需浏览器。')
-    store.change_job(ids['collect'], status='partial')
-    sub = store.subscription('Feed ' + version, OPTIONS)
-    ids['subscription'] = sub
-    store.finish_subscription(sub, [page], True)
-    store.finish_subscription(sub, [], False, '动态采集需要安装 Google Chrome；普通网页模式无需浏览器。；网站返回 HTTP 503，可尝试动态模式或稍后重试。')
-    store.archive_index(os.path.join(root, 'archive-' + version.replace('.', '-'), 'request'),
-                        {'url': REQUEST, 'source': PAGE, 'title': '动态页面媒体请求', 'uploader': '', 'files': [],
-                         'transcripts': []})
-with open(out, 'w', encoding='utf-8') as handle:
-    json.dump(ids, handle)
-''' % {'long': LONG}
-
-RENDER_1_7_0 = r'''
-import json, sys
-src, db, out = sys.argv[1:4]
-sys.path.insert(0, src)
-import i18n
-i18n.set_language('zh')
-import library
-import library_ui
-store = library.Library(db)
-result = {'history': {}, 'notes': {}, 'subscriptions': {}, 'pending': {}, 'archives': {}}
-for row in store.history(1000):
-    result['history'][row['id']] = list(library_ui.history_row(row)[:3])
-    result['notes'][row['id']] = library_ui.LibraryUI.history_note_text(store.job(row['id']))
-for row in store.subscriptions():
-    cells = library_ui.subscription_row(row)
-    result['subscriptions'][row['id']] = [cells[0], cells[1], cells[3]]
-    result['pending'][row['id']] = [i18n.localize(item['title'], keys=library_ui.PAGE_TITLE_KEYS)
-                                    for item in store.pending(row['id'])]
-for row in store.archives():
-    result['archives'][row['folder']] = i18n.localize(row['title'], keys=library_ui.PAGE_TITLE_KEYS)
-with open(out, 'w', encoding='utf-8') as handle:
-    json.dump(result, handle, ensure_ascii=False)
-'''
-
-
-def child_environment():
-    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', YTDLP_DESKTOP_LANG='zh')
-    environment.pop(_sandbox.MSG_GUARD, None)           # the old code has no messages module
-    return environment
-
+# ============================================================================ stored rows
+# (2.0.0 S2 P4) The rows of 1.5.1 / 1.6.0 / 1.7.0 (written by their frozen Library in child processes, rendered
+# by the frozen 1.7.0 page functions) are gone: 2.0.0 does not read older stores.  What is left: the rows this
+# tree writes, shown by these pages.
 
 def write_rows(folder):
-    """A library with the rows 1.5.1, 1.6.0 and 1.7.0 wrote (their frozen Library, in that order on one
-    file, as the owner's upgrades did) and 1.8.0 rows with sidecars; {version: ids}."""
+    """A library with format-2 rows of every kind these pages show: (db, ids)."""
     folder.mkdir(parents=True, exist_ok=True)
     db = folder / 'test-library.sqlite3'
-    script = folder / 'writer.py'
-    script.write_text(WRITER, encoding='utf-8')
-    ids = {}
-    for version in ('1.5.1', '1.6.0', '1.7.0'):
-        out = folder / f'ids-{version}.json'
-        done = subprocess.run([sys.executable, '-X', 'utf8', '-B', str(script), str(_sandbox.release_src(version)), version,
-                               str(db), str(folder), str(out)], cwd=str(folder), env=child_environment(),
-                              capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
-        if done.returncode:
-            raise AssertionError(f'{version} writer failed:\n{done.stderr[-4000:]}')
-        ids[version] = json.loads(out.read_text(encoding='utf-8'))
     store = library.Library(db)
     new = {}
     sub = store.subscription('Night feed', OPTIONS)
     new['subscription'] = sub
-    new['subscription_job'] = store.create_job('collect', msg('value.job_title.subscription',
-                                                              name=store.subscriptions()[-1]['name']), OPTIONS, sub)
+    new['subscription_job'] = store.create_job('collect', store.subscriptions()[-1]['name_text'], OPTIONS, sub,
+                                               via='subscription')
     page = {'url': PAGE, 'title': msg('value.link_kind.direct'), 'text': '', 'markdown': '', 'next': None,
-            'links': [{'url': A + '.mp4', 'title': msg('value.link_kind.direct'), 'kind': '媒体地址', 'source': PAGE},
-                      {'url': A + '.m3u8', 'title': msg('value.link_kind.dynamic_request'), 'kind': '媒体地址',
+            'links': [{'url': A + '.mp4', 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': PAGE},
+                      {'url': A + '.m3u8', 'title': msg('value.link_kind.dynamic_request'), 'kind': 'media',
                        'source': PAGE}]}
     store.collection_event(new['subscription_job'], 'collect_page', dict(page, _checkpoint={'visited': [PAGE], 'todo': []}))
     for error in (msg('core.collect.http_status', status=503), msg('core.collect.too_large')):
@@ -739,40 +627,21 @@ def write_rows(folder):
     store.finish_subscription(sub, [page], True)
     store.finish_subscription(sub, [], False, collection_ui.subscription_result(store.job(new['subscription_job']),
                                                                                  False)[2])
-    new['download'] = store.create_job('download', msg('value.job_title.placeholder', count=2,
-                                                       mode=value('mode', formats.MODES[1])),
-                                       {'urls': [A, B], 'output': str(folder), 'mode': formats.MODES[1]})
+    new['untitled_subscription'] = store.subscription('', OPTIONS)
+    new['download'] = store.create_job('download', '', {'urls': [A, B], 'output': str(folder), 'mode': formats.MODES[1]})
     store.download_event(new['download'], 'item', {'url': A})
     store.download_event(new['download'], 'title', 'Clip A')
     error = cut(msg('core.engine.cannot_start_link', error=msg('core.cookies.missing', file=LONG)), 200)
     store.download_event(new['download'], 'item_done', {'success': False, 'url': A, 'error': error,
                                                         'reason': engine.explain_error(error)})
     store.download_event(new['download'], 'done', {'cancelled': False, 'failed': 1})
-    new['placeholder'] = store.create_job('download', msg('value.job_title.placeholder', count=1,
-                                                          mode=value('mode', formats.MODES[2])),
-                                          {'urls': [], 'output': str(folder), 'mode': formats.MODES[2]})
-    store.archive_index(str(folder / 'archive-1-8-0' / 'request'),
+    new['placeholder'] = store.create_job('download', '', {'urls': [], 'output': str(folder), 'mode': formats.MODES[2]})
+    new['links'] = store.create_job('download', '', {'urls': [A, B, A + '/c'], 'output': str(folder),
+                                                     'mode': formats.MODES[3]})
+    store.archive_index(str(folder / 'archive-2-0-0' / 'request'),
                         {'url': A + '.m3u8', 'source': PAGE, 'title': msg('value.link_kind.dynamic_request'),
                          'uploader': '', 'files': [], 'transcripts': []})
-    ids['1.8.0'] = new
-    return db, ids
-
-
-def rendered_by_1_7_0(db, folder):
-    copy = folder / 'render-1-7-0.sqlite3'
-    shutil.copyfile(db, copy)
-    script, out = folder / 'render.py', folder / 'render-1-7-0.json'
-    script.write_text(RENDER_1_7_0, encoding='utf-8')
-    done = subprocess.run([sys.executable, '-X', 'utf8', '-B', str(script), str(_sandbox.release_src('1.7.0')), str(copy),
-                           str(out)], cwd=str(folder), env=child_environment(), capture_output=True, text=True,
-                          encoding='utf-8', errors='replace', timeout=300)
-    if done.returncode:
-        raise AssertionError(f'1.7.0 render failed:\n{done.stderr[-4000:]}')
-    return json.loads(out.read_text(encoding='utf-8'))
-
-
-# Media titles that read like app-made forms (CR2-2): user data, shown as they are in both languages.
-USER_TITLES = ('订阅：Fake Channel Live', '3 条 · 现场版')
+    return db, new
 
 
 class StoredRowsTests(AppCase):
@@ -780,89 +649,47 @@ class StoredRowsTests(AppCase):
     def setUpClass(cls):
         cls.folder = _sandbox.out('messages-ui-rows', 'library')
         cls.db, cls.ids = write_rows(cls.folder)
-        cls.old = rendered_by_1_7_0(cls.db, cls.folder)
 
     def app_on_rows(self, lang, name):
         output = _sandbox.out(f'messages-ui-rows-{name}-{lang}', 'x').parent
         output.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.db, output / 'test-library.sqlite3')
-        # the history list shows the CR2-2 media titles (user data that reads like app forms)
-        with _sandbox.fixture_texts('media titles that read like app forms (CR2-2) are user data'):
-            app = self.make_app(output.name, size='1000x740')
-            app.history_limit = 1000
-            app.refresh_library()
+        app = self.make_app(output.name, size='1000x740')
+        app.history_limit = 1000
+        app.refresh_library()
         return app
-
-    def page_rendering(self, app):
-        store = app.library
-        result = {'history': {}, 'notes': {}, 'subscriptions': {}, 'pending': {}, 'archives': {}}
-        for row in store.history(1000):
-            result['history'][row['id']] = list(library_ui.history_row(row)[:3])
-            result['notes'][row['id']] = library_ui.LibraryUI.history_note_text(store.job(row['id']))
-        for row in store.subscriptions():
-            cells = library_ui.subscription_row(row)
-            result['subscriptions'][row['id']] = [cells[0], cells[1], cells[3]]
-            result['pending'][row['id']] = [messages.show(item['title']) for item in store.pending(row['id'])]
-        for row in store.archives():
-            result['archives'][row['folder']] = messages.show(row['title'])
-        return result
-
-    def test_zh_rows_read_exactly_as_1_7_0_shows_them(self):
-        with _sandbox.language('zh'):
-            app = self.app_on_rows('zh', 'parity')
-            with _sandbox.fixture_texts('stored rows of old versions and media titles that read like app forms'):
-                mine = self.page_rendering(app)
-            for part in ('history', 'notes', 'subscriptions', 'pending', 'archives'):
-                self.assertEqual(mine[part], self.old[part], part)
-            self.assertEqual(len(mine['history']), 3 + 2 * 5 + 3)
 
     def test_en_history_titles_cr2_2_and_notes_r4(self):
         display = urls.display
         with _sandbox.language('en'):
             app = self.app_on_rows('en', 'titles')
             store = app.library
-            with _sandbox.fixture_texts('media titles that read like app forms (CR2-2) are user data'):
-                titles = {row['id']: library_ui.history_title(row) for row in store.history(1000)}
-            old, mid, new = self.ids['1.5.1'], self.ids['1.7.0'], self.ids['1.8.0']
+            titles = {row['id']: library_ui.history_title(row) for row in store.history(1000)}
+            new = self.ids
             expected = {
-                old['placeholder']: i18n.t('value.job_title.multi', title=display(A), count=3),
-                old['subscription_job']: i18n.t('value.job_title.subscription', name=i18n.t('value.subscription.untitled')),
-                old['collect']: 'https://example.invalid/list-1-5-1',
-                self.ids['1.6.0']['titled_form']: '订阅：Fake Channel Live',
-                self.ids['1.6.0']['multi']: i18n.t('value.job_title.multi', title='Some Song', count=2),
-                mid['titled_form']: '3 条 · 现场版',
-                mid['multi']: i18n.t('value.job_title.multi', title='Live set', count=2),
-                mid['placeholder']: i18n.t('value.job_title.multi', title=display(A), count=2),
-                mid['no_link']: i18n.t('value.job_title.placeholder', count=1,
-                                       mode=i18n.label('mode', '视频 · 最佳画质 MKV')),
                 new['subscription_job']: i18n.t('value.job_title.subscription', name='Night feed'),
                 new['download']: i18n.t('value.job_title.multi', title='Clip A', count=2),
-                new['placeholder']: i18n.t('value.job_title.placeholder', count=1,
-                                           mode=i18n.label('mode', formats.MODES[2])),
+                new['placeholder']: '',
+                new['links']: i18n.t('value.job_title.multi', title=display(A), count=3),
             }
-            for job, title in expected.items():
-                self.assertEqual(titles[job], title, job)
-            for job, title in titles.items():
-                if title not in USER_TITLES:
-                    self.assertEqual(chinese(title), [], title)
-            # R4: the stored 70-character reason of a cookies error reads as the whole English message
+            self.assertEqual(titles, expected)
+            for title in titles.values():
+                self.assertEqual(chinese(title), [], title)
+            # R4: a reason 2.0.0 stores is its message, read back whole (S2-DESIGN.md D7); the note cuts it
             done = i18n.t('library.history.downloaded', completed=0)
             whole = i18n.t('core.engine.cannot_start_link', error=i18n.t('core.cookies.missing', file=LONG))
-            for version in ('1.6.0', '1.7.0'):
-                note = library_ui.LibraryUI.history_note_text(store.job(self.ids[version]['titled_form']))
-                self.assertEqual(note, done + i18n.t('library.history.last_error', error=whole[:130]), version)
             record = store.job(new['download'])
-            self.assertEqual(record['data']['last_reason']['reason'].key, 'core.engine.cannot_start_link')
-            self.assertEqual(len(messages.zh(record['data']['last_reason']['reason'])), 70, 'the stored reason is cut')
+            reason = record['data']['errors'][-1]['reason']
+            self.assertEqual(reason.key, 'core.engine.cannot_start_link')
+            self.assertGreater(len(messages.zh(reason)), 70, '(S2-DESIGN.md D7) read back whole')
             note = library_ui.LibraryUI.history_note_text(record)
-            self.assertEqual(note, done + i18n.t('library.history.last_error', error=whole[:130]), '1.8.0')
+            self.assertEqual(note, done + i18n.t('library.history.last_error', error=whole[:130]), '2.0.0')
             for row in store.history(1000):
                 note = library_ui.LibraryUI.history_note_text(store.job(row['id']))
                 self.assertEqual(chinese(note), [], note)
-            with _sandbox.language('zh'):
-                with _sandbox.fixture_texts('stored rows of old versions'):
-                    zh_note = library_ui.LibraryUI.history_note_text(store.job(self.ids['1.7.0']['titled_form']))
-                self.assertEqual(zh_note, self.old['notes'][self.ids['1.7.0']['titled_form']])
+            names = {row['id']: library_ui.subscription_row(row)[0] for row in store.subscriptions()}
+            self.assertEqual(names, {new['subscription']: 'Night feed',
+                                     new['untitled_subscription']: i18n.t('value.subscription.untitled')})
 
     def test_en_pages_with_stored_data_show_no_chinese_outside_user_data(self):
         with _sandbox.language('en'):
@@ -871,49 +698,305 @@ class StoredRowsTests(AppCase):
             failures = []
 
             def check(where, root):
-                failures.extend(f'{where}: {text!r}' for text in texts_of(root)
-                                if page_chinese(text) and text not in USER_TITLES)
+                for text in texts_of(root):
+                    if page_chinese(str(text)):
+                        failures.append(f'{where}: {text!r}')
 
             app.show_page('library')
             pump(app, 0.2)
-            with _sandbox.fixture_texts('media titles that read like app forms (CR2-2) are user data'):
-                for job in [row['id'] for row in store.history(1000)]:
-                    app.library_tabs.set(library_ui.TAB_HISTORY)
-                    app.history_tree.selection_set(job)
-                    app.history_selection()
-                    pump(app, 0.02)
-                    check(f'history {job}', app.pages['library'])
-                for row in store.subscriptions():
-                    app.library_tabs.set(library_ui.TAB_SUBSCRIPTIONS)
-                    app.subscription_tree.selection_set(row['id'])
-                    app.subscription_selection()
-                    pump(app, 0.02)
-                    check(f'subscription {row["name"]}', app.pages['library'])
-                app.library_tabs.set(library_ui.TAB_ARCHIVE)
-                pump(app, 0.05)
-                check('archive', app.pages['library'])
-                # collect results: legacy records loaded from the history, then a live 1.8.0 page
-                for version, name in (('1.5.1', 'subscription_job'), ('1.6.0', 'collect'), ('1.7.0', 'collect')):
-                    app.load_collection_record(store.job(self.ids[version][name]))
-                    app.collect_filter.set(collection_ui.FILTERS[1])
-                    pump(app, 0.02)
-                    check(f'collect {version}', app.pages['collect'])
-                app.collected_links.clear()
-                app.collected_pages.clear()
-                direct = msg('value.link_kind.direct')
-                app.handle('collect_page', {'url': PAGE, 'title': direct, 'text': '', 'markdown': '', 'next': None,
-                                            'links': [{'url': A + '.mp4', 'title': direct, 'kind': '媒体地址', 'source': PAGE},
-                                                      {'url': A + '.m3u8', 'title': msg('value.link_kind.dynamic_request'),
-                                                       'kind': '媒体地址', 'source': PAGE}]})
-                app.handle('collect_error', msg('core.collect.needs_chrome'))
+            for job in [row['id'] for row in store.history(1000)]:
+                app.library_tabs.set(library_ui.TAB_HISTORY)
+                app.history_tree.selection_set(job)
+                app.history_selection()
                 pump(app, 0.02)
-                check('collect live', app.pages['collect'])
-                app.show_page('settings')
-                pump(app, 0.1)
-                check('settings', app.pages['settings'])
+                check(f'history {job}', app.pages['library'])
+            for row in store.subscriptions():
+                app.library_tabs.set(library_ui.TAB_SUBSCRIPTIONS)
+                app.subscription_tree.selection_set(row['id'])
+                app.subscription_selection()
+                pump(app, 0.02)
+                check(f'subscription {row["name"]}', app.pages['library'])
+            app.library_tabs.set(library_ui.TAB_ARCHIVE)
+            pump(app, 0.05)
+            check('archive', app.pages['library'])
+            # collect results: a stored record loaded from the history, then a live page
+            app.load_collection_record(store.job(self.ids['subscription_job']))
+            app.collect_filter.set(collection_ui.FILTERS[1])
+            pump(app, 0.02)
+            check('collect stored', app.pages['collect'])
+            app.collected_links.clear()
+            app.collected_pages.clear()
+            direct = msg('value.link_kind.direct')
+            app.handle('collect_page', {'url': PAGE, 'title': direct, 'text': '', 'markdown': '', 'next': None,
+                                        'links': [{'url': A + '.mp4', 'title': direct, 'kind': 'media', 'source': PAGE},
+                                                  {'url': A + '.m3u8', 'title': msg('value.link_kind.dynamic_request'),
+                                                   'kind': 'media', 'source': PAGE}]})
+            app.handle('collect_error', msg('core.collect.needs_chrome'))
+            pump(app, 0.02)
+            check('collect live', app.pages['collect'])
+            app.show_page('settings')
+            pump(app, 0.1)
+            check('settings', app.pages['settings'])
             self.assertEqual(failures, [])
             shown = [app.collect_tree.full_values(iid)[1] for iid in app.collect_tree.get_children()]
             self.assertEqual(shown, [i18n.t('value.link_kind.direct'), i18n.t('value.link_kind.dynamic_request')])
+
+    def test_en_every_page_model_shows_no_app_chinese(self):
+        """(2.0.0 S2-AMEND 3.4 Q3-4, PLAN 3.9) The rows of write_rows plus a subscription with pending items (a web
+        link, a media link, a video page, a dynamic request), a collect job with pages and errors and an archive
+        with a title, an uploader and files, all with Chinese user text: in English every page model of the
+        library (history rows and notes, collect record rows and status, subscription rows, notes and pending
+        lists, the archive list, the contexts' titles) holds no Chinese once the user data is taken out.  The
+        user data is every text stored as text (no Chinese is stored but the user text fed here), every link and
+        its shown forms, the file names and the sandbox paths."""
+        import ui_download
+        folder = _sandbox.out('messages-ui-models', 'library')
+        folder.mkdir(parents=True, exist_ok=True)
+        db = folder / 'test-library.sqlite3'
+        shutil.copyfile(self.db, db)
+        user, body = more_rows(db, folder)
+        store = library.Library(db)
+        stored = stored_texts(db)
+        self.assertEqual({text for text in stored if chinese(text)}, set(user) | set(body),
+                         'no Chinese is stored as text but the user text fed here')
+        found = set()
+        for text in stored | set(user):
+            found.add(text)
+            if text.startswith(('http://', 'https://')):
+                found |= {urls.display(text), ui_download.link_title(text)}
+        found |= {str(_sandbox.BASE), str(_sandbox.BASE).replace('\\', '/')}
+        strip = sorted((text for text in found if text), key=len, reverse=True)
+        with _sandbox.language('en'), mock.patch.object(library, 'alive', lambda pid: False):
+            units = page_models(store)
+        checked = 0
+        for unit, text in units:
+            rest = text
+            for item in strip:
+                rest = rest.replace(item, '')
+            with self.subTest(unit=unit):
+                self.assertEqual(chinese(rest), [], f'{unit}: {text}')
+            checked += 1
+        kinds = {unit.split(' ', 1)[0] for unit, _text in units}
+        self.assertEqual(kinds, {'history', 'note', 'collect', 'subscription', 'pending', 'archive', 'context'})
+        self.assertGreaterEqual(checked, 60)
+        # the user's Chinese text is shown as it is (the strip list is not what made the check pass); the
+        # archive list shows how many files and transcripts there are, not their names
+        joined = '\n'.join(text for _unit, text in units)
+        for text in user:
+            if not text.endswith(('.mp3', '.vtt')):
+                self.assertIn(text, joined)
+
+
+class Stub:
+    """A stand-in for the widgets the page models touch; it keeps the texts and rows they get."""
+
+    def __init__(self, value=''):
+        self.value, self.text, self.rows = value, None, []
+
+    def selection(self):
+        return []
+
+    def selection_set(self, *items):
+        pass
+
+    def selection_remove(self, *items):
+        pass
+
+    def configure(self, **options):
+        if 'text' in options:
+            self.text = options['text']
+
+    def fill(self, rows):
+        self.rows = [[str(cell) for cell in values] for _iid, values in rows]
+
+    def set_empty(self, text):
+        self.empty = text
+
+    def get(self, *args):
+        return self.value
+
+    def set(self, value):
+        self.value = value
+
+    def delete(self, *args):
+        pass
+
+    def insert(self, *args, **options):
+        pass
+
+
+def more_rows(db, folder):
+    """(Q3-4) More format-2 rows on the library of write_rows, written by the write paths; the Chinese user
+    texts they were given."""
+    store = library.Library(db)
+    user = {'title': '夜曲集', 'link': '首页链接', 'job': '我的采集', 'name': '晚间订阅', 'uploader': '某位作者',
+            'file': '晴天.mp3', 'transcript': '晴天.zh.vtt'}
+    media, page_url = A + '/song.mp3', 'https://example.invalid/night'
+    links = [{'url': B + '/home', 'title': raw(user['link']), 'kind': 'web', 'source': page_url},
+             {'url': media, 'title': msg('value.link_kind.direct'), 'kind': 'media', 'source': page_url},
+             {'url': 'https://www.youtube.com/watch?v=Q3Q3Q3', 'title': raw(user['title']), 'kind': 'video_page',
+              'source': page_url},
+             {'url': A + '/live.m3u8', 'title': msg('value.link_kind.dynamic_request'), 'kind': 'media',
+              'source': page_url}]
+    page = {'url': page_url, 'title': raw(user['title']), 'text': 'x', 'markdown': '', 'next': None, 'links': links}
+    sub = store.subscription(user['name'], OPTIONS, media_only=False)
+    store.finish_subscription(sub, [page], True)
+    job = store.create_job('collect', user['job'], OPTIONS)
+    store.collection_event(job, 'collect_page', dict(page, _checkpoint={'visited': [page_url], 'todo': []}))
+    for error in (msg('core.collect.http_status', status=404), msg('core.collect.needs_chrome')):
+        store.collection_event(job, 'collect_error', error)
+    store.change_job(job, status='partial')
+    store.archive_index(str(folder / 'archive-2-0-0' / 'night'),
+                        {'url': media, 'source': page_url, 'title': raw(user['title']), 'uploader': user['uploader'],
+                         'files': [user['file']], 'transcripts': [user['transcript']]})
+    shown, body = produced_rows(store, folder)
+    return sorted(user.values()) + shown, body
+
+
+def produced_rows(store, folder):
+    """(S2 review honesty-3) Rows the real producers write, not hand-made records: collector.parse_page (the
+    Scrapling selector, a captured dynamic request) for a collect job and a media-only subscription, and
+    Runner.download (_run_once scripted as in test_golden_events: a YouTube bot check, a 429 to the last
+    retry, an engine failure with the engine's own text, a success) whose events go to
+    Library.download_event the way the window forwards them (ui_download.HISTORY_KINDS, history_value).
+    The Chinese user texts they were given (shown on the page models) and the page body Scrapling read (text
+    and markdown: stored for the archive files, not shown on a page model)."""
+    import collector
+    import ui_download
+    from scrapling import Selector
+    user = {'page': '夜间列表', 'label': '第一首歌'}
+    page_url = 'https://example.invalid/produced'
+    html = (f'<html><head><title>{user["page"]}</title></head><body><a href="/about">{user["label"]}</a>'
+            '<a href="/v/a.mp4"></a><a href="https://www.youtube.com/watch?v=P2P2P2">Video</a></body></html>')
+    page = collector.parse_page(Selector(html, url=page_url), page_url, captured=[A + '/cap.m3u8'])
+    options = dict(OPTIONS, urls=[page_url])
+    sub = store.subscription('', options, media_only=True)
+    store.finish_subscription(sub, [page], True)
+    job = store.create_job('collect', page_url, options)
+    store.collection_event(job, 'collect_page', dict(page, _checkpoint=None))
+    store.collection_event(job, 'collect_error', msg('core.collect.no_match'))
+    store.change_job(job, status='partial')
+
+    links = ['https://www.youtube.com/watch?v=P3P3P3', A + '/limited', A + '/failed', A + '/fine']
+
+    def bot_check(runner, command):
+        runner.bot_check = True
+        return 1, False, None
+
+    def limited(runner, command):
+        return 1, True, None
+
+    def failed(runner, command):
+        runner.last_error = 'ERROR: [generic] Unsupported URL: ' + command[-1]
+        return 1, False, None
+
+    def fine(runner, command, files):
+        files.append(str(Path(command[command.index('-P') + 1]) / 'fine.mp3'))
+        return 0, False, None
+
+    steps = [bot_check, limited, limited, limited, failed, fine]
+    out = folder / 'produced-out'
+    download = store.create_job('download', '', {**engine.Options(out, batch_safe=False).to_dict(), 'urls': links})
+    seen = []
+
+    def emit(kind, value):
+        seen.append(kind)
+        if kind in ui_download.HISTORY_KINDS:
+            store.download_event(download, kind, ui_download.history_value(kind, value, False))
+
+    def run_once(command, index, total, files):
+        step = steps.pop(0)
+        return step(runner, command, files) if step is fine else step(runner, command)
+
+    engine.Runner.reset_pacing()
+    runner = engine.Runner(emit)
+    try:
+        with _sandbox.state_patch(folder / 'produced-state'), \
+                mock.patch.object(runner, '_run_once', side_effect=run_once), \
+                mock.patch.object(runner, '_wait', return_value=True):
+            runner.download(links, engine.Options(out, batch_safe=False))
+    finally:
+        engine.Runner.reset_pacing()
+    data = store.job(download)['data']
+    assert steps == [] and seen[-1] == 'done', (steps, seen)
+    assert [(error['error'], error['reason'].key) for error in data['errors']] == [
+        ('ERROR: [generic] Unsupported URL: ' + A + '/failed', 'core.reason.unsupported')], data['errors']
+    assert (data['result']['failed'], data['result']['blocked'], data['done']) == (
+        3, 'bot_check', [[A + '/fine', engine.MODES[0]]]), data
+    return sorted(user.values()), [page['text'], page['markdown']]
+
+
+def stored_texts(db):
+    """Every text stored as text in the library: the text columns and the string leaves of the records (a
+    message's key and the code values of mode, resolution and kind are not text)."""
+    texts = set()
+
+    def leaves(item, key=None):
+        if isinstance(item, str):
+            if key not in ('mode', 'resolution', 'kind', 'k'):
+                texts.add(item)
+        elif isinstance(item, dict):
+            for name, child in item.items():
+                leaves(child, name)
+        elif isinstance(item, list):
+            for child in item:
+                leaves(child, key)
+
+    connection = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+    try:
+        for table in ('jobs', 'pages', 'subscriptions', 'entries', 'archives', 'downloads'):
+            cursor = connection.execute(f'SELECT * FROM {table}')
+            columns = [item[0] for item in cursor.description]
+            for row in cursor:
+                for column, value in zip(columns, row):
+                    if column == 'data':
+                        leaves(json.loads(value))
+                    elif isinstance(value, str):
+                        texts.add(value)
+    finally:
+        connection.close()
+    return texts
+
+
+def page_models(store):
+    """[(unit, text)] of every page model of the library in the running language, on stand-in widgets."""
+    Page = type('Page', (library_ui.LibraryUI, collection_ui.CollectionUI), {})
+    page = Page.__new__(Page)
+    page.library = store
+    for name in ('collect_urls', 'collect_mode', 'collect_scrolls', 'collect_pages_limit', 'collect_selector',
+                 'collect_tree', 'pending_tree', 'pending_count', 'subscription_note', 'archive_tree',
+                 'archive_count'):
+        setattr(page, name, Stub())
+    page.collect_filter, page.collect_search, page.archive_search = Stub(collection_ui.FILTERS[1]), Stub(), Stub()
+    page.set_collect_status = lambda text, tone=None: setattr(page, 'collect_status_text', text)
+    page.collection_selection_changed = lambda: None
+    page.refresh_collect_actions = lambda: None         # (2.0.0 S4 A2) a button hook, no text of its own
+    page.library_busy = lambda error=None: None
+    page.visible_pending = []
+    units = []
+    for row in store.history(100000):
+        units += [(f'history {row["id"]} {n}', str(cell)) for n, cell in enumerate(library_ui.history_row(row))]
+        record = store.job(row['id'])
+        units.append((f'note {row["id"]}', library_ui.LibraryUI.history_note_text(record)))
+        if record['kind'] == 'collect':
+            library_ui.LibraryUI.load_collection_record(page, record)
+            units += [(f'collect {row["id"]} {n}', ' | '.join(cells)) for n, cells in enumerate(page.collect_tree.rows)]
+            units.append((f'collect {row["id"]} status', str(page.collect_status_text)))
+    for row in store.subscriptions():
+        units += [(f'subscription {row["id"]} {n}', str(cell)) for n, cell in enumerate(library_ui.subscription_row(row))]
+        page.selected_subscription = lambda row=row: row
+        page.pending_tree.rows = []
+        library_ui.LibraryUI._subscription_selection(page)
+        units.append((f'subscription {row["id"]} note', str(page.subscription_note.text)))
+        units.append((f'subscription {row["id"]} count', str(page.pending_count.text)))
+        units += [(f'pending {row["id"]} {n}', ' | '.join(cells)) for n, cells in enumerate(page.pending_tree.rows)]
+    library_ui.LibraryUI.refresh_archives(page)
+    units += [(f'archive {n}', ' | '.join(cells)) for n, cells in enumerate(page.archive_tree.rows)]
+    units.append(('archive count', str(page.archive_count.text)))      # (S4 visual fix) the count above the table
+    wanted = sorted({item['url'] for row in store.history(100000) if row['kind'] == 'collect'
+                     for page_record in store.job(row['id'])['pages'] for item in page_record['links']})
+    units += [(f'context {url}', messages.show(found['title'])) for url, found in store.contexts(wanted).items()]
+    return units
 
 
 # ============================================================================ 6.2b dialogs in en
@@ -926,10 +1009,10 @@ class DialogTests(AppCase):
             # library.unreadable with an exception that carries a message (library_ui 639, 787)
             with mock.patch.object(app.library, 'history', side_effect=OSError(error)):
                 app.refresh_library()
-            self.assertEqual(ui_theme.full_text(app.library_warning_label), i18n.t('library.unreadable', error=shown))
+            self.assertEqual(app.library_notice.full_text, i18n.t('library.unreadable', error=shown))
             app.show_library_problem('')
             # the OS-error dialogs (collection_ui 622, 643; library_ui 1306)
-            items = [{'url': A, 'title': raw('A'), 'kind': '媒体地址', 'source': PAGE}]
+            items = [{'url': A, 'title': raw('A'), 'kind': 'media', 'source': PAGE}]
             with mock.patch.object(app, 'selected_collection_links', return_value=items), \
                     mock.patch('collection_ui.filedialog') as files, mock.patch('collection_ui.Path') as path, \
                     mock.patch('collection_ui.messagebox') as dialogs:

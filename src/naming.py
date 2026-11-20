@@ -15,7 +15,6 @@ import time
 import messages
 
 NAMING = ('title', 'clean', 'title_id')
-LABELS = {'title': '标题（推荐）', 'clean': '精简标题', 'title_id': '标题 [视频 ID]'}
 OUTPUT_TEMPLATE = '%(title).140B [%(id)s].%(ext)s'
 # "Artist - Song" followed by a decoration: cut at the first decoration bracket or hashtag.
 CLEAN_RULE = re.compile(r'^(.+? - [^【「『#\[]+?)\s*(?:【|「|『|#|\[).*$')

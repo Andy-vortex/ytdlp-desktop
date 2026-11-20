@@ -1,12 +1,7 @@
 {
  "module": "procutil",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
- "literals": {
-  "YT-DLP 下载器": {
-   "category": "stored",
-   "reason": "window title compared by focus_window (app.title zh; P7 window titles)"
-  }
- },
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
+ "literals": {},
  "raises": {
   "spawn_detached is refused under the test runner (install a launcher)": {
    "exception": "OSError",
@@ -15,6 +10,5 @@
   }
  },
  "composed": {},
- "sinks": {},
- "pending_keys": {}
+ "sinks": {}
 }

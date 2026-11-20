@@ -14,6 +14,7 @@ Conventions
   builds a window; ``apply_theme()`` never does.
 """
 import ctypes
+from dataclasses import dataclass
 import logging
 import os
 import sys
@@ -89,7 +90,7 @@ TEXT_PAIRS = [
     (WHITE, ACCENT), (WHITE, ACCENT_HOVER),
     (OK, OK_SOFT), (WARN, WARN_SOFT), (DANGER, DANGER_SOFT), (DANGER, DANGER_SOFT_HOVER),
     (SIDE_TEXT, SIDE), (SIDE_TEXT, SIDE_HOVER), (SIDE_MUTED, SIDE), (SIDE_MUTED, SIDE_CARD), (WHITE, SIDE_ACTIVE),
-    (SIDE_OK, SIDE_CARD), (SIDE_INFO, SIDE_CARD), (SIDE_WARN, SIDE_CARD), (SIDE_DANGER, SIDE_CARD),
+    (SIDE_OK, SIDE), (SIDE_INFO, SIDE), (SIDE_WARN, SIDE), (SIDE_DANGER, SIDE), (SIDE_WARN, SIDE_HOVER),
     (INK, SEGMENT_ON),                                  # (WP7) the selected segment of a tab bar
 ]
 
@@ -97,19 +98,27 @@ FAMILY = 'Microsoft YaHei UI'
 SIZES = {'caption': 12, 'body': 13, 'heading': 15, 'title': 22, 'brand': 17}
 BOLD_ROLES = ('heading', 'title', 'brand')
 PAGE_PAD = 24
-CARD_PAD = 16
 GAP = 12
-RADIUS_CARD = 12
 RADIUS = 8
 CONTROL_H = 36
 CONTROL_H_SM = 28
 LABEL_H = {'caption': 18, 'body': 22, 'heading': 22, 'title': 32, 'brand': 24}
-SIDEBAR_W = 184
+SIDEBAR_W = 168
 ROW_H = 52
 PAGE_MAX = 1080
 WHEEL_STEP = 56          # logical px a ScrollArea moves per wheel notch
 TABLE_ROW_H = 32         # logical px of one table row
 TABLE_FONT = 12          # table text uses the caption size
+# (2.0.0 S4) The spacing scale of the pages (00-system 2.2): INLINE between neighbours on one line, GAP between
+# two lines, PAD inside notice bars and dialogs, SECTION between parts of a page.
+INLINE = 8
+PAD = 16
+SECTION = 24
+SETTINGS_MAX = 560       # the settings page is never wider (a label stays near its switch)
+PATH_W = 320             # the width of a path button (path_button)
+# (2.0.0 S4) The few words the shared pieces show themselves, in the running language.  This module imports no
+# app module, so the app fills them once at start-up (studio: common.cancel / save / choose_ellipsis).
+WORDS = {'cancel': '', 'save': '', 'choose': ''}
 
 # Segoe Fluent Icons / Segoe MDL2 Assets code points (present in both fonts).
 ICON_DOWNLOAD = 0xE896
@@ -125,13 +134,16 @@ ICON_STOP = 0xE73B          # filled square: a stopped task (the outlined pause 
 ICON_PENDING = 0xEA3A       # empty circle: a task that never started
 ICON_FOLDER = 0xE8B7
 ICON_SKIP = 0xE72A
+ICON_MORE = 0xE712          # the '⋯' of menu_button
+ICON_ARCHIVE = 0xE7B8       # (2.0.0 S4) the download folder button while downloads are archived
+ICON_UPDATE = 0xE74A        # (2.0.0 S4) 'Up': the sidebar's 'Update available' link
 ICON_FONT_FILES = ('SegoeIcons.ttf', 'segmdl2.ttf')   # tried in this order under %WINDIR%\Fonts
 ICON_PX = 64                                           # master size the glyphs are drawn at
 
 _CHIP_TONES = {'idle': (MUTED, IDLE_SOFT), 'info': (ACCENT_TEXT, ACCENT_SOFT), 'ok': (OK, OK_SOFT),
                'warn': (WARN, WARN_SOFT), 'danger': (DANGER, DANGER_SOFT)}
 _ICON_TONES = {'ink': INK, 'muted': MUTED, 'faint': FAINT, 'accent': ACCENT, 'ok': OK, 'warn': WARN,
-               'danger': DANGER, 'white': WHITE, 'side': SIDE_TEXT,
+               'danger': DANGER, 'white': WHITE, 'side': SIDE_TEXT, 'side_warn': SIDE_WARN,
                'idle': FAINT, 'info': ACCENT}          # the chip tone names work for icons too
 # kind -> (fill, hover fill, text, disabled fill, disabled text)
 _BUTTON_KINDS = {
@@ -545,9 +557,28 @@ class AppButton(ctk.CTkButton):
         if 'image' in kwargs or shown is not getattr(self, '_image', None):
             kwargs['image'] = shown
 
+    def set_kind(self, kind, image=None):
+        """(2.0.0 S4) Show this button as another ``kind`` (the one solid button of a view moves with the
+        stage of its flow).  The same kind and no image: nothing happens, so calling it on every refresh
+        costs nothing; ``image`` (a ``ui_theme.icon``) replaces the icon, dimmed while disabled."""
+        if kind == self._kind and image is None:
+            return
+        fill, hover, ink, fill_off, ink_off = _BUTTON_KINDS[kind]
+        self._kind, self._fill, self._fill_off = kind, fill, fill_off
+        changes = {'hover_color': hover, 'text_color': ink, 'text_color_disabled': ink_off,
+                   'fg_color': fill_off if self.cget('state') == 'disabled' else fill}
+        if image is not None or self._image_on is not None:
+            changes['image'] = self._image_on if image is None else image
+        self.configure(**changes)       # an image passes _swap_image: dimmed for the new kind when disabled
 
-def fitted_width(parent, text, size='md'):
+
+def fitted_width(parent, text, size='md', ghost=False, inset=GAP):
     """(WP7) The width (logical px, at least 72) an ``AppButton`` needs to show ``text`` in full.
+
+    (2.0.0 S4 visual fix) ``ghost=True``: the width of a ghost button, its text + GAP on each side and no 72
+    floor, so the space around a ghost button is only the gap the caller gives it (no empty button edge).
+    (final polish) ``inset``: the space on each side of a ghost button's text (the log page's Copy sits next to
+    its '⋯' with INLINE).
 
     A button narrower than its text grows only through grid propagation; a redraw that
     reapplies the stored width can leave it at that width for a moment, and the label is
@@ -555,25 +586,16 @@ def fitted_width(parent, text, size='md'):
     """
     scale = _scaling(parent) or 1.0
     measure = _measure_font(parent, font('caption' if size == 'sm' else 'body'))
+    if ghost:
+        return int(-(-measure.measure(text) // scale)) + 2 * inset
     # text + the label's 1 px border on each side + the button's corner columns
     needed = measure.measure(text) + 2 + 2 * round(RADIUS * scale)
     return max(72, int(-(-needed // scale)))
 
 
 def button(parent, text, command=None, kind='soft', size='md', **kw):
-    """An ``AppButton``. ``primary=True`` (the 1.5.1 keyword) is accepted and means ``kind='primary'``."""
-    if kw.pop('primary', False):
-        kind = 'primary'
+    """An ``AppButton`` of ``kind`` ('primary', 'soft', ...) and ``size`` ('md' / 'sm')."""
     return AppButton(parent, text=text, command=command, kind=kind, size=size, **kw)
-
-
-def card(parent, **kw):
-    """White rounded frame with a hairline border."""
-    kw.setdefault('fg_color', SURFACE)
-    kw.setdefault('corner_radius', RADIUS_CARD)
-    kw.setdefault('border_width', 1)
-    kw.setdefault('border_color', LINE)
-    return ctk.CTkFrame(parent, **kw)
 
 
 class Chip(ctk.CTkLabel):
@@ -699,8 +721,8 @@ class AppEntry(ctk.CTkEntry):
 
     customtkinter never shows ``placeholder_text`` once a ``textvariable`` is given. Here the
     placeholder is a faint label laid over the entry (``placeholder_label``), visible while the
-    entry is empty, focused or not. A disabled entry shows its text in MUTED (a read-only one
-    keeps INK).
+    entry is empty, focused or not. A disabled entry shows its text in MUTED on SURFACE (the look of a
+    dimmed ``textbox``: only the thin border is left, like an empty slot); a read-only one keeps INK.
     """
 
     def __init__(self, master, placeholder='', **kw):
@@ -712,26 +734,30 @@ class AppEntry(ctk.CTkEntry):
         kw.setdefault('text_color', INK)
         self.placeholder_label = None
         self._ink = kw['text_color']
+        self._fill = None
         self._hint_text = placeholder or ''
         self._hint_shown = False
         self._hint_trace = None
         self._hint_job = None
         super().__init__(master, **kw)
+        self._fill = self.cget('fg_color')
         if self.cget('state') == 'disabled':
             self.configure(state='disabled')
         if not self._hint_text:
             return
-        fill = self.cget('fg_color')
-        if fill == 'transparent':
-            fill = self.cget('bg_color')
         self.placeholder_label = ctk.CTkLabel(self, text=self._hint_text, font=font('caption'), text_color=FAINT,
-                                              fg_color=fill, height=LABEL_H['caption'], anchor='w', cursor='xterm')
+                                              fg_color=self._hint_fill(), height=LABEL_H['caption'], anchor='w',
+                                              cursor='xterm')
         self.placeholder_label.bind('<Button-1>', self._hint_clicked)
         for sequence in ('<KeyRelease>', '<FocusOut>', '<<Paste>>', '<<Cut>>'):
             self.bind(sequence, self._hint_later)
         _bind_outer(self, '<Configure>', self._hint_resized)
         self._hint_watch(self.cget('textvariable'))
         self._hint_sync()
+
+    def _hint_fill(self):
+        fill = self.cget('fg_color')
+        return self.cget('bg_color') if fill == 'transparent' else fill
 
     def _hint_watch(self, variable):
         self._hint_unwatch()
@@ -804,8 +830,15 @@ class AppEntry(ctk.CTkEntry):
                 kwargs.setdefault('text_color', MUTED if kwargs['state'] == 'disabled' else self._ink)
             elif 'text_color' in kwargs and self.cget('state') != 'disabled':
                 self._ink = kwargs['text_color']    # an explicit colour becomes the enabled look
+        if getattr(self, '_fill', None) is not None:
+            if 'state' in kwargs:
+                kwargs.setdefault('fg_color', SURFACE if kwargs['state'] == 'disabled' else self._fill)
+            elif 'fg_color' in kwargs and self.cget('state') != 'disabled':
+                self._fill = kwargs['fg_color']     # an explicit fill becomes the enabled look
         watch = 'textvariable' in kwargs
         super().configure(require_redraw=require_redraw, **kwargs)
+        if 'fg_color' in kwargs and getattr(self, 'placeholder_label', None) is not None:
+            self.placeholder_label.configure(fg_color=self._hint_fill())
         if watch and getattr(self, 'placeholder_label', None) is not None:
             self._hint_watch(self.cget('textvariable'))
             self._hint_sync()
@@ -1062,6 +1095,10 @@ class AppSwitch(ctk.CTkSwitch):
     def __init__(self, master, text='', variable=None, **kw):
         kw.setdefault('switch_width', 38)
         kw.setdefault('switch_height', 20)
+        # (final polish) No border: CustomTkinter draws the knob over the full height, the track inside the border,
+        # so with a border the knob stood out of the track on its own side and an off switch ended 3 px left of
+        # an on one.  Without it the track is as high as the knob and both states fill the same box.
+        kw.setdefault('border_width', 0)
         kw.setdefault('font', font('body'))
         kw.setdefault('text_color_disabled', FAINT)
         self._bare = not text
@@ -1104,9 +1141,80 @@ def switch(parent, text='', variable=None, **kw):
     return AppSwitch(parent, text=text, variable=variable, **kw)
 
 
-def textbox(parent, **kw):
-    kw.setdefault('font', font('body'))
-    return ctk.CTkTextbox(parent, **kw)
+class AppTextbox(ctk.CTkTextbox):
+    """(2.0.0 S4) Multi-line input with a placeholder: a faint label laid over the box while it is empty,
+    focused or not (``placeholder_label``, None without a placeholder).  ``set_dimmed(True)`` shows the box
+    as taken by another activity: disabled, faint text on SURFACE, no placeholder."""
+
+    def __init__(self, master, placeholder='', undo=False, **kw):
+        kw.setdefault('font', font('body'))
+        super().__init__(master, undo=undo, **kw)
+        self.dimmed = False
+        self.placeholder_label = None
+        self._hint_shown = False
+        if not placeholder:
+            return
+        self.placeholder_label = ctk.CTkLabel(self, text=placeholder, font=kw['font'], text_color=FAINT,
+                                              fg_color=self.cget('fg_color'), anchor='w', cursor='xterm')
+        self.placeholder_label.bind('<Button-1>', self._hint_clicked)
+        self.bind('<KeyRelease>', lambda _event: self.sync_placeholder())
+        self.bind('<<Modified>>', self._hint_modified)
+        self.sync_placeholder()
+
+    def _hint_clicked(self, _event=None):
+        self.focus_set()
+        return 'break'
+
+    def _hint_modified(self, _event=None):
+        try:
+            self.edit_modified(False)
+        except tkinter.TclError:
+            pass
+        self.sync_placeholder()
+
+    def sync_placeholder(self):
+        """Show the placeholder while the box is empty and not dimmed (call it after code rewrote the text;
+        insert() and delete() do)."""
+        hint = self.placeholder_label
+        if hint is None:
+            return
+        try:
+            empty = not self.dimmed and self.get('1.0', 'end-1c') == ''
+            if empty and not self._hint_shown:
+                hint.place(x=10, y=6)
+            elif not empty and self._hint_shown:
+                hint.place_forget()
+            self._hint_shown = empty
+        except tkinter.TclError:
+            pass
+
+    def set_dimmed(self, dimmed):
+        """Taken by another activity (True) or free again (False); only a change redraws."""
+        dimmed = bool(dimmed)
+        if dimmed == self.dimmed:
+            return
+        self.dimmed = dimmed
+        fill = SURFACE if dimmed else SURFACE_ALT
+        self.configure(state='disabled' if dimmed else 'normal', text_color=FAINT if dimmed else INK, fg_color=fill)
+        if self.placeholder_label is not None:
+            self.placeholder_label.configure(fg_color=fill)
+        self.sync_placeholder()
+
+    def insert(self, index, text, tags=None):
+        result = super().insert(index, text, tags)
+        self.sync_placeholder()
+        return result
+
+    def delete(self, index1, index2=None):
+        result = super().delete(index1, index2)
+        self.sync_placeholder()
+        return result
+
+
+def textbox(parent, placeholder='', undo=False, **kw):
+    """A multi-line input (``AppTextbox``); ``placeholder`` is shown while it is empty, ``undo=True`` turns on
+    Ctrl+Z (Tk's undo stack, also for text removed by code)."""
+    return AppTextbox(parent, placeholder=placeholder, undo=undo, **kw)
 
 
 # ---------------------------------------------------------------- scrolling
@@ -1311,12 +1419,12 @@ def focus_inside(widget, frame):
 
 # ---------------------------------------------------------------- tabs
 class Tabs(ctk.CTkFrame):
-    """A card with a segmented tab bar inside it and one frame per tab.
+    """A segmented tab bar and one frame per tab, on the page itself (no card, no border).
 
-    Same calls as ``CTkTabview`` (``add``, ``tab``, ``set``, ``get``), without its tab bar that
-    straddles the card edge. The tab frames are inset by 6 px: a transparent frame paints the
-    card colour as a rectangle and would otherwise cover the card border and its two bottom
-    corners. Page builders use an inner padding of 10 for a 16 px margin.
+    Same calls as ``CTkTabview`` (``add``, ``tab``, ``set``, ``get``).  The bar (``bar``, CONTROL_H_SM
+    high) stands above the tab frames, or, with ``bar_parent`` (2.0.0 S4: the library page passes
+    ``page.header.left``), is packed into that container from the left; the tab frames stay in the
+    Tabs frame either way, in row 1, without inset.
 
     The tab frames are stacked and raised (a switch unmaps nothing).  The frames of the other
     tabs take no Tab focus (``hide_from_focus``), and a keyboard focus left inside a tab that
@@ -1324,11 +1432,10 @@ class Tabs(ctk.CTkFrame):
     given and returns one, else to the tab frame itself (final-fix-ui, polish-function-3).
     """
 
-    def __init__(self, master, names, command=None, focus=None, labels=None, **kw):
-        kw.setdefault('fg_color', SURFACE)
-        kw.setdefault('corner_radius', RADIUS_CARD)
-        kw.setdefault('border_width', 1)
-        kw.setdefault('border_color', LINE)
+    def __init__(self, master, names, command=None, focus=None, labels=None, bar_parent=None, **kw):
+        kw.setdefault('fg_color', 'transparent')
+        kw.setdefault('corner_radius', 0)
+        kw.setdefault('border_width', 0)
         super().__init__(master, **kw)
         self._command = command
         self._focus = focus
@@ -1340,9 +1447,13 @@ class Tabs(ctk.CTkFrame):
         # (1.7.0) ``labels`` (dict id -> label, or a list parallel to names): the bar shows the
         # labels, every call keeps using the ids.
         self._labels = dict(labels) if isinstance(labels, dict) else dict(zip(names, labels)) if labels else {}
-        self._bar = ctk.CTkSegmentedButton(self, values=[self._tab_label(name) for name in names], height=34,
-                                           font=font('body'), command=self._clicked)
-        self._bar.grid(row=0, column=0, sticky='w', padx=16, pady=(14, 10))
+        self.bar = self._bar = _Segments(
+            self if bar_parent is None else bar_parent, values=[self._tab_label(name) for name in names],
+            height=CONTROL_H_SM, corner_radius=RADIUS, font=font('body'), command=self._clicked)
+        if bar_parent is None:
+            self._bar.grid(row=0, column=0, sticky='w', pady=(0, GAP))
+        else:
+            self._bar.pack(side='left')
         for name in names:
             self._make(name)
         if names:
@@ -1350,7 +1461,7 @@ class Tabs(ctk.CTkFrame):
 
     def _make(self, name):
         frame = ctk.CTkFrame(self, fg_color='transparent', corner_radius=0, width=0, height=0)
-        frame.grid(row=1, column=0, sticky='nsew', padx=6, pady=(0, 6))
+        frame.grid(row=1, column=0, sticky='nsew')
         self._frames[name] = frame
         current = self._frames.get(self._current)
         if current is not None:
@@ -1422,22 +1533,28 @@ def tabs(parent, names, **kw):
     return Tabs(parent, names, **kw)
 
 
-class LabeledSegmentedButton(ctk.CTkSegmentedButton):
-    """(1.7.0, I18N.md 7) A ``CTkSegmentedButton`` that shows labels and stores values: ``command``
-    gets the value, ``get()`` returns it and ``set()`` takes a value (a label is accepted too).
-    ``cget('values')`` gives the shown labels, ``stored_values`` the values."""
+class _Segments(ctk.CTkSegmentedButton):
+    """The segmented bar of ``Tabs`` and ``segmented``: the chosen segment's text is INK, the others MUTED
+    (the raised segment and its darker text say the same thing), and every segment keeps an even physical width.
 
-    def __init__(self, master, values, labels, command=None, **kw):
-        self.stored_values = list(values)
-        self._to_label, self._to_value = _label_maps(self.stored_values, labels)
-        self._value_command = command
-        super().__init__(master, values=[self._to_label[value] for value in self.stored_values],
-                         command=self._chosen, **kw)
-        # (final fix round 1, zh-1) A segment that grows to its text can get an odd physical width;
-        # its rounded end is then drawn one px short and the bar colour shows as a thin line beside
-        # the last segment's corners.  Every segment is kept at an even physical width.
-        for button in self._buttons_dict.values():
-            tkinter.Misc.bind(button, '<Configure>', lambda _event, b=button: self._even_later(b), add='+')
+    (final fix round 1, zh-1; 2.0.0 S4 visual fix for the tab bar too) A segment that grows to its text can get
+    an odd physical width; its rounded end is then drawn one px short and the bar colour shows as a thin line
+    beside the last segment's corners.  Every segment, also one added later, is kept at an even width."""
+
+    def _create_button(self, index, value):
+        button = super()._create_button(index, value)
+        button.configure(text_color=MUTED)
+        tkinter.Misc.bind(button, '<Configure>', lambda _event, b=button: self._even_later(b), add='+')
+        return button
+
+    def _unselect_button_by_value(self, value):
+        super()._unselect_button_by_value(value)
+        if value in self._buttons_dict:
+            self._buttons_dict[value].configure(text_color=MUTED)
+
+    def _select_button_by_value(self, value):
+        super()._select_button_by_value(value)
+        self._buttons_dict[value].configure(text_color=self._sb_text_color)
 
     def _even_later(self, button):
         try:
@@ -1454,6 +1571,19 @@ class LabeledSegmentedButton(ctk.CTkSegmentedButton):
                 button.configure(width=(width + 1) / (_scaling(button) or 1.0))
         except (tkinter.TclError, ValueError):
             pass
+
+
+class LabeledSegmentedButton(_Segments):
+    """(1.7.0, I18N.md 7) A ``_Segments`` bar that shows labels and stores values: ``command``
+    gets the value, ``get()`` returns it and ``set()`` takes a value (a label is accepted too).
+    ``cget('values')`` gives the shown labels, ``stored_values`` the values."""
+
+    def __init__(self, master, values, labels, command=None, **kw):
+        self.stored_values = list(values)
+        self._to_label, self._to_value = _label_maps(self.stored_values, labels)
+        self._value_command = command
+        super().__init__(master, values=[self._to_label[value] for value in self.stored_values],
+                         command=self._chosen, **kw)
 
     def label_of(self, value):
         try:
@@ -1862,10 +1992,12 @@ def table(parent, columns, selectmode='browse', empty='', height=None):
 
 
 # ---------------------------------------------------------------- composed pieces
-def empty_state(parent, text, icon_code=None):
+def empty_state(parent, text, icon_code=None, action=None):
     """Transparent frame with a faint icon over a muted caption, centred in whatever space it gets.
 
-    Attributes: ``hint_label`` and ``icon_label`` (None without an icon).
+    ``action`` = (label, command) adds one soft button below the
+    caption (2.0.0 S4: an empty view says what to do next).
+    Attributes: ``hint_label``, ``icon_label`` (None without an icon), ``action_button`` (None without an action).
     """
     frame = ctk.CTkFrame(parent, fg_color='transparent', corner_radius=0, width=0, height=0)
     center = ctk.CTkFrame(frame, fg_color='transparent', corner_radius=0, width=0, height=0)
@@ -1877,34 +2009,376 @@ def empty_state(parent, text, icon_code=None):
         frame.icon_label.pack(pady=(0, 6))
     frame.hint_label = label(center, text, role='caption', text_color=MUTED)
     frame.hint_label.pack()
+    frame.action_button = None
+    if action is not None:
+        caption, command = action
+        frame.action_button = button(center, caption, command, kind='soft', width=fitted_width(center, caption))
+        frame.action_button.pack(pady=(GAP, 0))
     return frame
 
 
-def setting_row(parent, title, description='', control=None):
-    """One settings line: title and wrapped description on the left, the control on the right.
+def section_label(parent, text):
+    """(2.0.0 S4) The small muted name of a group of rows (settings page); the caller grids it with SECTION
+    above (0 for the first group) and INLINE below."""
+    return label(parent, text, role='caption', text_color=MUTED, anchor='w')
 
-    ``control`` is called as ``control(row.control_area)`` and its result is packed there.
-    Attributes: ``title_label``, ``description_label``, ``control_area``, ``control``.
-    """
-    row = ctk.CTkFrame(parent, fg_color='transparent', corner_radius=0, width=0, height=0)
-    row.grid_columnconfigure(0, weight=1)
-    row.title_label = label(row, title, anchor='w')
-    row.title_label.grid(row=0, column=0, sticky='ew')
-    # The first wrap length is a guess that keeps the row from asking for one very long
-    # line; wrap_to_width replaces it as soon as the row has a width.
-    row.description_label = label(row, description, role='caption', text_color=MUTED, anchor='w',
-                                  justify='left', wraplength=360)
-    if description:
-        row.description_label.grid(row=1, column=0, sticky='ew', pady=(2, 0))
-    wrap_to_width(row.description_label)
-    row.control_area = ctk.CTkFrame(row, fg_color='transparent', corner_radius=0, width=0, height=0)
-    row.control_area.grid(row=0, column=1, rowspan=2, sticky='e', padx=(CARD_PAD, 0))
-    row.control = None
-    if control is not None:
-        row.control = control(row.control_area)
-        if row.control is not None:
-            row.control.pack(side='right')
-    return row
+
+def set_enabled(widget, usable):
+    """Set ``widget`` normal or disabled, only when that changes (the hooks that call it run on every set_busy)."""
+    state = 'normal' if usable else 'disabled'
+    if widget.cget('state') != state:
+        widget.configure(state=state)
+
+
+def show(widget, visible):
+    """(2.0.0 S4) grid() or grid_remove() ``widget`` only when that changes anything (a widget gridded once
+    remembers its place).  True when it changed.  A ScrollArea is shown through its outer frame (the inner
+    one always sits in the canvas)."""
+    widget = getattr(widget, '_parent_frame', widget)
+    shown = bool(widget.winfo_manager())
+    if bool(visible) == shown:
+        return False
+    if visible:
+        widget.grid()
+    else:
+        widget.grid_remove()
+    return True
+
+
+# ---------------------------------------------------------------- menus (2.0.0 S4, 00-system 3.1)
+SEPARATOR = None        # a line between two groups of a menu
+
+
+@dataclass(frozen=True)
+class MenuItem:
+    """One entry of a menu.  ``checked`` True / False makes it a choice (the current one marked; a submenu
+    of choices such as Schedule ▸); ``children`` makes it a submenu; ``danger`` paints it red (last group)."""
+    label: str
+    command: object = None
+    enabled: bool = True
+    checked: object = None
+    children: tuple = ()
+    danger: bool = False
+
+
+_open_menus = []        # the one menu that is up (popup destroys the one before)
+
+
+def menu_items(items):
+    """The entries of ``items``: a list, or a function returning one (called now: menus are built when opened)."""
+    return list(items() if callable(items) else items)
+
+
+def _menu(master, items):
+    scale = _scaling(master) or 1.0
+    menu = tkinter.Menu(master, tearoff=0, font=(FAMILY, -round(SIZES['body'] * scale)), relief='flat',
+                        borderwidth=1, background=resolve(SURFACE), foreground=resolve(INK),
+                        activebackground=resolve(ACCENT_SOFT), activeforeground=resolve(INK),
+                        disabledforeground=resolve(FAINT))
+    menu.choice = None
+    for item in items:
+        if item is SEPARATOR:
+            menu.add_separator()
+            continue
+        options = {'label': item.label, 'state': 'normal' if item.enabled else 'disabled'}
+        if item.danger:
+            options.update(foreground=resolve(DANGER), activeforeground=resolve(DANGER))
+        if item.children:
+            menu.add_cascade(menu=_menu(menu, menu_items(item.children)), **options)
+            continue
+        if item.command is not None:
+            options['command'] = item.command
+        if item.checked is None:
+            menu.add_command(**options)
+            continue
+        if menu.choice is None:
+            menu.choice = tkinter.IntVar(master=menu, value=-1)
+        index = menu.index('end')
+        value = 0 if index is None else index + 1
+        menu.add_radiobutton(variable=menu.choice, value=value, **options)
+        if item.checked:
+            menu.choice.set(value)
+    return menu
+
+
+def popup(widget, items, x=None, y=None, align_right=False):
+    """Open the menu of ``items`` (a list or a function returning one, called now) at screen point (x, y),
+    by default the bottom-left corner of ``widget``; ``align_right``: x is where the menu's right edge goes.
+    Only one menu is up at a time.  Returns the tk.Menu (None for no entries)."""
+    entries = menu_items(items)
+    while _open_menus:
+        try:
+            _open_menus.pop().destroy()
+        except tkinter.TclError:
+            pass
+    if not entries:
+        return None
+    menu = _menu(widget, entries)
+    _open_menus.append(menu)
+    if x is None or y is None:
+        x, y = widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height()
+    if align_right:
+        menu.update_idletasks()
+        x -= menu.winfo_reqwidth()
+    try:
+        menu.tk_popup(int(x), int(y))
+    finally:
+        menu.grab_release()
+    return menu
+
+
+def menu_button(parent, items, size='md'):
+    """The '⋯' of an area: a square ghost button that opens ``items`` below itself, right edges aligned.
+    ``button.menu_items`` keeps ``items`` (tests and agents read the entries without opening the menu)."""
+    side = CONTROL_H_SM if size == 'sm' else CONTROL_H
+    picture = icon(ICON_MORE, 'accent', 16)
+    more = AppButton(parent, text='' if picture is not None else '⋯', image=picture, kind='ghost', size=size,
+                     width=side, height=side)
+    more.menu_items = items
+    more.configure(command=lambda: popup(more, items, more.winfo_rootx() + more.winfo_width(),
+                                         more.winfo_rooty() + more.winfo_height(), align_right=True))
+    return more
+
+
+def bind_menu(widget, items):
+    """Right click, Shift+F10 and the menu key open ``items`` on ``widget`` (the mirror of its '⋯'; existing
+    bindings stay).  On an AppTable a right click first selects the row under the mouse when it is not
+    selected yet (as Windows Explorer does) and opens nothing over the heading or empty space."""
+    def mouse(event):
+        if isinstance(widget, AppTable):
+            row = widget.identify_row(event.y)
+            if not row or widget.identify_region(event.x, event.y) == 'heading':
+                return 'break'
+            if row not in widget.selection():
+                widget.selection_set(row)
+            widget.focus(row)
+            widget.event_generate('<<TreeviewSelect>>')
+        popup(widget, items, event.x_root, event.y_root)
+        return 'break'
+
+    def key(_event):
+        x, y = widget.winfo_rootx() + 8, widget.winfo_rooty() + 8
+        if isinstance(widget, AppTable) and widget.selection():
+            box = widget.bbox(widget.selection()[0])
+            if box:
+                x, y = widget.winfo_rootx() + box[0] + 8, widget.winfo_rooty() + box[1] + box[3]
+        popup(widget, items, x, y)
+        return 'break'
+
+    widget.bind('<Button-3>', mouse, add='+')
+    for sequence in ('<Shift-F10>', '<App>'):
+        try:
+            widget.bind(sequence, key, add='+')
+        except tkinter.TclError:
+            pass        # a Tk without the menu key's keysym
+
+
+# ---------------------------------------------------------------- one-line text dialog (00-system 3.2)
+class TextDialog(ctk.CTkToplevel):
+    """The window of ``ask_text``: an entry and [Cancel] [OK]; Enter accepts, Esc cancels, OK is grey while
+    the entry is blank.  ``result`` is the stripped text after OK, else None.  Built without waiting, so
+    tests can drive it (``entry``, ``ok_button``, ``cancel_button``, ``accept()``, ``cancel()``)."""
+
+    def __init__(self, parent, title, initial=''):
+        super().__init__(parent, fg_color=SURFACE)
+        self.result = None
+        self.title(title)
+        self.resizable(False, False)
+        top = parent.winfo_toplevel()
+        if top.winfo_viewable():
+            self.transient(top)
+        self.value = tkinter.StringVar(master=self, value=initial)
+        body = ctk.CTkFrame(self, fg_color='transparent', corner_radius=0)
+        body.pack(fill='both', expand=True, padx=PAD, pady=PAD)
+        body.grid_columnconfigure(0, weight=1)
+        self.entry = entry(body, textvariable=self.value, width=360 - 2 * PAD)
+        self.entry.grid(row=0, column=0, columnspan=3, sticky='ew')
+        ok = WORDS['save']
+        self.cancel_button = button(body, WORDS['cancel'], self.cancel, kind='ghost',
+                                    width=fitted_width(body, WORDS['cancel']))
+        self.cancel_button.grid(row=1, column=1, sticky='e', pady=(PAD, 0), padx=(0, INLINE))
+        self.ok_button = button(body, ok, self.accept, kind='primary', width=fitted_width(body, ok))
+        self.ok_button.grid(row=1, column=2, sticky='e', pady=(PAD, 0))
+        self.value.trace_add('write', self._typed)
+        self._typed()
+        self.bind('<Return>', self.accept)
+        self.bind('<Escape>', self.cancel)
+        self.protocol('WM_DELETE_WINDOW', self.cancel)
+        icon_path = str(top.tk.call('wm', 'iconbitmap', top._w))   # the raw query: CTk's own marks the icon as set
+        if icon_path:       # CTkToplevel puts its own icon back after about 200 ms
+            self.after(250, lambda: self._set_icon(icon_path))
+        self._place_over(top)
+        self.entry.focus_set()
+        self.entry.select_range(0, 'end')
+        self.entry.icursor('end')
+
+    def _set_icon(self, path):
+        try:
+            self.iconbitmap(path)
+        except tkinter.TclError:
+            pass
+
+    def _place_over(self, top):
+        """Centred over ``top`` (physical pixels; the raw wm call is not scaled by customtkinter)."""
+        self.update_idletasks()
+        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_reqwidth()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_reqheight()) // 3
+        self.tk.call('wm', 'geometry', self._w, f'+{max(0, x)}+{max(0, y)}')
+
+    def _typed(self, *_):
+        self.ok_button.configure(state='normal' if self.value.get().strip() else 'disabled')
+
+    def accept(self, _event=None):
+        text = self.value.get().strip()
+        if not text:
+            return 'break'
+        self.result = text
+        self.destroy()
+        return 'break'
+
+    def cancel(self, _event=None):
+        self.result = None
+        self.destroy()
+        return 'break'
+
+
+def ask_text(parent, title, initial=''):
+    """A one-line text dialog that follows the theme (rename and the like).  Returns the stripped text, or None
+    after Cancel, Esc, closing, or a blank entry.  The OK button says WORDS['save']."""
+    dialog = TextDialog(parent, title, initial)
+    try:
+        dialog.wait_visibility()
+        dialog.grab_set()
+    except tkinter.TclError:
+        pass        # a window that cannot be shown or grabbed still takes the input (or is gone already)
+    try:
+        dialog.wait_window()
+    except tkinter.TclError:
+        pass        # closed while it was being shown
+    return dialog.result
+
+
+# ---------------------------------------------------------------- notice bar (00-system 2.9, 3.4)
+_NOTICE_TONES = {'idle': (INK, SURFACE_ALT), 'warn': (WARN, WARN_SOFT)}
+
+
+class NoticeBar(ctk.CTkFrame):
+    """One line of status above the content it explains (or below the control it answers), with at most two
+    ghost buttons on the right.  The caller grids it once and calls ``hide()``; ``show()`` / ``hide()`` then
+    use grid() / grid_remove().  The text is cut to the width (``full_text`` keeps it whole)."""
+
+    def __init__(self, master, tone='idle'):
+        super().__init__(master, corner_radius=RADIUS, height=CONTROL_H_SM)
+        if tone not in _NOTICE_TONES:
+            tone = 'idle'
+        self.tone = tone
+        self.grid_columnconfigure(0, weight=1)
+        self.label = label(self, '', role='caption', anchor='w')
+        self.label.grid(row=0, column=0, sticky='ew', padx=(12, INLINE), pady=4)
+        fit(self.label, '')
+        self._text = ''
+        self._buttons = ()
+        self._paint(tone)
+
+    def _paint(self, tone):
+        ink, fill = _NOTICE_TONES[tone]
+        self.configure(fg_color=fill)
+        self.label.configure(text_color=ink, fg_color=fill)
+
+    def show(self, text, actions=(), tone=None):
+        """Show ``text`` with ``actions`` [(label, command)] (at most two) as ghost buttons; ``tone`` 'idle' or
+        'warn' (None: the bar's own tone)."""
+        self._text = '' if text is None else str(text)
+        self._paint(tone if tone in _NOTICE_TONES else self.tone)
+        for old in self._buttons:
+            old.destroy()
+        actions, made = tuple(actions)[:2], []
+        for column, (caption, command) in enumerate(actions, 1):
+            action = button(self, caption, command, kind='ghost', size='sm', width=fitted_width(self, caption, 'sm', ghost=True))
+            action.grid(row=0, column=column, padx=(0, INLINE))
+            made.append(action)
+        self._buttons = tuple(made)
+        self.label.configure(text=self._text)
+        if not self.winfo_manager():
+            self.grid()
+
+    def hide(self):
+        if self.winfo_manager():
+            self.grid_remove()
+
+    @property
+    def shown(self):
+        return bool(self.winfo_manager())
+
+    @property
+    def full_text(self):
+        return self._text
+
+    @property
+    def buttons(self):
+        return self._buttons
+
+
+def notice_bar(parent, tone='idle'):
+    """A ``NoticeBar``; ``tone`` 'idle' (SURFACE_ALT) or 'warn' (WARN_SOFT, WARN text)."""
+    return NoticeBar(parent, tone)
+
+
+# ---------------------------------------------------------------- path button (00-system 3.6)
+def _middle_cut(path, measure, width):
+    """``path`` cut in the middle to ``width`` pixels: the drive and the last folder stay ('D:\\Media\\…\\Downloads'),
+    then only the last folder cut at its end, then the plain end cut."""
+    if measure(path) <= width:
+        return path
+    parts = path.replace('/', '\\').split('\\')
+    if len(parts) > 2:
+        for keep in range(len(parts) - 2, 0, -1):
+            shown = '\\'.join(parts[:keep] + ['…', parts[-1]])
+            if measure(shown) <= width:
+                return shown
+        head = parts[0] + '\\…\\'
+        if measure(head + '…') <= width:
+            return head + _ellipsize(parts[-1], lambda text: measure(head + text), width)
+    return _ellipsize(path, measure, width)
+
+
+class PathButton(AppButton):
+    """A folder or file shown on a field-coloured button with an icon on the left; the button is the way to change
+    it (``command`` opens the system dialog).  It has the fill of a drop-down (MENU, one step darker on hover, the
+    same fill while disabled), so a path, a drop-down and an entry read as one kind of field.  Fixed width: the full
+    path is cut in the middle once, when it is set (``path`` keeps it whole); an empty path shows
+    WORDS['choose'].  The icon is ICON_FOLDER until set_path gives another."""
+
+    def __init__(self, master, command=None, width=PATH_W):
+        self._icon_code = ICON_FOLDER
+        super().__init__(master, text='', command=command, kind='ghost', width=width, anchor='w', text_color=INK,
+                         fg_color=MENU, hover_color=MENU_BUTTON, image=icon(ICON_FOLDER, 'muted', 16), compound='left')
+        self._fill_off = MENU       # a disabled path keeps its field; only the text and the icon dim
+        self._path = ''
+        self.set_path('')
+
+    @property
+    def path(self):
+        return self._path
+
+    def set_path(self, path, icon_code=None):
+        """Show ``path`` (cut to the width) and, when given, the icon ``icon_code`` (ICON_FOLDER, ICON_ARCHIVE …)."""
+        self._path = '' if path is None else str(path)
+        if icon_code is not None and icon_code != self._icon_code:
+            self._icon_code = icon_code
+            self.configure(image=icon(icon_code, 'muted', 16))
+        if not self._path:
+            self.configure(text=WORDS['choose'])
+            return
+        scale = _scaling(self) or 1.0
+        # the room of the text: the width less the corners, the icon and its gap
+        room = round((self.cget('width') - 2 * RADIUS - 16 - 6) * scale) - 2
+        self.configure(text=_middle_cut(self._path, _measure_font(self, self.cget('font')).measure, room))
+
+
+def path_button(parent, command, width=PATH_W):
+    """A ``PathButton`` (download folder, archive folder, cookies file)."""
+    return PathButton(parent, command=command, width=width)
 
 
 # ---------------------------------------------------------------- text fitting
@@ -1926,12 +2400,6 @@ def _refit(label_widget):
         if label_widget.winfo_width() > 1 and label_widget.winfo_viewable():
             measure = _measure_font(label_widget, label_widget.cget('font')).measure
             room = _fit_room(label_widget)
-            # (final fix round 3, ENV3-1) A shorter form of this very text (fit_alternatives) is shown
-            # whole instead of the text cut; without one, or when none fits, the text is cut as before.
-            alternatives = getattr(label_widget, '_fit_alternatives', None)
-            if alternatives and alternatives[0] == full and measure(shown) > room:
-                shown = next((text.replace('\n', ' ') for text in alternatives[1]
-                              if measure(text.replace('\n', ' ')) <= room), shown)
             shown = _ellipsize(shown, measure, room)
         if shown != label_widget.cget('text'):
             label_widget._fit_write(text=shown)     # the label's own configure: the cut text is not a new full text
@@ -1974,14 +2442,6 @@ def fit(label, text):
         _bind_outer(label, '<Map>', lambda event: _refit(label))
     label._fit_text = '' if text is None else str(text)
     _refit(label)
-
-
-def fit_alternatives(label, text, alternatives=()):
-    """(final fix round 3, ENV3-1) Shorter forms of ``text`` for a label managed by ``fit``, longest
-    first: while the label's full text is ``text`` and does not fit, the first form that fits whole
-    is shown instead of ``text`` cut with '…' (``full_text`` stays ``text``).  Set it before the
-    label gets ``text``; no alternatives (or another full text) restore plain cutting."""
-    label._fit_alternatives = (str(text), tuple(str(form) for form in alternatives)) if alternatives else None
 
 
 def full_text(label):

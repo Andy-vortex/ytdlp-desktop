@@ -43,33 +43,33 @@ class LabeledWidgetTests(unittest.TestCase):
         self.assertEqual((menu.cget('height'), menu.cget('width'), menu.cget('dynamic_resizing')), (36, 120, False))
 
     def test_option_menu_with_labels_shows_labels_and_stores_values(self):
-        variable = tkinter.StringVar(self.root, '音频 · MP3 320K')
+        variable = tkinter.StringVar(self.root, 'audio_mp3')
         chosen = []
-        values = ['音频 · 原始最佳', '音频 · MP3 320K']
+        values = ['audio_best', 'audio_mp3']
         menu = ui_theme.option_menu(self.root, values, labels=['Audio · Original best', 'Audio · MP3 320K'],
                                     variable=variable, command=chosen.append, width=200)
         self.assertIsInstance(menu, ui_theme.AppOptionMenu)
         self.assertIsInstance(menu, ui_theme.LabeledOptionMenu)
         self.assertEqual(menu.cget('values'), ['Audio · Original best', 'Audio · MP3 320K'])
         self.assertEqual(menu.stored_values, values)
-        self.assertEqual((menu.get(), shown(menu)), ('音频 · MP3 320K', 'Audio · MP3 320K'))
+        self.assertEqual((menu.get(), shown(menu)), ('audio_mp3', 'Audio · MP3 320K'))
         self.assertIs(menu.cget('variable'), variable)
         self.assertEqual((menu.cget('height'), menu.cget('width')), (36, 200))
         menu._dropdown_callback('Audio · Original best')            # what a choice in the drop-down does
         self.assertEqual((variable.get(), menu.get(), shown(menu)),
-                         ('音频 · 原始最佳', '音频 · 原始最佳', 'Audio · Original best'))
-        self.assertEqual(chosen, ['音频 · 原始最佳'])
-        variable.set('音频 · MP3 320K')                              # a write to the variable is followed
-        self.assertEqual((menu.get(), shown(menu)), ('音频 · MP3 320K', 'Audio · MP3 320K'))
-        menu.set('音频 · 原始最佳')
-        self.assertEqual((variable.get(), shown(menu)), ('音频 · 原始最佳', 'Audio · Original best'))
+                         ('audio_best', 'audio_best', 'Audio · Original best'))
+        self.assertEqual(chosen, ['audio_best'])
+        variable.set('audio_mp3')                              # a write to the variable is followed
+        self.assertEqual((menu.get(), shown(menu)), ('audio_mp3', 'Audio · MP3 320K'))
+        menu.set('audio_best')
+        self.assertEqual((variable.get(), shown(menu)), ('audio_best', 'Audio · Original best'))
         menu.set('Audio · MP3 320K')                                 # a label is accepted too
-        self.assertEqual(variable.get(), '音频 · MP3 320K')
-        variable.set('音频 · FLAC')                                   # a value the menu does not list
-        self.assertEqual((menu.get(), shown(menu)), ('音频 · FLAC', '音频 · FLAC'))
-        self.assertEqual(chosen, ['音频 · 原始最佳'], 'only a choice in the menu calls command')
+        self.assertEqual(variable.get(), 'audio_mp3')
+        variable.set('audio_flac')                                   # a value the menu does not list
+        self.assertEqual((menu.get(), shown(menu)), ('audio_flac', 'audio_flac'))
+        self.assertEqual(chosen, ['audio_best'], 'only a choice in the menu calls command')
         menu.destroy()
-        variable.set('音频 · 原始最佳')                               # no trace left behind
+        variable.set('audio_best')                               # no trace left behind
 
     def test_option_menu_with_a_dict_and_numbers(self):
         variable = tkinter.IntVar(self.root, 3600)

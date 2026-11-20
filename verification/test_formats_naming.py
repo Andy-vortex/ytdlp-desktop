@@ -1,8 +1,11 @@
+# quick
 """formats.py and naming.py (1.6.0 WP2 steps A and C): the preset table, the naming rule
 and the rename of a finished file.  No process is started and nothing leaves the temp folder."""
 import _sandbox
+import ast
 import dataclasses
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,55 +13,94 @@ from unittest import mock
 
 import engine
 import formats
+import i18n
+import i18n_tool
 import naming
+from _sandbox import zh_t
 
-MODES_OF_1_5_1 = ('音频 · 原始最佳', '音频 · WAV 32 位', '音频 · FLAC', '音频 · MP3 320K', '视频 · 最佳画质 MKV')
+# (2.0.0 S2) The stored enum values of 1.5.1-1.8.1: the seven mode names, the best resolution and the five
+# link kinds.  This is the one place in verification/ that names them as stored values: the test below
+# proves that no reading point in src still compares with (or writes) one of them.
+OLD_STORED = ('音频 · 原始最佳', '音频 · WAV 32 位', '音频 · FLAC', '音频 · MP3 320K', '视频 · 最佳画质 MKV',
+              '音频 · M4A 原生', '视频 · MP4 兼容', '最佳',
+              '媒体地址', '视频页面', '网页链接', '媒体直链', '动态页面媒体请求')
+
+
+class StoredEnumTests(unittest.TestCase):
+    """(2.0.0 S2-AMEND 4.3, Q3-5) Stored enum values are codes: no src module outside the catalogs holds an
+    old stored value as a string constant, the display maps are keyed by the codes, and best is 'best'."""
+
+    def test_no_reading_point_holds_an_old_stored_value(self):
+        catalogs = set(i18n_tool.CATALOG_STEMS)
+        found = []
+        for path in sorted(i18n_tool.SRC.glob('*.py')):
+            if path.stem in catalogs:
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in OLD_STORED:
+                    found.append(f'{path.name}:{node.lineno} {node.value!r}')
+        self.assertEqual(found, [])
+
+    def test_the_display_maps_are_keyed_by_the_codes(self):
+        # (2.0.0 S4 A1) a format is shown by its code: format.<id> (no 'mode' group any more)
+        self.assertNotIn('mode', i18n.GROUPS)
+        self.assertEqual({key for key in i18n.CATALOG['zh'] if key.startswith('format.')},
+                         {'format.' + mode for mode in formats.MODES})
+        self.assertEqual(set(i18n.GROUPS['resolution']), set(engine.RESOLUTIONS))
+        self.assertEqual({value for value, key in i18n.GROUPS['resolution'].items() if key}, {'best'},
+                         'the other resolutions are shown as they are')
+        self.assertEqual(set(i18n.GROUPS['link_kind']), {'media', 'video_page', 'web', 'direct', 'dynamic_request'})
+        self.assertEqual(engine.RESOLUTIONS[0], formats.BEST)
+        self.assertEqual(formats.BEST, 'best')
 
 
 class FormatsTests(unittest.TestCase):
-    def test_the_first_five_modes_are_the_literal_strings_of_1_5_1(self):
-        self.assertEqual(formats.MODES[:5], MODES_OF_1_5_1)
-        self.assertEqual(formats.LEGACY_MODES, MODES_OF_1_5_1)
+    def test_the_stored_modes_are_the_preset_ids(self):
+        """(2.0.0 S2 P5) settings.json, the unfinished list and the history store a format as its preset id
+        and 'no height limit' as 'best' (S2-DESIGN.md 1.7); the old names are not read (StoredEnumTests)."""
+        self.assertEqual(formats.MODES, tuple(preset.id for preset in formats.PRESETS))
         self.assertEqual(engine.MODES, formats.MODES)
-        self.assertEqual(engine.MODES[:5], MODES_OF_1_5_1)
-        self.assertEqual(formats.MODES[5:], ('音频 · M4A 原生', '视频 · MP4 兼容'))
-        self.assertEqual(engine.RESOLUTIONS, ('最佳', '2160p / 4K', '1440p', '1080p', '720p', '480p'))
+        self.assertEqual(formats.BEST, 'best')
+        self.assertEqual(engine.RESOLUTIONS, ('best', '2160p / 4K', '1440p', '1080p', '720p', '480p'))
+        for name in ('LEGACY_MODES', 'by_mode'):
+            self.assertFalse(hasattr(formats, name), name)
+        self.assertNotIn('mode', {field.name for field in dataclasses.fields(formats.Preset)})
+        # (2.0.0 S4 A1) a format has one name, format.<id> in the catalogs: no label field, no lookup by name
+        self.assertNotIn('label', {field.name for field in dataclasses.fields(formats.Preset)})
+        self.assertFalse(hasattr(formats, 'by_label'))
 
     def test_table_ids_labels_kinds_and_menu_order(self):
         self.assertEqual([preset.id for preset in formats.PRESETS],
                          ['audio_best', 'audio_wav', 'audio_flac', 'audio_mp3', 'video_mkv', 'audio_m4a', 'video_mp4'])
-        self.assertEqual([preset.label for preset in formats.PRESETS],
-                         ['原始音频 · 保留源编码', 'WAV · 32 位浮点', 'FLAC · 24 位', 'MP3 · 320 kbps',
-                          'MKV · 保留源画质', 'M4A · AAC 原生（免转码）', 'MP4 · 兼容优先（H.264）'])
+        # (2.0.0 S4 A1) the shown name of every preset is its format.<id> text, in both languages, all different
+        for language in ('zh', 'en'):
+            names = [i18n.CATALOG[language]['format.' + preset.id] for preset in formats.PRESETS]
+            self.assertTrue(all(names), language)
+            self.assertEqual(len(set(names)), len(names), language)
         self.assertEqual([preset.kind for preset in formats.PRESETS],
                          ['audio', 'audio', 'audio', 'audio', 'video', 'audio', 'video'])
         self.assertEqual([preset.cover for preset in formats.PRESETS], [True, False, True, True, True, True, True])
         self.assertEqual(formats.MENU_ORDER,
                          ('audio_best', 'audio_m4a', 'audio_mp3', 'audio_flac', 'audio_wav', 'video_mp4', 'video_mkv'))
         self.assertEqual(sorted(formats.MENU_ORDER), sorted(preset.id for preset in formats.PRESETS))
-        for name in ('id', 'mode', 'label'):
-            values = [getattr(preset, name) for preset in formats.PRESETS]
-            self.assertEqual(len(set(values)), len(values), name)
+        values = [preset.id for preset in formats.PRESETS]
+        self.assertEqual(len(set(values)), len(values))
         for preset in formats.PRESETS:
             self.assertIsInstance(preset.args, tuple)
             self.assertTrue(all(isinstance(word, str) for word in preset.args))
             with self.assertRaises(dataclasses.FrozenInstanceError):
-                preset.mode = 'x'
+                preset.id = 'x'
 
     def test_lookups(self):
         for preset in formats.PRESETS:
-            self.assertIs(formats.by_mode(preset.mode), preset)
             self.assertIs(formats.by_id(preset.id), preset)
-            self.assertIs(formats.by_label(preset.label), preset)
-        for lookup in (formats.by_mode, formats.by_id, formats.by_label):
-            for bad in ('', 'x', None, formats.PRESETS[0].label + ' '):
-                with self.assertRaises(ValueError):
-                    lookup(bad)
-        # A label is not a mode and the other way round.
-        with self.assertRaises(ValueError):
-            formats.by_mode(formats.PRESETS[0].label)
-        with self.assertRaises(ValueError):
-            formats.by_label(formats.PRESETS[0].mode)
+        for bad in ('', 'x', None, formats.PRESETS[0].id + ' '):
+            with self.assertRaises(ValueError):
+                formats.by_id(bad)
+        # A shown name is not an id (2.0.0 S4 A1: the names live in the catalogs only).
+        for language in ('zh', 'en'):
+            with self.assertRaises(ValueError):
+                formats.by_id(i18n.CATALOG[language]['format.' + formats.PRESETS[0].id])
 
     def test_format_key_names_the_resolution_of_a_video_preset(self):
         """WP2 fix round 1 (bughunt-9): one video in 720p and in 1080p are two downloads."""
@@ -92,7 +134,7 @@ class FormatsTests(unittest.TestCase):
                           '--merge-output-format', 'mp4', '--remux-video', 'mp4'],
         }
         for preset in formats.PRESETS:
-            self.assertEqual(formats.format_args(preset, '最佳'), table[preset.id], preset.id)
+            self.assertEqual(formats.format_args(preset, 'best'), table[preset.id], preset.id)
             if preset.kind == 'audio':
                 self.assertEqual(formats.format_args(preset, '1080p'), table[preset.id], preset.id)
         mkv, mp4 = formats.by_id('video_mkv'), formats.by_id('video_mp4')
@@ -108,13 +150,13 @@ class FormatsTests(unittest.TestCase):
         out = Path(tempfile.gettempdir()) / 'out'
         for preset in formats.PRESETS:
             for resolution in engine.RESOLUTIONS:
-                command = engine.build_command('https://example.invalid/a', engine.Options(out, preset.mode, resolution))
+                command = engine.build_command('https://example.invalid/a', engine.Options(out, preset.id, resolution))
                 words = formats.format_args(preset, resolution)
                 start = command.index('-f')
                 self.assertEqual(command[start:start + len(words)], words, (preset.id, resolution))
-        with self.assertRaisesRegex(ValueError, 'Unsupported output option'):
+        with self.assertRaisesRegex(ValueError, re.escape(zh_t('core.options.unsupported'))):
             engine.build_command('https://example.invalid/a', engine.Options(out, 'x'))
-        with self.assertRaisesRegex(ValueError, 'Unsupported output option'):
+        with self.assertRaisesRegex(ValueError, re.escape(zh_t('core.options.unsupported'))):
             engine.build_command('https://example.invalid/a', engine.Options(out, formats.MODES[0], '999p'))
 
 
@@ -124,7 +166,7 @@ class NamingRuleTests(unittest.TestCase):
 
     def test_constants(self):
         self.assertEqual(naming.NAMING, ('title', 'clean', 'title_id'))
-        self.assertEqual(naming.LABELS, {'title': '标题（推荐）', 'clean': '精简标题', 'title_id': '标题 [视频 ID]'})
+        self.assertEqual(set(i18n.GROUPS['naming']), set(naming.NAMING), 'every naming key has its label')
         self.assertEqual(naming.OUTPUT_TEMPLATE, '%(title).140B [%(id)s].%(ext)s')
         self.assertIn(naming.OUTPUT_TEMPLATE, engine.build_command('https://example.invalid/a',
                                                                     engine.Options(Path(tempfile.gettempdir()))))

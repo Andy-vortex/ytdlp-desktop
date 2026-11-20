@@ -24,8 +24,6 @@ from PIL import Image  # noqa: E402
 
 import ui_theme as t  # noqa: E402
 
-LONG = ('每条下载之间随机等待 10–20 秒，遇到网站限流时暂停队列并逐步延长重试间隔；失败的链接会保存下来，'
-        '下次打开仍可重试。关闭后下载更快，但批量下载时更容易被网站临时限制。')
 TITLE = '徐秉龍、沈以誠 - 白羊『青春一記荒唐 亦然學著瘋狂。』【動態歌詞Lyrics】「每日歌曲推薦 #63」 Official Lyric Video [xrooMGuRhgY]'
 NAV = [('下载中心', t.ICON_DOWNLOAD, 'widgets'), ('网页采集', t.ICON_SEARCH, None), ('资料管理', t.ICON_LIBRARY, 'tables'),
        ('任务日志', t.ICON_LOG, None), ('偏好设置', t.ICON_SETTINGS, None)]
@@ -64,7 +62,6 @@ class Demo(ctk.CTk):
                             corner_radius=10, fg_color=t.ACCENT)
         mark.grid(row=0, column=0, rowspan=2, padx=(0, 10))
         t.label(brand, 'YT-DLP', role='brand', text_color=t.WHITE, anchor='w').grid(row=0, column=1, sticky='w')
-        t.label(brand, '桌面下载器', role='caption', text_color=t.SIDE_MUTED, anchor='w').grid(row=1, column=1, sticky='w')
         for row, (title, code, page) in enumerate(NAV, 1):
             item = ctk.CTkButton(side, text=title, image=t.icon(code, 'side'), compound='left', anchor='w',
                                  font=t.font('body'), height=40, corner_radius=t.RADIUS, border_spacing=10,
@@ -72,11 +69,8 @@ class Demo(ctk.CTk):
                                  command=(lambda name=page: self.show(name)) if page else None)
             item.grid(row=row, column=0, sticky='ew', padx=12, pady=2)
             self.nav[title] = (item, code, page)
-        status = ctk.CTkFrame(side, fg_color=t.SIDE_CARD, corner_radius=10)
-        status.grid(row=9, column=0, sticky='ew', padx=12, pady=(12, 16))
-        t.label(status, '●  正在下载 2 / 3', role='caption', text_color=t.SIDE_INFO, anchor='w').pack(anchor='w', padx=12, pady=(10, 0))
-        t.label(status, 'yt-dlp 2026.10.21', role='caption', text_color=t.SIDE_MUTED, anchor='w').pack(anchor='w', padx=12)
-        t.label(status, 'v1.6.0', role='caption', text_color=t.SIDE_MUTED, anchor='w').pack(anchor='w', padx=12, pady=(0, 10))
+        t.label(side, '●  下载中', role='caption', text_color=t.SIDE_INFO, anchor='w').grid(
+            row=9, column=0, sticky='ew', padx=24, pady=(12, 16))
 
     def show(self, name):
         self.pages[name].tkraise()
@@ -86,32 +80,30 @@ class Demo(ctk.CTk):
                            text_color=t.WHITE if active else t.SIDE_TEXT,
                            image=t.icon(code, 'white' if active else 'side'))
 
-    def page(self, title, subtitle):
+    def page(self, title):
         page = ctk.CTkFrame(self.content, fg_color='transparent', corner_radius=0)
         page.grid(row=0, column=0, sticky='nsew')
         page.grid_columnconfigure(0, weight=1)
-        head = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0, width=0, height=0)
-        head.grid(row=0, column=0, sticky='ew', pady=(0, t.GAP))
-        t.label(head, title, role='title').pack(side='left')
-        t.label(head, subtitle, role='caption', text_color=t.MUTED).pack(side='left', padx=(12, 0), pady=(8, 0))
+        t.label(page, title, role='title', anchor='w').grid(row=0, column=0, sticky='w', pady=(0, t.SECTION))
         return page
 
     def section(self, page, row, title, weight=0):
-        card = t.card(page)
-        card.grid(row=row, column=0, sticky='nsew' if weight else 'ew', pady=(0, t.GAP))
-        card.grid_columnconfigure(0, weight=1)
+        """A group: its small name, then its body; white space separates groups (no card, 00-system 2.5)."""
+        group = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0, width=0, height=0)
+        group.grid(row=row, column=0, sticky='nsew' if weight else 'ew', pady=(0, t.SECTION))
+        group.grid_columnconfigure(0, weight=1)
         if weight:
             page.grid_rowconfigure(row, weight=weight)
-        t.label(card, title, role='heading', anchor='w').grid(row=0, column=0, sticky='w', padx=t.CARD_PAD, pady=(12, 8))
-        body = ctk.CTkFrame(card, fg_color='transparent', corner_radius=0, width=0, height=0)
-        body.grid(row=1, column=0, sticky='nsew', padx=t.CARD_PAD, pady=(0, 14))
+        t.section_label(group, title).grid(row=0, column=0, sticky='w', pady=(0, t.INLINE))
+        body = ctk.CTkFrame(group, fg_color='transparent', corner_radius=0, width=0, height=0)
+        body.grid(row=1, column=0, sticky='nsew')
         if weight:
-            card.grid_rowconfigure(1, weight=1)
+            group.grid_rowconfigure(1, weight=1)
         return body
 
     # ---- page 1: buttons, chips, icons, inputs
     def build_widgets_page(self):
-        page = self.page('控件', '按钮、状态、输入与图标的全部状态。')
+        page = self.page('控件')
         body = self.section(page, 1, '按钮')
         for column, kind in enumerate(('primary', 'soft', 'ghost', 'danger'), 1):
             t.label(body, kind, role='caption', text_color=t.MUTED).grid(row=0, column=column, padx=(0, 8), sticky='w')
@@ -128,7 +120,7 @@ class Demo(ctk.CTk):
         body.grid_columnconfigure(5, weight=1)
         with_icon = t.button(extra, '开始下载', None, kind='primary', width=132, image=t.icon(t.ICON_DOWNLOAD, 'white'), compound='left')
         with_icon.grid(row=0, column=0, pady=3, sticky='e')
-        later = t.button(extra, '加入队列', None, primary=True, width=132)
+        later = t.button(extra, '加入队列', None, kind='primary', width=132)
         later.grid(row=1, column=0, pady=3, sticky='e')
         later.configure(state='disabled')       # disabled after creation, unlike the grid on the left
         folder = t.button(extra, '打开文件夹', None, width=132, image=t.icon(t.ICON_FOLDER, 'accent'), compound='left')
@@ -208,7 +200,7 @@ class Demo(ctk.CTk):
 
     # ---- page 2: tabs, tables, setting rows in a scroll area
     def build_tables_page(self):
-        page = self.page('表格与设置', '标签页、表格、设置行与滚动区域。')
+        page = self.page('表格与设置')
         page.grid_rowconfigure(1, weight=1)
         tabs = t.tabs(page, ['任务历史与续采', '增量订阅', '统一资料归档'])
         tabs.grid(row=1, column=0, sticky='nsew', pady=(0, t.GAP))
@@ -237,25 +229,26 @@ class Demo(ctk.CTk):
         for name in ('增量订阅', '统一资料归档'):
             t.label(tabs.add(name), name, text_color=t.MUTED).grid(row=0, column=0, padx=10, pady=10)
 
-        settings = t.card(page)
-        settings.grid(row=2, column=0, sticky='ew')
+        settings = self.section(page, 2, '下载')
         settings.grid_columnconfigure(0, weight=1)
-        t.label(settings, '批量下载', role='heading', anchor='w').grid(row=0, column=0, sticky='w', padx=t.CARD_PAD, pady=(12, 4))
         area = t.scroll_area(settings, height=150)
-        area.grid(row=1, column=0, sticky='ew', padx=(t.CARD_PAD, 6), pady=(0, 10))
+        area.grid(row=0, column=0, sticky='ew')
         area.grid_columnconfigure(0, weight=1)
         self.safe = ctk.BooleanVar(self, True)
         self.proxy = ctk.StringVar(self, '')
-        first = t.setting_row(area, '稳健模式（推荐）', LONG, lambda parent: t.switch(parent, variable=self.safe))
-        second = t.setting_row(area, '代理地址（可选）', '留空使用当前网络；只在本次运行有效，不会保存。',
-                               lambda parent: t.entry(parent, textvariable=self.proxy, placeholder='如 http://127.0.0.1:7890', width=260))
-        third = t.setting_row(area, '下载引擎', 'yt-dlp 2026.10.21 · 从官方稳定版更新，下载完成后校验 SHA256。',
-                              lambda parent: t.button(parent, '检查更新', None))
-        fourth = t.setting_row(area, '完成后提醒', '窗口不在前台时闪烁任务栏图标。', lambda parent: t.switch(parent))
-        for row, item in enumerate((first, second, third, fourth)):
-            item.grid(row=row, column=0, sticky='ew', padx=(0, 10), pady=(0 if row == 0 else 12, 0))
-        self.probe.update(table=filled, table_empty=hollow, tabs=tabs, setting_row=first, scroll_area=area,
-                          setting_entry=second.control, setting_switch=first.control)
+        # the settings page's grid: a short label on the left, its control on the right (settings.md 2)
+        rows = (('稳健模式', lambda: t.switch(area, variable=self.safe)),
+                ('本次代理', lambda: t.entry(area, textvariable=self.proxy, placeholder='http://127.0.0.1:7890', width=260)),
+                ('yt-dlp 2026.10.21', lambda: t.button(area, '检查更新', None, kind='primary')),
+                ('完成提醒', lambda: t.switch(area)))
+        made = []
+        for row, (title, control) in enumerate(rows):
+            t.label(area, title, anchor='w', height=t.CONTROL_H).grid(row=row, column=0, sticky='w',
+                                                                      pady=(0 if row == 0 else t.INLINE, 0))
+            made.append(control())
+            made[-1].grid(row=row, column=1, sticky='e', padx=(t.PAD, t.INLINE), pady=(0 if row == 0 else t.INLINE, 0))
+        self.probe.update(table=filled, table_empty=hollow, tabs=tabs, scroll_area=area,
+                          setting_entry=made[1], setting_switch=made[0])
         return page
 
 
@@ -330,7 +323,6 @@ def measure(app, picture=None):
     style = ttk.Style(app)
     body_line = line((t.FAMILY, -round(t.SIZES['body'] * scale)))
     tree_line = line(style.lookup('App.Treeview', 'font'))
-    description = probe['setting_row'].description_label
     result = {
         'scaling': scale, 'tk_scaling': round(float(app.tk.call('tk', 'scaling')), 3),
         'button_md': height(probe['button_primary_md_normal']), 'button_sm': height(probe['button_primary_sm_normal']),
@@ -340,9 +332,7 @@ def measure(app, picture=None):
         'textbox': height(probe['textbox']), 'task_row': height(probe['task_row']),
         'table_rowheight': round(int(style.lookup('App.Treeview', 'rowheight')) / scale, 1),
         'table_line_px': tree_line, 'body_line_px': body_line, 'table_line_ratio': round(tree_line / body_line, 3),
-        'setting_row': height(probe['setting_row']), 'description_width': round(description.winfo_width() / scale, 1),
-        'description_wraplength': description.cget('wraplength'),
-        'description_lines': round(description.winfo_height() / scale / t.LABEL_H['caption'], 1),
+        'setting_switch': height(probe['setting_switch']), 'setting_entry': height(probe['setting_entry']),
         'placeholder_mapped': bool(probe['entry_hint'].placeholder_label.winfo_ismapped()),
         'fit_text': probe['fit_label'].cget('text'), 'fit_is_cut': probe['fit_label'].cget('text') != t.full_text(probe['fit_label']),
         'scrollbar_shown': probe['scroll_area'].bar_visible,

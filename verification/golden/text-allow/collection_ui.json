@@ -1,60 +1,7 @@
 {
  "module": "collection_ui",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
- "literals": {
-  "从网页发现音视频链接，筛选后添加到下载列表；也可保存网页正文。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.subtitle (H4); the page shows the key through t()"
-  },
-  "全部链接": {
-   "category": "stored",
-   "reason": "stored / compared enum value (collect.filter.all); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "动态模式使用独立的临时 Chrome，不读取现有浏览器的登录状态。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.note.dynamic (H4); the page shows the key through t()"
-  },
-  "动态网页（Chrome）": {
-   "category": "stored",
-   "reason": "stored / compared enum value (collect.mode.dynamic); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "媒体候选": {
-   "category": "stored",
-   "reason": "stored / compared enum value (collect.filter.media); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "支持普通页面和动态页面；采集结果供你选择，不会自动下载。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.status.idle (H4); the page shows the key through t()"
-  },
-  "普通网页": {
-   "category": "stored",
-   "reason": "stored / compared enum value (collect.mode.static); shown through i18n.label or a value.* message, never as text (P7)"
-  },
-  "正在后台检查订阅“{name}”，结果会保存到资料管理 → 增量订阅；完成后可继续采集。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.background (H4); the page shows the key through t()"
-  },
-  "添加到下载列表": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.add (H4); the page shows the key through t()"
-  },
-  "翻页只跟随同站的 rel=next 链接。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.note.pages (H4); the page shows the key through t()"
-  },
-  "资料库正被其他程序占用，可以写入后自动开始采集…": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.status.waiting_library (H4); the page shows the key through t()"
-  },
-  "采集未开始：等待资料库期间开始了其他任务。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.status.library_dropped (H4); the page shows the key through t()"
-  },
-  "采集未开始：资料库仍被其他程序占用，请稍后再试。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key collect.status.library_gave_up (H4); the page shows the key through t()"
-  }
- },
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
+ "literals": {},
  "raises": {},
  "composed": {},
  "sinks": {
@@ -71,6 +18,5 @@
    "function": "CollectionUI.export_collected_text",
    "reason": "the collected page's own text / markdown (user data, never an app text) written into the exported file as it is, as 1.7.0 did (the same reason as library.json sinks 'body')"
   }
- },
- "pending_keys": {}
+ }
 }

@@ -31,9 +31,14 @@ import paths
 import settings
 import ui_theme
 import updater
+from _sandbox import en_t
 
 CJK = re.compile(r'[㐀-䶿一-鿿　-〿！-～]')
 CJK_ALLOWED_CHARS = set('【】『』「」')          # the bracket examples of settings.naming.text
+
+
+def pump(app, condition=None, timeout=5.0):
+    return _sandbox.pump(app, condition, timeout, step=0.005)
 
 
 def cjk(text):
@@ -43,16 +48,6 @@ def cjk(text):
         for allowed in i18n.all_values(key):
             text = text.replace(allowed, '')
     return [char for char in text if CJK.match(char) and char not in CJK_ALLOWED_CHARS]
-
-
-def pump(app, condition=None, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        app.update()
-        if condition is not None and condition():
-            return True
-        time.sleep(0.005)
-    return condition is None
 
 
 def walk(widget):
@@ -67,6 +62,8 @@ def shown_text(widget):
     """The text a CTk widget shows (the full text of a fitted label); None for other widgets."""
     if isinstance(widget, ctk.CTkLabel):
         return ui_theme.full_text(widget)
+    if isinstance(widget, ui_theme.PathButton) and widget.path:
+        return None                                     # (2.0.0 S4) a path is user data; an empty one shows 选择…
     if isinstance(widget, (ctk.CTkButton, ctk.CTkCheckBox, ctk.CTkSwitch)):
         return widget.cget('text')
     return None
@@ -232,14 +229,18 @@ class ArchiveTextTests(unittest.TestCase):
                 text = (folder / name).read_text(encoding='utf-8-sig')
                 self.assertEqual(text, i18n.t('filetext.page_text', title=self.PAGE['title'], url=self.PAGE['url'],
                                               note=i18n.t('filetext.truncated_source'), body=body))
-                self.assertTrue(text.startswith('City Nights · episode list\nSource: https://www.example.org/podcast/list\n'), text)
+                self.assertTrue(text.startswith(self.PAGE['title'] + '\n'), text)
                 self.assertEqual(cjk(text), [], text)
             readme = (folder / '阅读说明.txt').read_text(encoding='utf-8-sig')
-            self.assertIn('\nAuthor: not provided by the source\n', readme)
+            # (S3 review fix) the English labels are the catalog's: the head of the readme with no author known
+            self.assertTrue(readme.startswith(i18n.t('filetext.readme_head', title='Episode 1',
+                                                     url='https://media.example.org/ep1.m4a', source=self.PAGE['url'],
+                                                     author=i18n.t('filetext.author_unknown'))), readme)
             self.assertEqual(cjk(readme), [], readme)
             self.fill(archive, folder)
             readme = (folder / '阅读说明.txt').read_text(encoding='utf-8-sig')
-            for label in ('Original link: https://media.example.org/ep1.m4a', 'Collected from: ', 'Author: City Nights',
+            head = i18n.t('filetext.readme_head', title='\0', url='\0', source='\0', author='\0').split('\0')
+            for label in (head[1] + 'https://media.example.org/ep1.m4a', head[2], head[3] + 'City Nights',
                           i18n.t('filetext.readme_media').strip(), i18n.t('filetext.readme_transcripts').strip()):
                 self.assertIn(label, readme)
             # File and folder names stay Chinese (D10): the record, the readme, the media and transcript folders.
@@ -274,28 +275,26 @@ class EnglishWidgetTests(AppCase):
             failures += [f'sidebar: {where}: {text!r}' for where, text in widget_texts(app.side_status.master.master)
                          if cjk(text)]
             failures += [f'window title: {app.title()!r}'] if cjk(app.title()) else []
-            # The context menus of the link box and of a task row.
-            menus = []
-            app._popup = lambda menu, event: menus.append(menu_labels(menu))
-            event = types.SimpleNamespace(x_root=0, y_root=0, widget=app.urls)
-            app._box_menu(event)
+            # The menus of the link box and of a task row (their '⋯' and their right click open these lists).
             app.populate_queue(['https://example.org/a.mp3'])
             pump(app, timeout=0.2)
-            app.row_context(event, 0)
-            self.assertEqual(len(menus), 2)
+            menus = [[item.label for item in app.link_menu_items() if item],
+                     [item.label for item in app.row_menu_items(0) if item]]
+            self.assertTrue(all(menus), menus)
             failures += [f'context menu: {label!r}' for labels in menus for label in labels if cjk(label)]
             self.assertEqual(failures, [])
 
     def test_choosing_through_the_english_menus_keeps_the_stored_forms(self):
         import collection_ui
         import engine
+        import formats
         import library_ui
         import naming
-        import ui_download
+        import settings
         with _sandbox.language('en'):
             app = self.make_app(smoke=False)
-            stores = {'format': set(ui_download.FORMATS), 'resolution': set(engine.RESOLUTIONS),
-                      'naming': set(naming.NAMING), 'subscription_interval': set(library_ui.INTERVALS),
+            stores = {'mode': set(formats.MODES), 'resolution': set(engine.RESOLUTIONS),
+                      'naming': set(naming.NAMING), 'subscription_interval': set(settings.SCHEDULES),
                       'collect_mode': {collection_ui.MODE_STATIC, collection_ui.MODE_DYNAMIC},
                       'collect_filter': set(collection_ui.FILTERS)}
             menus = [widget for widget in walk(app) if isinstance(widget, ctk.CTkOptionMenu)]
@@ -313,13 +312,15 @@ class EnglishWidgetTests(AppCase):
                     if name == 'format':
                         self.assertIn(app.mode.get(), engine.MODES)
                 self.assertEqual(reached, allowed, name)
-            self.assertEqual(app.naming_label.get(), naming.LABELS[app.naming.get()], 'naming_label keeps its zh value')
+            naming_menu = [menu for menu in menus if str(menu.cget('variable')) == str(app.naming)][0]
+            self.assertEqual(naming_menu._text_label.cget('text'), i18n.label('naming', app.naming.get()),
+                             'the naming menu shows the label of the stored key')
             app.save_settings()
             stored = json.loads(paths.settings_file().read_text(encoding='utf-8'))
             self.assertIn(stored['mode'], engine.MODES)
             self.assertIn(stored['resolution'], engine.RESOLUTIONS)
             self.assertIn(stored['naming'], naming.NAMING)
-            self.assertEqual(app.library_tabs.get(), '任务历史与续采', 'the tab ids stay')
+            self.assertEqual(app.library_tabs.get(), library_ui.TAB_HISTORY, 'the tab ids stay')
 
 
 class EnglishEndToEndTests(AppCase):
@@ -356,7 +357,7 @@ class EnglishEndToEndTests(AppCase):
             self.assertTrue(records)
             record = records[0]
             self.assertIn(record['data']['options']['mode'], engine.MODES, 'the history keeps the Chinese mode')
-            stored = json.dumps(record['data'].get('last_reason') or record['data'].get('errors'), ensure_ascii=False)
+            stored = json.dumps(record['data'].get('errors'), ensure_ascii=False)
             self.assertTrue(cjk(stored), f'the history keeps the Chinese reason: {stored}')
             app.show_page('library')
             app.history_tree.selection_set(record['id'])
@@ -412,7 +413,7 @@ class LanguageRowTests(AppCase):
         app.set_busy(True)
         notes, buttons = self.strip(app)
         self.assertEqual(notes, {'settings.language.restart_busy'})
-        self.assertEqual([button.cget('state') for button in buttons], ['disabled'])
+        self.assertEqual(buttons, [])
         app.set_busy(False)
         for value in ('zh', 'system'):
             app.choose_language(value)
@@ -452,7 +453,6 @@ class RestartTests(AppCase):
         app.urls.insert('1.0', 'https://www.example.org/a.mp3\nhttps://www.example.org/b.mp3')
         app.links_changed()
         app.collect_urls.insert('1.0', 'https://www.example.org/podcast/list')
-        app.subscription_name.set('Weekly podcast')
 
     def test_restart_hands_the_launcher_the_command_and_keeps_the_input(self):
         app = self.make_app(smoke=False)
@@ -468,22 +468,21 @@ class RestartTests(AppCase):
         self.assertNotIn('YTDLP_DESKTOP_LANG', env, 'a normal start: the stored choice decides')
         self.assertTrue(getattr(app, '_finished', False), 'the window closes')
         state = json.loads(self.state_file.read_text(encoding='utf-8'))
-        self.assertEqual(set(state), {'version', 'created', 'pid', 'urls', 'collect_urls', 'subscription_name'})
+        self.assertEqual(set(state), {'version', 'created', 'pid', 'urls', 'collect_urls'})
         self.assertEqual(state['version'], 1)
         self.assertEqual(json.loads(paths.settings_file().read_text(encoding='utf-8'))['language'], 'en')
-        # The next start restores the three inputs once, logs it and deletes the file.
+        # The next start restores the two inputs once, logs it and deletes the file.
         app = self.make_app(smoke=False)
         self.assertTrue(pump(app, lambda: not self.state_file.exists(), 5))
         pump(app, timeout=0.2)
         self.assertEqual(app.urls.get('1.0', 'end').strip(), 'https://www.example.org/a.mp3\nhttps://www.example.org/b.mp3')
         self.assertEqual(app.collect_urls.get('1.0', 'end').strip(), 'https://www.example.org/podcast/list')
-        self.assertEqual(app.subscription_name.get(), 'Weekly podcast')
         app.flush_log()
         self.assertIn(i18n.t('log.restart_restored'), app.logs.get('1.0', 'end'))
 
     def test_a_stale_or_broken_state_file_is_deleted_and_ignored(self):
         for content in (json.dumps({'version': 1, 'created': time.time() - 200, 'pid': 1, 'urls': 'https://x.example/a',
-                                    'collect_urls': '', 'subscription_name': ''}), '{broken'):
+                                    'collect_urls': ''}), '{broken'):
             self.state_file.write_text(content, encoding='utf-8')
             app = self.make_app(smoke=False)
             self.assertTrue(pump(app, lambda: not self.state_file.exists(), 5))
@@ -563,7 +562,7 @@ class EnglishDialogTests(AppCase):
             self.assertEqual([text for text in self.texts(files) if cjk(text)], [])
             source = 'https://www.example.org/podcast/list'
             links = [{'url': f'https://media.example.org/episode-{number}.m4a', 'title': f'Episode {number}',
-                      'kind': '媒体地址', 'source': source} for number in range(3)]
+                      'kind': 'media', 'source': source} for number in range(3)]
             app.handle('collect_page', {'url': source, 'title': 'Episode list', 'text': 'Notes', 'markdown': '# Notes',
                                         'links': links})
             pump(app, timeout=0.2)
@@ -576,7 +575,7 @@ class EnglishDialogTests(AppCase):
             self.assertEqual(len(files.method_calls), 2)
             self.assertEqual([text for text in self.texts(files) if cjk(text)], [])
             names = [call.kwargs.get('initialfile') for call in files.method_calls]
-            self.assertEqual(names, ['collected-links.txt', 'page-text.txt'])
+            self.assertEqual(names, [en_t('dialog.export_links.file'), en_t('dialog.export_text.file')])
 
 
 if __name__ == '__main__':

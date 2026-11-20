@@ -4,11 +4,14 @@ It guards the riskiest move of the upgrade: the split of studio.py and the dispa
 table that replaces the if/elif chain of StudioApp.handle (WP4 steps 1-2).  One
 withdrawn smoke app receives every event kind through app.handle(kind, value) and
 every busy transition through app.set_busy(); after each step the visible state is
-recorded.  Recorded from the 1.5.1 sources.  To record on purpose, run this file
+recorded.  Recorded from the 1.5.1 sources; (2.0.0 S2 Q1) re-recorded with the mode variable as a
+preset id and renamed from ui-1.6.0.json: the new recording equalled the old golden with only the
+mode values changed (docs/2.0.0/handoff/S2.md).  To record on purpose, run this file
 directly (not through run_tests.py) with GOLDEN_UPDATE=1.
 
-Recorded after every step: the texts of current_title, metrics, queue_stats,
-update_status, version_label, engine_badge; [text, state] of start_button,
+Recorded after every step: the texts of current_title, metrics,
+update_status, version_label, side_status ((2.0.0 S4 A2) in place of the removed sidebar
+engine_badge: the sidebar's status word); [text, state] of start_button,
 stop_button, retry_button, open_output_button, collect_start, collect_stop; every
 row as [title, detail, badge, state]; progress target and mode; busy, animating,
 operation; the mode variable; the state of every widget in app.controls and in
@@ -29,14 +32,16 @@ from unittest.mock import patch
 
 import customtkinter as ctk
 import engine
-from studio import FORMATS, StudioApp
+import updater
+import formats
+from studio import StudioApp
 
-GOLDEN_NAME = 'ui-1.6.0.json'
+GOLDEN_NAME = 'ui.json'
 U1 = 'https://example.invalid/a'
 U2 = 'https://media.example.invalid/b'
 U3 = 'https://www.youtube.com/watch?v=golden'
 TITLE = '第一条测试媒体 · A Media Title That Is Clearly Longer Than Fifty-Six Characters In Total'
-TEXT_WIDGETS = ('current_title', 'metrics', 'queue_stats', 'update_status', 'version_label', 'engine_badge')
+TEXT_WIDGETS = ('current_title', 'metrics', 'update_status', 'version_label', 'side_status')
 BUTTONS = ('start_button', 'stop_button', 'retry_button', 'open_output_button', 'collect_start', 'collect_stop')
 
 
@@ -100,7 +105,7 @@ def script(app, clock, out, failed_path):
         def action():
             if stored is not None:
                 # What the engine leaves in failed-downloads.json before it emits done.
-                engine.store_failed_job(stored, options)
+                _sandbox.save_unfinished(stored, options)
             app.handle('done', payload)
         return action
 
@@ -119,15 +124,16 @@ def script(app, clock, out, failed_path):
 
     def legacy_done():
         # Three links are on disk now, but a done event without failed_urls must not reload the list.
-        engine.store_failed_job([U1, U2, U3], options)
+        _sandbox.save_unfinished([U1, U2, U3], options)
         app.handle('done', {'success': 1, 'failed': 0, 'cancelled': False, 'files': []})
 
     history_job = []
 
     def create_history_job():
         # start() records the job in the library before the worker runs; the history list is not refreshed yet.
-        # (Only one job: the list is ordered by a wall-clock time stamp.)
-        history_job.append(app.library.create_job('download', f'1条 · {options.mode}',
+        # (Only one job: the list is ordered by a wall-clock time stamp.)  (2.0.0 S2 P2) As start() writes it:
+        # no title until the first media title (1.8.1 wrote a placeholder the list showed as the link).
+        history_job.append(app.library.create_job('download', '',
                                                   {'urls': [U1], 'output': str(out), 'mode': options.mode}))
 
     def done_with_history(**changes):
@@ -136,7 +142,7 @@ def script(app, clock, out, failed_path):
         payload.update(changes)
 
         def action():
-            engine.store_failed_job([], options)
+            _sandbox.save_unfinished([], options)
             # The emit closure of start() hands the event to the library first, then to the UI.
             app.library.download_event(history_job[-1], 'done', payload)
             app.handle('done', payload)
@@ -152,7 +158,7 @@ def script(app, clock, out, failed_path):
         ('item 1/3', item(1, 3, U1)),
         ('title longer than 56 characters', handle('title', TITLE)),
         ('log: plain engine line', handle('log', '[generic] a: Downloading webpage')),
-        ('waiting 300 s', handle('waiting', {'index': 1, 'total': 3, 'seconds': 300, 'reason': '下载间隔 / 重试等待'})),
+        ('waiting 300 s', handle('waiting', {'index': 1, 'total': 3, 'seconds': 300, 'reason': _sandbox.zh_t('core.wait.pace_or_retry')})),
         ('render_wait 241 s later', later(241)),
         ('resuming', handle('resuming', {'index': 1, 'total': 3})),
         ('progress: 50 % downloading', progress(.5, 1024, 2048, 512, 2, 'downloading')),
@@ -191,7 +197,7 @@ def script(app, clock, out, failed_path):
         ('download job 3: set_busy(True)', busy('download')),
         ('job 3 item 1/3', item(1, 3, U1)),
         ('job 3 waiting 900 s (rate limit)',
-         handle('waiting', {'index': 1, 'total': 3, 'seconds': 900, 'reason': '网站限流，暂停整个下载队列'})),
+         handle('waiting', {'index': 1, 'total': 3, 'seconds': 900, 'reason': _sandbox.zh_t('core.wait.rate_queue')})),
         ('item_done: cancelled', item_done(1, cancelled=True)),
         ('done: cancelled', done(stored=[U1, U2, U3], cancelled=True, pending_urls=[U1, U2, U3])),
 
@@ -209,7 +215,7 @@ def script(app, clock, out, failed_path):
         ('download job 5: set_busy(True)', busy('download')),
         ('job 5 item 1/1', item(1, 1, U1)),
         ('job 5 item_done: success', item_done(1, success=True, files=1)),
-        ('done: archive_errors', done(stored=[], success=1, files=[a_wav], archive_errors=['归档文件与本条资料目录不匹配。'])),
+        ('done: archive_errors', done(stored=[], success=1, files=[a_wav], archive_errors=[_sandbox.zh_t('core.archive.media_mismatch')])),
 
         # --- jobs 6 and 7: done arrives while a row is still active (no item_done)
         ('populate_queue: two links for job 6', lambda: app.populate_queue([U1, U2])),
@@ -226,7 +232,7 @@ def script(app, clock, out, failed_path):
         # --- operation update
         ('update 1: set_busy(True)', busy('update')),
         ('update 1: animate(True)', lambda: app.animate(True)),
-        ('update: title', handle('title', '正在检查官方更新…')),
+        ('update: title', handle('title', _sandbox.zh_t('core.update.checking'))),
         ('update: progress with status updating', progress(.25, 1000, 4000, None, None, 'updating')),
         ('updated: new version', handle('updated', {'version': '2099.01.01', 'unchanged': False})),
         ('update_done', handle('update_done', {'cancelled': False})),
@@ -242,14 +248,15 @@ def script(app, clock, out, failed_path):
         ('collect: set_busy(True)', busy('collect')),
         ('collect_page', handle('collect_page', {
             'url': 'https://example.org/list', 'title': '测试文章', 'text': '完整正文', 'markdown': '# 完整正文', 'links': [
-                {'url': 'https://example.org/film.mp4', 'title': '视频甲', 'kind': '媒体地址', 'source': 'https://example.org/list'},
-                {'url': 'https://example.org/article', 'title': '文章', 'kind': '网页链接', 'source': 'https://example.org/list'}]})),
+                {'url': 'https://example.org/film.mp4', 'title': '视频甲', 'kind': 'media', 'source': 'https://example.org/list'},
+                {'url': 'https://example.org/article', 'title': '文章', 'kind': 'web', 'source': 'https://example.org/list'}]})),
         ('collect_error', handle('collect_error', '网站返回HTTP 503，可尝试动态模式或稍后重试。')),
         ('collect_done', handle('collect_done', {'cancelled': False})),
 
         # --- set_busy(True) / set_busy(False) for each operation
-        # set_busy() calls on_format(), which copies the format menu's choice into the mode variable.
-        ('format variable set to MKV, on_format not called', lambda: app.format.set(FORMATS[4])),
+        # set_busy() calls on_format(), which shows the resolution menu for the chosen format (2.0.0 S4 A1: the
+        # format menu writes the preset id into the mode variable itself).
+        ('mode variable set to MKV, on_format not called', lambda: app.mode.set(formats.MODES[4])),
         ('set_busy(True) with operation download', busy('download', True)),
         ('set_busy(False) with operation download', busy('download', False)),
         ('set_busy(True) with operation update', busy('update', True)),
@@ -293,7 +300,7 @@ def record():
     out = _sandbox.out('golden-ui')
     state_dir = _sandbox.state_dir()
     failed_path = str(state_dir / 'failed-downloads.json')
-    version = engine.engine_version()
+    version = updater.engine_version()
     ctk.set_appearance_mode('light')
     app = StudioApp(_sandbox.app_args('http://127.0.0.1/fixture.mp4', str(out)))
     steps = []
@@ -337,7 +344,8 @@ class GoldenUiTests(unittest.TestCase):
         steps = record()
         labels = [entry['step'] for entry in steps]
         self.assertEqual(len(labels), len(set(labels)), 'step labels must be unique')
-        _sandbox.check_golden(self, GOLDEN_NAME, steps)
+        # (2.0.0 S3) keyed: catalog texts are recorded as their keys, so a wording change needs no re-record
+        _sandbox.check_golden(self, GOLDEN_NAME, steps, keyed=True)
 
 
 if __name__ == '__main__':

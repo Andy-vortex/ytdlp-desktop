@@ -1,3 +1,4 @@
+# quick
 """The download queue of 1.6.0 (WP2 step G): per-item options, enqueue while running,
 spacing, the bot-check block, already-downloaded skips, engine errors, renaming, and the
 event payloads (R10, R11).
@@ -19,6 +20,8 @@ from unittest import mock
 
 import engine
 import formats
+import i18n
+import messages
 import paths
 import unfinished
 import urls as urltools
@@ -29,6 +32,13 @@ OLD_ITEM_DONE = {'index', 'cancelled', 'success', 'files', 'bot_check'}
 NEW_ITEM_DONE = {'url', 'origin', 'title', 'path', 'error', 'reason', 'skipped', 'stale_engine', 'format'}
 DONE_KEYS = {'success', 'failed', 'files', 'cancelled', 'failed_urls', 'pending_urls', 'failed_path', 'archive_errors',
              'bot_check', 'total', 'skipped', 'blocked', 'unfinished', 'engine_error'}
+
+
+# (2.0.0 S3 W4) the zh text of a catalog key, whatever the current language (S3-DESIGN 4.3)
+from _sandbox import zh_t
+
+
+PACE = zh_t('core.wait.pace')       # the reason of the spacing wait
 
 
 def ok(runner, command, index, total, files):
@@ -169,7 +179,7 @@ class ItemTests(QueueCase):
                                  'origin': A + '?utm=1', 'title': '', 'path': '', 'error': '', 'reason': '', 'skipped': '',
                                  'stale_engine': False, 'format': 'audio_best'})
         self.assertEqual(second, {'index': 2, 'cancelled': False, 'success': False, 'files': 0, 'bot_check': False, 'url': B,
-                                  'origin': B, 'title': '', 'path': '', 'error': '', 'reason': '下载未完成（退出码 1）',
+                                  'origin': B, 'title': '', 'path': '', 'error': '', 'reason': zh_t('core.reason.exit_code', code=1),
                                   'skipped': '', 'stale_engine': False, 'format': 'audio_best'})
         done = self.done()
         self.assertEqual(set(done), DONE_KEYS)
@@ -202,9 +212,9 @@ class ItemTests(QueueCase):
         self.run_queue([A, B, C], [unavailable, stale, fail])
         first, second, third = self.of('item_done')
         self.assertEqual((first['error'], first['reason'], first['stale_engine']),
-                         ('[youtube] abc: Video unavailable. This video has been removed', '视频不存在或已设为私享', False))
-        self.assertEqual((second['reason'], second['stale_engine']), ('解析失败，下载引擎可能已过期', True))
-        self.assertEqual((third['error'], third['reason'], third['stale_engine']), ('', '下载未完成（退出码 1）', False),
+                         ('[youtube] abc: Video unavailable. This video has been removed', zh_t('core.reason.unavailable'), False))
+        self.assertEqual((second['reason'], second['stale_engine']), (zh_t('core.reason.stale'), True))
+        self.assertEqual((third['error'], third['reason'], third['stale_engine']), ('', zh_t('core.reason.exit_code', code=1), False),
                          'what one link reported does not stick to the next')
         self.assertEqual([entry['error'] for entry in unfinished.load()], [first['error'], second['error'], ''])
 
@@ -218,7 +228,7 @@ class ItemTests(QueueCase):
         self.run_queue([A], [refused], options=replace(self.options, proxy=proxy))
         error = self.of('item_done')[0]['error']
         self.assertNotIn('topsecret', error)
-        self.assertIn('[代理]', error)
+        self.assertIn(messages.PROXY_TOKEN, error)
         self.assertNotIn('topsecret', paths.failed_file().read_text(encoding='utf-8'))
 
     def test_r10_a_link_that_cannot_start_fails_alone(self):
@@ -227,11 +237,11 @@ class ItemTests(QueueCase):
         self.assertEqual(self.started(), [B], 'the bad link never reaches the engine, the next one runs')
         self.assertEqual([kind for kind, _ in self.events],
                          ['item', 'log', 'item_done', 'item', 'item_done', 'done'])
-        self.assertEqual(self.logs(), ['此链接无法开始：采集来源地址无效，请重新采集后加入下载列表。'])
+        self.assertEqual(self.logs(), [zh_t('core.engine.cannot_start_link', error=zh_t('core.collect.bad_source'))])
         bad, good = self.of('item_done')
         self.assertEqual((bad['index'], bad['success'], bad['cancelled'], bad['files'], bad['bot_check']), (1, False, False, 0, False))
-        self.assertEqual(bad['error'], '采集来源地址无效，请重新采集后加入下载列表。')
-        self.assertEqual(bad['reason'], '采集来源地址无效，请重新采集后加入下载列表。')
+        self.assertEqual(bad['error'], zh_t('core.collect.bad_source'))
+        self.assertEqual(bad['reason'], zh_t('core.collect.bad_source'))
         self.assertTrue(good['success'])
         done = self.done()
         self.assertEqual((done['success'], done['failed'], done['total'], done['failed_urls'], done['pending_urls']),
@@ -249,7 +259,7 @@ class ItemTests(QueueCase):
         self.run_queue([A, B, C, D, E], [saves('e.opus')], overrides=overrides)
         self.assertEqual(self.started(), [E])
         self.assertEqual([value['success'] for value in self.of('item_done')], [False, False, False, False, True])
-        self.assertEqual(len([line for line in self.logs() if line.startswith('此链接无法开始：')]), 4)
+        self.assertEqual(len([line for line in self.logs() if line.startswith(zh_t('core.engine.cannot_start_link', error=''))]), 4)
         done = self.done()
         self.assertEqual((done['success'], done['failed'], done['total'], done['engine_error']), (1, 4, 5, False))
         self.assertEqual(done['failed_urls'], [A, B, C, D])
@@ -274,7 +284,7 @@ class ItemTests(QueueCase):
             runner = self.run_queue([A, B, C], [ok, boom])
         self.assertEqual([value['index'] for value in self.of('item')], [1, 2])
         self.assertEqual([value['index'] for value in self.of('item_done')], [1], 'the 1.5.1 exception path: no item_done')
-        self.assertIn('错误：boom', self.logs())
+        self.assertIn(zh_t('core.engine.error', error='boom'), self.logs())
         done = self.done()
         self.assertEqual((done['success'], done['failed'], done['failed_urls'], done['pending_urls'], done['total']),
                          (1, 1, [B], [B, C], 3))
@@ -287,8 +297,9 @@ class ItemTests(QueueCase):
         self.run_queue(spellings, [ok, ok])
         self.assertEqual(self.started(), [Y1, B])
         self.assertEqual([(value['index'], value['total']) for value in self.of('item')], [(1, 2), (2, 2)])
-        self.assertEqual(self.logs(), ['重复链接已合并：https://youtu.be/AAA?si=x',
-                                       '重复链接已合并：' + Y1 + '&list=RDMMAAA&start_radio=1', '重复链接已合并：' + B])
+        self.assertEqual(self.logs(), [zh_t('core.engine.duplicate_merged', url='https://youtu.be/AAA?si=x'),
+                                       zh_t('core.engine.duplicate_merged', url=Y1 + '&list=RDMMAAA&start_radio=1'),
+                                       zh_t('core.engine.duplicate_merged', url=B)])
         self.assertEqual(self.done()['total'], 2)
         # The same link in another format is another download.
         self.events.clear(), self.commands.clear()
@@ -336,14 +347,14 @@ class BotBlockTests(QueueCase):
         self.assertEqual([value['index'] for value in self.of('item')], [1, 3], 'no item event for the blocked link')
         first, second, third = self.of('item_done')
         self.assertEqual((first['index'], first['success'], first['bot_check'], first['skipped']), (1, False, True, ''))
-        self.assertEqual(first['reason'], 'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）')
+        self.assertEqual(first['reason'], zh_t('core.reason.bot_check'))
         self.assertEqual(second, {'index': 2, 'cancelled': False, 'success': False, 'files': 0, 'bot_check': True,
                                   'skipped': 'bot_check', 'url': Y2, 'origin': Y2, 'title': '', 'path': '', 'error': '',
-                                  'reason': 'YouTube 暂时要求验证，稍后重试即可（也可在偏好设置选择 cookies）',
+                                  'reason': zh_t('core.reason.bot_check'),
                                   'stale_engine': False, 'format': 'audio_best'})
         self.assertTrue(third['success'])
         self.assertIn(engine.BOT_CHECK_HINT, self.logs())
-        self.assertIn('此链接未完成（退出码 1），继续处理队列中的下一项。', self.logs())
+        self.assertIn(zh_t('core.engine.item_unfinished', code=1), self.logs())
         done = self.done()
         self.assertEqual((done['blocked'], done['bot_check'], done['success'], done['failed'], done['skipped'], done['total']),
                          ('bot_check', True, 1, 1, 0, 3))
@@ -527,9 +538,9 @@ class EnqueueTests(QueueCase):
 
         runner = self.run_queue([A, B], [first])
         self.assertEqual([kind for kind, _ in self.events], ['item', 'log', 'item_done', 'queued', 'done'])
-        self.assertEqual(self.logs(), ['当前 yt-dlp 引擎与本程序不兼容，请在“偏好设置”恢复内置引擎。'])
+        self.assertEqual(self.logs(), [zh_t('core.engine.incompatible')])
         item_done = self.of('item_done')[0]
-        self.assertEqual((item_done['success'], item_done['cancelled'], item_done['reason']), (False, False, '下载引擎无法运行'))
+        self.assertEqual((item_done['success'], item_done['cancelled'], item_done['reason']), (False, False, zh_t('core.reason.engine_error')))
         done = self.done()
         self.assertEqual((done['engine_error'], done['success'], done['failed'], done['total'], done['cancelled']),
                          (True, 0, 0, 3, False))
@@ -545,10 +556,11 @@ class EnqueueTests(QueueCase):
 
         self.run_queue([A, B], [missing])
         self.assertEqual(len(self.logs()), 1)
-        self.assertTrue(self.logs()[0].startswith('无法启动下载引擎：'))
-        self.assertTrue(self.logs()[0].endswith('可在“偏好设置”恢复内置引擎。'))
+        head, tail = zh_t('core.engine.cannot_start_engine', error='\0').split('\0')
+        self.assertTrue(self.logs()[0].startswith(head))
+        self.assertTrue(self.logs()[0].endswith(tail))
         self.assertEqual((self.done()['engine_error'], self.done()['failed'], self.done()['pending_urls']), (True, 0, [A, B]))
-        self.assertEqual(self.of('item_done')[0]['reason'], '下载引擎无法运行')
+        self.assertEqual(self.of('item_done')[0]['reason'], zh_t('core.reason.engine_error'))
         self.assertEqual(self.stored(), {(A, 'audio_best'): 'unstarted', (B, 'audio_best'): 'unstarted'})
 
     def test_an_exception_keeps_queued_links_as_unstarted(self):
@@ -620,7 +632,7 @@ class PacingTests(QueueCase):
         self.run_queue([A, B, C], [self.takes(3), self.takes(3), self.takes(3)],
                        hook=lambda runner, kind, value: kind == 'item' and self.clock.__setitem__(0, self.clock[0] + 4))
         # 4 s pass between the end of a download and the next start: 10 - 4 = 6 s are left to wait.
-        self.assertEqual(self.waits, [(6.0, 2, 3, '下载间隔', 'interval'), (6.0, 3, 3, '下载间隔', 'interval')])
+        self.assertEqual(self.waits, [(6.0, 2, 3, PACE, 'interval'), (6.0, 3, 3, PACE, 'interval')])
         self.assertEqual(self.done()['success'], 3)
         kinds = [kind for kind, _ in self.events]
         self.assertEqual(kinds, ['item', 'item_done'] * 3 + ['done'], 'the wait comes after the item event of its link')
@@ -632,7 +644,7 @@ class PacingTests(QueueCase):
 
     def test_only_a_successful_download_starts_the_interval(self):
         self.run_queue([A, B, C], [self.takes(3, result=1), self.takes(3), self.takes(3)])
-        self.assertEqual(self.waits, [(10.0, 3, 3, '下载间隔', 'interval')], 'no wait after the failed first link')
+        self.assertEqual(self.waits, [(10.0, 3, 3, PACE, 'interval')], 'no wait after the failed first link')
 
     def test_playlist_items_and_unsafe_mode_do_not_wait(self):
         self.run_queue([A, B], [ok, ok], options=replace(self.options, playlist=True))
@@ -642,14 +654,14 @@ class PacingTests(QueueCase):
         self.assertEqual(self.waits, [])
         # Per item: the plain link after a playlist link waits, the playlist link itself does not.
         self.run_queue([A, B], [ok, ok], overrides={A: replace(self.options, playlist=True)})
-        self.assertEqual(self.waits, [(10.0, 2, 2, '下载间隔', 'interval')])
+        self.assertEqual(self.waits, [(10.0, 2, 2, PACE, 'interval')])
 
     def test_a_second_runner_started_right_after_waits_too(self):
         self.run_queue([A], [self.takes(2)])
         self.assertEqual(self.waits, [])
         self.clock[0] += 3
         self.run_queue([B], [ok], runner=engine.Runner(lambda kind, value: None))
-        self.assertEqual(self.waits, [(7.0, 1, 1, '下载间隔', 'interval')], 'spacing is measured across jobs')
+        self.assertEqual(self.waits, [(7.0, 1, 1, PACE, 'interval')], 'spacing is measured across jobs')
         engine.Runner.reset_pacing()
         self.waits.clear()
         self.run_queue([C], [ok], runner=engine.Runner(lambda kind, value: None))
@@ -693,7 +705,7 @@ class RealWaitTests(QueueCase):
         waiting = [value for kind, value in events if kind == 'waiting']
         self.assertTrue(waiting)
         self.assertEqual({value['kind'] for value in waiting}, {'interval'})
-        self.assertEqual({(value['index'], value['total'], value['reason']) for value in waiting}, {(2, 2, '下载间隔')})
+        self.assertEqual({(value['index'], value['total'], value['reason']) for value in waiting}, {(2, 2, PACE)})
         kinds = [kind for kind, _ in events]
         self.assertLess(kinds.index('waiting'), kinds.index('resuming'))
         self.assertLess(kinds.index('resuming'), len(kinds) - 2)
@@ -771,7 +783,7 @@ class SkipDownloadedTests(QueueCase):
         library = FakeLibrary(error=sqlite3.OperationalError('database is locked'))
         self.run_queue([A], [ok], options=replace(self.options, skip_downloaded=True), library=library)
         self.assertEqual(self.started(), [A])
-        self.assertEqual(self.logs(), ['下载记录无法读取，照常下载：database is locked'])
+        self.assertEqual(self.logs(), [zh_t('core.engine.record_unreadable', error='database is locked')])
         self.assertEqual(self.done()['success'], 1)
 
     def test_a_skipped_download_leaves_the_unfinished_list(self):
@@ -797,7 +809,7 @@ class SubtitleTests(QueueCase):
         self.assertEqual(self.commands[1], engine.build_command(A, replace(video, subtitles=False)))
         self.assertIn('--embed-subs', self.commands[2], 'the next link tries subtitles again')
         self.assertEqual(self.waits, [], 'no cooldown of the queue')
-        self.assertEqual(self.logs(), ['字幕下载失败，已改为不带字幕重新下载此条。'])
+        self.assertEqual(self.logs(), [zh_t('core.engine.subtitles_dropped')])
         first = self.of('item_done')[0]
         self.assertEqual((first['success'], first['files'], first['error'], first['reason']), (True, 1, '', ''))
         self.assertEqual((self.done()['success'], self.done()['failed']), (2, 0))
@@ -1070,7 +1082,7 @@ class NamingTests(QueueCase):
             runner.download([Y1], self.options)
         item_done = self.of('item_done')[0]
         self.assertEqual((item_done['success'], item_done['title'], item_done['error'], item_done['reason']),
-                         (False, '只有标题的失败', '[youtube] abc: Requested format is not available', '没有可用的所选格式或画质'))
+                         (False, '只有标题的失败', '[youtube] abc: Requested format is not available', zh_t('core.reason.format')))
         self.assertEqual(unfinished.load()[0]['title'], '只有标题的失败')
 
     def old_file_engine(self, existing_name, work_copy=None):
@@ -1111,7 +1123,7 @@ class NamingTests(QueueCase):
             self.assertEqual(self.of('media')[0]['filepath'], str(old))
             item_done = self.of('item_done')[0]
             self.assertEqual((item_done['success'], item_done['path'], item_done['files']), (True, str(old), 1))
-            self.assertIn('保存位置已有这个文件（之前下载的），保留原文件名：歌 [abc].opus', self.logs())
+            self.assertIn(zh_t('core.engine.kept_existing', name='歌 [abc].opus'), self.logs())
             self.assertEqual(self.done()['files'], [str(old)])
         # A file that this item itself produced is renamed as usual.
         self.events.clear()
@@ -1154,14 +1166,15 @@ class FixRoundOneQueueTests(QueueCase):
         self.run_queue([A], [limited_and_enqueue, limited, limited, ok])
         self.assertEqual(self.started(), [A, A, A, B])
         self.assertEqual([(wait[0], wait[3]) for wait in self.waits],
-                         [(300, '网站限流，冷却后重试此链接（1/2）'), (600, '网站限流，冷却后重试此链接（2/2）'),
-                          (900, '网站限流，暂停整个下载队列')])
+                         [(300, zh_t('core.wait.rate_retry', attempt=1, limit=2)),
+                          (600, zh_t('core.wait.rate_retry', attempt=2, limit=2)), (900, zh_t('core.wait.rate_queue'))])
         kinds = [(kind, value.get('index') if isinstance(value, dict) else None) for kind, value in self.events]
         self.assertLess(kinds.index(('item_done', 1)), kinds.index(('item', 2)))
         # Nothing waiting: no pause of the queue.
         self.events.clear(), self.commands.clear(), self.waits.clear()
         self.run_queue([A], [limited, limited, limited])
-        self.assertEqual([wait[3] for wait in self.waits], ['网站限流，冷却后重试此链接（1/2）', '网站限流，冷却后重试此链接（2/2）'])
+        self.assertEqual([wait[3] for wait in self.waits],
+                         [zh_t('core.wait.rate_retry', attempt=1, limit=2), zh_t('core.wait.rate_retry', attempt=2, limit=2)])
 
     def test_hash_routed_links_are_two_downloads(self):
         song1, song2 = 'https://music.163.com/#/song?id=186016', 'https://music.163.com/#/song?id=347230'
@@ -1175,7 +1188,7 @@ class FixRoundOneQueueTests(QueueCase):
         self.events.clear(), self.commands.clear()
         self.run_queue([song1, song2, 'https://music.163.com/#/song?id=186016'], [ok, ok])
         self.assertEqual(self.started(), [song1, song2])
-        self.assertEqual(self.logs(), ['重复链接已合并：https://music.163.com/#/song?id=186016'])
+        self.assertEqual(self.logs(), [zh_t('core.engine.duplicate_merged', url=song1)])
         library = FakeLibrary({(urltools.link_key(song1), 'audio_best'): {'exists': True, 'title': '一', 'path': 'D:\\一.m4a'}})
         self.events.clear(), self.commands.clear()
         self.run_queue([song1, song2], [ok], options=replace(self.options, skip_downloaded=True), library=library)
@@ -1214,7 +1227,7 @@ class FixRoundOneQueueTests(QueueCase):
         with mock.patch.object(engine.unfinished, 'merge', side_effect=ValueError('broken list')), \
                 self.assertLogs('YtDlpDesktop.engine', 'ERROR'):
             self.run_queue([A, B], [fail, ok])
-        self.assertIn('失败清单未能保存：broken list', self.logs())
+        self.assertIn(zh_t('core.engine.unfinished_not_saved', error='broken list'), self.logs())
         self.assertEqual((self.done()['unfinished'], self.done()['failed_path'], self.done()['failed']), (0, None, 1))
 
     def test_a_title_with_a_lone_surrogate_is_stored(self):

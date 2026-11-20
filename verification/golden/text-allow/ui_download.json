@@ -1,136 +1,10 @@
 {
  "module": "ui_download",
- "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5; pending_keys: 10.2.",
+ "note": "MESSAGES.md 7.2 / 10.2: one allow file per src module. literals: {text: {category, reason}}; raises: G1e English raise texts that are never shown; composed: G1f; sinks: G5.",
  "literals": {
-  "Ctrl+V 粘贴 · Ctrl+Enter 开始": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.hint.default (H4); the page shows the key through t()"
-  },
-  "YT-DLP 下载器": {
-   "category": "h4",
-   "reason": "window title constant TITLE pinned by ParityTests to app.title (a UI key, H4); compared by procutil.focus_window (P7 window titles)"
-  },
-  "YouTube 仍要求验证：cookies 可能已过期。可稍后重试，或在“偏好设置 → 网络”重新选择 cookies。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.bot_cookies (H4); the page shows the key through t()"
-  },
-  "YouTube 验证": {
-   "category": "h4-unused",
-   "reason": "kept only because ParityTests pins its value (download.reason.blocked); no src module refers to REASON_WORDS (the page shows REASON_KEYS)",
-   "name": "REASON_WORDS"
-  },
-  "上次失败": {
-   "category": "h4-unused",
-   "reason": "kept only because ParityTests pins its value (download.reason.failed); no src module refers to REASON_WORDS (the page shows REASON_KEYS)",
-   "name": "REASON_WORDS"
-  },
-  "下载引擎更新中，结束后可在这里粘贴链接": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.update.placeholder (H4); the page shows the key through t()"
-  },
-  "任务结束 · ": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.title.finished_unfinished (H4); the page shows the key through t()"
-  },
-  "停止更新": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.update.stop (H4); the page shows the key through t()"
-  },
-  "停止采集": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.collect.stop (H4); the page shows the key through t()"
-  },
-  "在这里粘贴视频或音频链接，每行一条": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.placeholder (H4); the page shows the key through t()"
-  },
-  "失败": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.failed (H4); the page shows the key through t()"
-  },
-  "已下载过": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.skipped (H4); the page shows the key through t()"
-  },
-  "已从未完成列表移除": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.detail.cleared (H4); the page shows the key through t()"
-  },
-  "已停止": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.stopped (H4); the page shows the key through t()"
-  },
-  "已完成": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.done (H4); the page shows the key through t()"
-  },
-  "已暂缓": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.blocked (H4); the page shows the key through t()"
-  },
-  "已移出": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.cleared (H4); the page shows the key through t()"
-  },
-  "更新结束后即可添加链接、开始下载；进度见“偏好设置 → 下载引擎”。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.update.metrics (H4); the page shows the key through t()"
-  },
-  "未完成": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key common.unfinished (H4); the page shows the key through t()"
-  },
-  "未完成的链接已保留，可点“重试未完成”，或右键单条重试。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.finished_unfinished (H4); the page shows the key through t()"
-  },
-  "未完成记录已清除；已下载的文件不受影响，右键单条仍可重试。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.cleared (H4); the page shows the key through t()"
-  },
-  "未开始": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.unstarted (H4); the page shows the key through t()"
-  },
-  "正在更新下载引擎…": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.update.title (H4); the page shows the key through t()"
-  },
-  "正在网页采集…": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.collect.title (H4); the page shows the key through t()"
-  },
-  "添加链接后，点击开始下载": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.idle (H4); the page shows the key through t()"
-  },
-  "等 YouTube 验证解除后重试": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.detail.blocked (H4); the page shows the key through t()"
-  },
-  "等待中": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.waiting (H4); the page shows the key through t()"
-  },
-  "网页采集中，结束后可在这里粘贴链接": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.collect.placeholder (H4); the page shows the key through t()"
-  },
-  "解析中": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.chip.active (H4); the page shows the key through t()"
-  },
-  "这些链接以前下载过，文件仍在；右键可“仍然下载”。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.skipped (H4); the page shows the key through t()"
-  },
-  "通常约 30 分钟后自行恢复，链接已保留；也可在“偏好设置 → 网络”选择 cookies。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.metrics.bot (H4); the page shows the key through t()"
-  },
-  "采集结束后即可添加链接、开始下载；进度见“网页采集”。": {
-   "category": "h4",
-   "reason": "UI constant pinned by ParityTests to the UI key download.foreign.collect.metrics (H4); the page shows the key through t()"
+  "加入队列: the added links could not be recorded in the history job": {
+   "category": "internal",
+   "reason": "only written to the log file (applog), never shown on the window (S3 G1a-log)"
   }
  },
  "raises": {},
@@ -161,11 +35,6 @@
    "function": "DownloadUI.refresh_foreign_activity",
    "reason": "refresh_foreign_activity: the metrics line the page showed before another activity took it (ui_theme.full_text(self.metrics)): text that was already shown"
   },
-  "label": {
-   "line_hint": 777,
-   "function": "DownloadUI.show_notice",
-   "reason": "show_notice: the caption of a notice action, the first element of each (label, command) pair of actions; every caller passes i18n.t(...) captions (download.notice.*, common.*)"
-  },
   "model['title']": {
    "line_hint": 1051,
    "function": "DownloadUI._paint_row",
@@ -178,14 +47,6 @@
     "model.get('detail')"
    ],
    "reason": "_paint_row: the row detail (with the 'NN  ·  ' index prefix); model['detail'] is only set from i18n.t(...) texts, the shown reason of on_item_done (messages.show / i18n.t), file names (Path(...).name) with bytes_text sizes, speeds and the cleared detail of clear_unfinished"
-  },
-  "unfinished": {
-   "line_hint": 1844,
-   "function": [
-    "DownloadUI._finished_success",
-    "DownloadUI.on_done"
-   ],
-   "reason": "a number (int), language-neutral: final_stats_forms / _finished_success / on_done, a count of unfinished rows or links"
   },
   "f\"{self.row_model[index]['title']}\\n\\n{self.row_reason(index)}\"": {
    "line_hint": 1349,
@@ -204,22 +65,13 @@
   },
   "success": {
    "line_hint": 1830,
-   "function": [
-    "DownloadUI._finished_success",
-    "DownloadUI.clear_unfinished",
-    "DownloadUI.on_done"
-   ],
+   "function": "DownloadUI.on_done",
    "reason": "a number (int), language-neutral: the success count of the done event, of job_summary or of _finished_success"
   },
   "state['round']": {
    "line_hint": 1880,
    "function": "DownloadUI.render_bot_notice",
    "reason": "a number (int), language-neutral: the round of the automatic bot-check retry"
-  },
-  "self.row_model[row]['title']": {
-   "line_hint": 1974,
-   "function": "DownloadUI.live_metrics",
-   "reason": "live_metrics: a task row's title: row_model titles are only link_title(url) (urls.display of the link), messages.show() of the title event (on_title, D-F44), or a media title of the media / item_done events or of a stored unfinished entry (user data, D-F33: plain media titles, never app text)"
   },
   "self._active_title(index, total)": {
    "line_hint": 1746,
@@ -281,12 +133,6 @@
     "model.get('chip')"
    ],
    "reason": "_paint_row: the row chip (Chip.set; row['badge'] is the chip ui_theme.chip makes in _row_widget, A16.1): i18n.label('row_state', ...) of the row state, or the row model's 'chip', which only update_row(chip=...) sets: i18n.t('download.chip.*') texts or the formatted progress percent f'{100 * fraction:.1f}%' (a state change resets it to None, so the label applies)"
-  },
-  "kwargs": {
-   "line_hint": 338,
-   "function": "DownloadUI.build_download_page.configure_title",
-   "reason": "configure_title replaces current_title.configure (the 1.7.0 ENV3-1 wrapper, a function used as a value, A7.6): it forwards the keywords its callers pass to the label's own configure, adds no text, and every caller's configure(text=...) / ui_theme.fit(self.current_title, ...) is a sink of its own, checked where it stands (A15.4)"
   }
- },
- "pending_keys": {}
+ }
 }
