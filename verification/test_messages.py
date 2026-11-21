@@ -1,13 +1,14 @@
 # quick
-"""The message model, its store and IPC forms and the G2 self-tests (MESSAGES.md 2, 7.3; 2.0.0 S2-DESIGN.md 1.1, 1.6).
+"""The message model, its store and IPC forms (MESSAGES.md 2; 2.0.0 S2-DESIGN.md 1.1, 1.6).
 
     python -X utf8 -B test_messages.py
 
 The carrier rules of 2.3 for Message and Raw; show() / error_text() in zh and en; the derived texts (cut,
 masked, clauses, stripped, message_of); the format-2 store form (to_json / from_json / read_slots /
 write_slots: round trip, a key of a later version, a param that cannot be stored); the collector wire form
-({"$m": {"k", "p"}}, a malformed marker); the scan for machine paths and user names (PLAN 3.11); and the G2 self-tests of 7.3 (the tripwires on Message,
-R-param, exempt; they need YTDLP_DESKTOP_MSG_GUARD, which run_tests.py sets).  No window, no network.
+({"$m": {"k", "p"}}, a malformed marker); the scan for machine paths and user names (PLAN 3.11).  No window,
+no network.  (2.0.1) The G2 message guard (tripwires on Message, R-param, exempt) and its self-tests are
+gone: what they caught is caught by the English page tests, the channel matrices and the key assertions.
 
 (2.0.0 S2 P2) G2's text recognition (R-text, messages.guarded, i18n_legacy.recognise) is gone, its self-tests
 with it.  (S2 P4) The 1.8.x store codec (decode / decode_columns / encode), Value, a
@@ -33,9 +34,7 @@ import queue
 import re
 import sqlite3
 import string
-import textwrap
 import time
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -66,11 +65,8 @@ FAKE = {
     'test.english': ('Unsupported: {mode}', 'Unsupported: {mode}'),
     'test.first': ('第一句。', 'The first sentence.'),
     'test.second': ('第二句。', 'The second sentence.'),
-    'test.template': ('模板（{reason}）', 'Template ({reason})'),
     'test.plain': ('找不到记录。', 'Record not found.'),
-    'test.other': ('另一句', 'Another one'),
     'test.error': ('错误：{error}', 'Error: {error}'),
-    'test.short': ('网页', 'Web page'),
 }
 
 
@@ -184,6 +180,39 @@ class CarrierTests(unittest.TestCase):
             self.assertIs(type(result if isinstance(result, str) else str(result)), str)
         self.assertEqual(m[:5], str.__str__(m)[:5])
 
+    def test_t_shows_a_message_param_in_the_language_of_the_call(self):
+        """(2.0.1 D3) i18n.t shows a message param (or an exception that carries only a message) as show() would
+        in the language of the call (Message.text_in), nested params and clauses too; anything else is str()."""
+        m = msg('test.too_long', length=9, url='u')
+        nested = msg('test.multi', count=2, title=msg('test.name'))
+        joined = messages.clauses([msg('test.first'), msg('test.wait', reason=msg('test.pace'), seconds=3)])
+        with _sandbox.language('en'):
+            for value in (m, nested, joined):
+                self.assertEqual(i18n.t('test.start', error=value), i18n.t('test.start', error=messages.show(value)))
+            self.assertEqual(i18n.t('test.start', error=m), 'Could not start: Too long (9 characters): u')
+            self.assertEqual(i18n.t('test.start', error=nested), 'Could not start: Name and others (2 links)')
+            self.assertEqual(i18n.t('test.start', error=joined),
+                             'Could not start: The first sentence. Pacing, waiting 3 s.')
+            self.assertEqual(i18n.t('test.start', error=ValueError(m)), i18n.t('test.start', error=messages.show(m)))
+            self.assertEqual(i18n.t('test.start', error=OSError(nested)),
+                             i18n.t('test.start', error=messages.show(nested)))
+            self.assertEqual(i18n.t('test.start', error=ValueError('plain')), 'Could not start: plain')
+            self.assertEqual(i18n.t('test.start', error=ValueError(m, 'two')),
+                             'Could not start: ' + str(ValueError(m, 'two')), 'two args: str()')
+            self.assertEqual(i18n.t('test.start', error=raw('中文')), 'Could not start: 中文')
+            self.assertEqual(i18n.t('test.start', error=5), 'Could not start: 5')
+            self.assertEqual(i18n.t('test.start', error=Message('自定义')), 'Could not start: 自定义')
+            self.assertEqual(m.text_in('en'), 'Too long (9 characters): u')
+            self.assertEqual(m.text_in('zh'), str.__str__(m))
+            self.assertEqual(nested.text_in('zh'), str.__str__(nested), 'en UI: text_in("zh") is the Chinese')
+        # (2.0.1) the language argument holds in a zh UI too: text_in('en') is the English, nested and clauses too
+        self.assertEqual(m.text_in('en'), 'Too long (9 characters): u')
+        self.assertEqual(joined.text_in('en'), 'The first sentence. Pacing, waiting 3 s.')
+        for value in (m, nested, joined, ValueError(m), raw('中文')):
+            self.assertEqual(i18n.t('test.start', error=value), '无法开始：' + str.__str__(str(value)))
+        self.assertEqual(m.text_in('zh'), str.__str__(m))
+        self.assertIs(type(m.text_in('zh')), str)
+
 
 # ============================================================================ constructors
 
@@ -201,7 +230,7 @@ class ConstructorTests(unittest.TestCase):
         with self.assertLogs(logger, 'WARNING'):
             self.assertEqual(msg('test.too_long', length=3), '过长（3 个字符）：{url}')
 
-    def test_raw_clauses_and_template(self):
+    def test_raw_and_clauses(self):
         self.assertFalse(hasattr(messages, 'value') or hasattr(messages, 'Value'), '(2.0.0 S2 P4) no Value any more')
         self.assertEqual(raw(''), '')
         self.assertIs(type(raw('')), str)
@@ -212,8 +241,6 @@ class ConstructorTests(unittest.TestCase):
         joined = messages.clauses([msg('test.second'), 'plain'])
         self.assertEqual(joined, '第二句。；plain')
         self.assertEqual(joined.key, 'common.clauses')
-        self.assertEqual(messages.template('test.template'), '模板（{reason}）')
-        self.assertIs(type(messages.template('test.template')), str)
         self.assertEqual(messages.zh(None), '')
         self.assertIs(type(messages.zh(one)), str)
 
@@ -284,7 +311,7 @@ class ShowTests(unittest.TestCase):
             self.assertEqual(messages.error_text(ValueError(msg('test.plain'))), 'Record not found.')
             self.assertEqual(messages.error_text(OSError(5, '拒绝访问。')), '[Errno 5] 拒绝访问。')
             broken = Message('zh text', 'core.engine.error', {'error': object()})
-            with mock.patch.object(messages, '_t', side_effect=RuntimeError('broken')):
+            with mock.patch.object(i18n, '_t_in', side_effect=RuntimeError('broken')):  # (2.0.1) _render calls _t_in
                 self.assertEqual(messages.show(broken), 'zh text')
 
 
@@ -428,11 +455,10 @@ class ScrubTests(unittest.TestCase):
         3.11) runs on verification/golden (the recordings), with a probe that it finds what it should;
         the pins of the frozen released sources went with them.  The whole tree is scanned in S5."""
         golden = _sandbox.ROOT / 'verification' / 'golden'
-        # (2.0.0 S4 stage C) what it scans: the recordings and one allow file per scanned module (the five empty
-        # ones of the page catalogs went, so a count of files was replaced by the files themselves)
+        # what it scans: the recordings and (2.0.1) the one allow list of the Chinese literals of src
         names = {path.name for path in golden.glob('*.json')}
-        self.assertTrue({'ui.json', 'events.json', 'stored-keys.json'} <= names, names)
-        self.assertEqual({path.stem for path in (golden / 'text-allow').glob('*.json')}, set(i18n_tool.g1_modules()))
+        self.assertTrue({'ui.json', 'events.json', 'stored-keys.json', 'text-allow.json'} <= names, names)
+        self.assertTrue(json.loads((golden / 'text-allow.json').read_text(encoding='utf-8')), 'text-allow.json reads')
         self.assertEqual(i18n_tool.scrub_findings([golden]), [])
         self.assertTrue(i18n_tool.scrub_patterns(), 'the patterns come from the environment')
         with mock.patch.dict(os.environ, {'USERNAME': 'zz-probe-user'}):
@@ -448,179 +474,6 @@ class ScrubTests(unittest.TestCase):
         self.assertEqual(sorted(i18n_tool.scrub_findings([probe], environ=machine)),
                          [('a.py', 'e-mail address'), ('b.json', 'USERPROFILE'), ('b.json', 'user name'),
                           ('c.txt', 'USERPROFILE'), ('c.txt', 'user name')])
-
-
-# ============================================================================ G2 self-tests (7.3)
-
-def probe_module(source, in_src=True, name='zz_guard_probe'):
-    """A module whose code lives (by file name) in src, so it is guarded like every src module outside
-    TRANSIT (MESSAGES.md 7.8 after WP-6); ``in_src=False`` puts it outside src and verification/,
-    where a check finds no producer frame (third-party code: never charged)."""
-    folder = _sandbox.SRC if in_src else _sandbox.out('guard-probe-outside-src')
-    folder.mkdir(parents=True, exist_ok=True)
-    filename = str(folder / f'{name}.py')
-    module = types.ModuleType(name)
-    module.__file__ = filename
-    module.messages = messages
-    module.i18n = i18n
-    exec(compile(textwrap.dedent(source), filename, 'exec'), module.__dict__)
-    return module
-
-
-PROBE = '''
-def show(value):
-    return messages.show(value)
-
-def error_text(error):
-    return messages.error_text(error)
-
-def t(key, **params):
-    return i18n.t(key, **params)
-
-def cut(value):
-    return value[:3]
-
-def join(parts):
-    return i18n._join_sentences('en', parts)
-'''
-
-
-@unittest.skipUnless(messages.GUARD, 'needs YTDLP_DESKTOP_MSG_GUARD (run_tests.py sets it)')
-class GuardTests(unittest.TestCase):
-    def setUp(self):
-        self.ready = probe_module(PROBE)                                # a src module: guarded
-        self.plain = probe_module(PROBE, in_src=False, name='zz_plain_probe')   # outside src: no producer
-
-    def run_both(self, call):
-        with messages.guard_capture() as guarded:
-            try:
-                call(self.ready)
-            except messages.MessageFlattened:
-                pass
-        with messages.guard_capture() as unguarded:
-            call(self.plain)
-        return guarded, unguarded
-
-    def assertCaught(self, call, rule, key=None):
-        guarded, unguarded = self.run_both(call)
-        self.assertTrue(guarded, f'{rule}: nothing recorded')
-        self.assertEqual(guarded[0]['rule'], rule, guarded)
-        self.assertTrue(guarded[0]['producer'].startswith('zz_guard_probe.py:'), guarded)
-        if key:
-            self.assertEqual(guarded[0]['key'], key, guarded)
-        self.assertEqual(unguarded, [], 'code outside src (no producer frame) is never reported')
-
-    def test_show_and_error_text_record_nothing(self):
-        """(2.0.0 S2 P2) show() / error_text() check nothing any more (R-text is gone): a plain text that
-        reads like an app text is the owner's or the source's own."""
-        with messages.guard_capture() as records:
-            self.ready.show(msg('core.library.no_job'))
-            self.ready.error_text(ValueError(msg('core.library.no_job')))
-            self.ready.show('Some Song')
-            self.ready.show('媒体直链')
-            self.ready.error_text(ValueError('找不到任务记录。'))
-        self.assertEqual(records, [])
-
-    def test_t_parameters(self):
-        self.assertCaught(lambda module: module.t('library.unreadable', error=ValueError('x')), 'R-param')
-        self.assertCaught(lambda module: module.t('value.job_title.multi', title=msg('value.page_title.fallback'),
-                                                  count=2), 'R-param')
-        self.assertCaught(lambda module: module.t('value.job_title.multi', title=raw('Song'), count=2), 'R-param')
-        with messages.guard_capture() as records:
-            self.ready.t('library.unreadable', error=messages.error_text(ValueError(msg('core.library.no_job'))))
-            self.ready.t('value.job_title.multi', title='媒体直链', count=2)
-            with _sandbox.language('en'):
-                self.ready.t('value.job_title.multi', title='媒体直链', count=2)    # (2.0.0) no R-text any more
-        self.assertEqual(records, [])
-        self.assertIs(i18n.t, messages._checked_t)
-
-    def test_slices_in_a_guarded_module_and_inside_i18n(self):
-        m = msg('test.plain')
-        with messages.guard_capture() as records, self.assertRaises(messages.MessageFlattened):
-            self.ready.cut(m)
-        self.assertEqual(records[0]['rule'], 'tripwire')
-        with messages.guard_capture() as records, self.assertRaises(messages.MessageFlattened):
-            self.ready.join([m, msg('test.other')])
-        self.assertEqual((records[0]['rule'], records[0]['producer'][:15]), ('tripwire', 'zz_guard_probe.'))
-        with messages.guard_capture() as records:
-            self.assertEqual(self.plain.cut(m), '找不到')
-            self.assertEqual(self.plain.join([m, msg('test.other')]), '找不到记录。. 另一句.')
-            self.assertEqual(m[:3], '找不到')                             # a verification/ frame: plain str
-        self.assertEqual(records, [])
-        with messages.guard_capture() as records:
-            self.assertEqual(self.ready.cut(raw('Raw has no tripwires')), 'Raw')
-        self.assertEqual(records, [])
-
-
-    def test_ui_theme_cut_values_is_the_display_boundary(self):
-        """(MESSAGES.md 7.3, 2.9) ui_theme's table class is AppTable (the spec's Treeview).  Since WP-6
-        ui_theme is not in TRANSIT: a message that reaches the table without show() is recorded with
-        producer ui_theme, also with no other src frame on the stack; with the pre-WP-6 set (ui_theme
-        in TRANSIT) the same call is charged to nobody."""
-        import ui_theme
-
-        class Fake:
-            _cut_middle = ()
-            _cut_common = {}
-
-            def __getitem__(self, name):
-                return ('title',)
-
-        m = msg('test.short')
-        patches = (mock.patch.object(ui_theme, '_measure_font', lambda *a: None),
-                   mock.patch.object(ui_theme, '_width_lookup', lambda *a: None),
-                   mock.patch.object(ui_theme, '_cut_cell', lambda text, *a: text))
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        self.assertNotIn('ui_theme', messages.TRANSIT)
-        with mock.patch.object(messages, 'TRANSIT', {'messages', 'i18n', 'ui_theme'}), \
-                messages.guard_capture() as records:
-            self.assertEqual(ui_theme.AppTable._cut_values(Fake(), (m,), {'title': 100}), ('网页',))
-        self.assertEqual(records, [])
-        with messages.guard_capture() as records, self.assertRaises(messages.MessageFlattened):
-            ui_theme.AppTable._cut_values(Fake(), (m,), {'title': 100})
-        self.assertEqual((records[0]['rule'], records[0]['producer'].split(':')[0]), ('tripwire', 'ui_theme.py'))
-        shown = messages.show(m)
-        with messages.guard_capture() as records:
-            self.assertEqual(ui_theme.AppTable._cut_values(Fake(), (shown,), {'title': 100}), ('网页',))
-        self.assertEqual(records, [], 'a shown text is plain: no tripwire')
-
-    def test_exempt_is_counted_and_suppresses(self):
-        with messages.guard_capture() as records:
-            with _sandbox.fixture_texts('self-test: a slice under an exemption'):
-                self.assertEqual(self.ready.cut(msg('test.plain')), '找不到')
-        self.assertEqual([item.get('exempt') for item in records], ['self-test: a slice under an exemption'])
-        with self.assertRaises(ValueError):
-            with messages.exempt(''):
-                pass
-
-    def test_report_file_lines(self):
-        before = list(messages._records)
-        path = messages._report_path()
-        self.assertIsNotNone(path)
-        self.assertTrue(str(path).startswith(os.environ['VERIFY_OUT']))
-        self.assertEqual(messages._records, before, 'the self-tests write nothing to the report')
-
-
-class GuardSwitchTests(unittest.TestCase):
-    def test_the_runner_turns_the_guard_on(self):
-        if os.environ.get('YTDLP_VERIFY_SANDBOX') and os.environ.get(messages.GUARD_ENV):
-            self.assertTrue(messages.GUARD)
-        code = ('import sys; sys.path.insert(0, sys.argv[1]); import messages, i18n; '
-                'print(messages.GUARD, i18n.t is messages._ORIGINAL_T, "__getitem__" in vars(messages.Message))')
-        import subprocess
-        import sys
-        environment = dict(os.environ)
-        environment.pop(messages.GUARD_ENV, None)
-        off = subprocess.run([sys.executable, '-B', '-c', code, str(_sandbox.SRC)], capture_output=True, text=True,
-                             env=environment, timeout=60)
-        self.assertEqual(off.stdout.split(), ['False', 'True', 'False'], off.stderr)
-        environment[messages.GUARD_ENV] = '1'
-        on = subprocess.run([sys.executable, '-B', '-c', code, str(_sandbox.SRC)], capture_output=True, text=True,
-                            env=environment, timeout=60)
-        self.assertEqual(on.stdout.split(), ['True', 'False', 'True'], on.stderr)
-        self.assertFalse(hasattr(messages, 'guarded'), '(2.0.0 S2 P2) no emit hook any more')
 
 
 if __name__ == '__main__':

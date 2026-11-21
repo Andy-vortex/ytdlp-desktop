@@ -9,8 +9,9 @@ emit, raise or store is msg(key, ...) whose value is byte for byte the 1.7.0 Chi
 sources).  (2.0.0 S3 W4) An expected app text is now its key's zh / en text (zh_t / en_t): the tests pin
 the key and the params, the wording lives only in the catalog.  Checked here:
 
-* the five modules are converted and clean under G1 (G1a-G1f), APP_VERSION 1.8.0 (WP-6 removed the
-  staging flag MESSAGES_READY, MESSAGES.md 7.8: G1 applies to them unconditionally);
+* the five modules are converted (WP-6 removed the staging flag MESSAGES_READY) and APP_VERSION is the
+  current version; (2.0.1) their Chinese literals and their use of i18n are checked by test_source_rules
+  (S1, S2), which replaced the G1 checks;
 * the core H4 constants keep their 1.7.0 values (ParityTests extended, 8.1), with their keys;
 * every producer of 3.2 gives its key, the 1.7.0 zh text and an English text in en;
 * explain_error and _masked keep the 1.7.0 values and the value's type (D-H-2, P8);
@@ -37,7 +38,6 @@ from unittest import mock
 import engine
 import formats
 import i18n
-import i18n_tool
 import messages
 import naming
 import paths
@@ -204,18 +204,7 @@ class ModuleTests(Checks):
         for name in MODULES:
             module = sys.modules[name]
             self.assertFalse(hasattr(module, 'MESSAGES_READY'), f'{name}: WP-6 removed the staging flag (7.8)')
-            self.assertIn(name, i18n_tool.g1_modules(), name)
-        self.assertEqual(engine.APP_VERSION, '2.0.0')     # (2.0.0) the version bump; the test name keeps 1_8_0 (-k)
-
-    def test_g1_family_is_clean_on_the_five_modules(self):
-        context = i18n_tool.GuardContext()
-        findings = []
-        for name in MODULES:
-            findings += [f'{f["rule"]} {f["file"]}:{f["line"]} {f["text"][:60]!r} ({f["detail"]})'
-                         for f in i18n_tool.g1_module(context, name)]
-            self.assertEqual(i18n_tool.allow_stale(context, name), [], name)
-        self.assertEqual(findings, [])
-        self.assertIn('engine', i18n_tool.g1_modules())
+        self.assertEqual(engine.APP_VERSION, '2.0.1')     # (2.0.1) the version bump; the test name keeps 1_8_0 (-k)
 
     def test_the_core_constants_keep_their_1_7_0_values(self):
         """8.1 / P3: the H4 constants are messages with the 1.7.0 values."""

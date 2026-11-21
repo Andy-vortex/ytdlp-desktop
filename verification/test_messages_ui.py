@@ -2,8 +2,8 @@
 
     python -X utf8 -B test_messages_ui.py
 
-The three UI modules are converted (WP-6 removed the staging flag MESSAGES_READY) and clean under
-G1 and G5; the 1.7.0 code that 6.4 deletes is gone (the key-prefix lists, stored_text, every localize call, library.PAGE_TITLE_KEYS)
+The three UI modules are converted (WP-6 removed the staging flag MESSAGES_READY); (2.0.1) their Chinese
+literals are checked by test_source_rules (S1), which replaced G1 and G5; the 1.7.0 code that 6.4 deletes is gone (the key-prefix lists, stored_text, every localize call, library.PAGE_TITLE_KEYS)
 and the ids keep their values.  G4: every core.* / value.* / download.reason.* key through every
 channel of these pages, live and as a stored record (en: no Chinese, zh: the
 message's own zh text in the 1.7.0 composition).  The consumer census of the collect_* and
@@ -39,7 +39,6 @@ import collection_ui
 import engine
 import formats
 import i18n
-import i18n_tool
 import library
 import library_ui
 import messages
@@ -189,26 +188,8 @@ class AppCase(unittest.TestCase):
             self.assertEqual(chinese(shown), [], f'{what}: {shown}')
 
 
-# ============================================================================ ready, G1, G5, 6.4
+# ============================================================================ 6.4
 class ReadyTests(unittest.TestCase):
-    def test_the_three_modules_are_ready_and_clean(self):
-        for module in MODULES:
-            self.assertIn(module, i18n_tool.g1_modules(), module)        # G1 / G5 unconditional since WP-6 (7.8)
-        context = i18n_tool.GuardContext(i18n_tool.SRC, i18n_tool.ALLOW_DIR)
-        self.assertEqual([dict(f) for f in i18n_tool.g1_scan(modules=list(MODULES))], [], 'G1 family')
-        # (I-2, MESSAGES.md 15 A7) G5 with all six UI modules (calls resolve across the mixins, e.g.
-        # self.add_links of ui_download); the findings in these three files must be none
-        files = {f'{module}.py' for module in MODULES}
-        self.assertEqual([dict(f) for f in i18n_tool.sinks_scan(modules=list(i18n_tool.UI_MODULES))
-                          if f['file'] in files], [], 'G5')
-        for module in MODULES:
-            self.assertEqual(i18n_tool.allow_stale(context, module), [], module)
-            allow = i18n_tool.load_allow(module)
-            for text, entry in allow['sinks'].items():
-                self.assertTrue(entry.get('reason'), (module, text))
-        self.assertEqual(set(i18n_tool.load_allow('library_ui')['raises']), {'the history job was never written', 'no options'},
-                         'G1e: the two English internal raises of library_ui stay')
-
     def test_the_deleted_code_is_gone_and_the_ids_keep_their_values(self):
         # (S3 review fix) the localize line count went with the WP-6 leftovers: i18n has no localize (C12)
         for module, names in ((collection_ui, ('PAGE_TITLE_KEYS', 'stored_text')),
@@ -267,6 +248,8 @@ class ChannelMatrixTests(AppCase):
                     self.assertEqual(shown, messages.zh(m), key)
                 with self.subTest(lang=lang, key=key, leg='live'):
                     checked += self.live_channels(app, key, m, shown, lang, index)
+            if lang == 'en':
+                checked += self.background_page_leg(app)
             # -------------------------------------------------- stored legs
             jobs, downloads, folders = {}, {}, {}
             pending_sub = store.subscription(raw('Pending feed'), OPTIONS, 3600, True, True)
@@ -339,6 +322,18 @@ class ChannelMatrixTests(AppCase):
                 self.assertShown(note, messages.show(m), lang, f'subscription note {key}')
                 checked += 1
             self.assertGreater(checked, 20 * len(all_keys))
+
+    def background_page_leg(self, app):
+        """(2.0.1 N3) An automatic subscription check logs each page it stored (collection_ui.handle_collection):
+        in English the line and a page title that is a collector message read English."""
+        page = {'url': PAGE, 'title': msg('value.link_kind.direct'), 'text': '', 'markdown': '', 'next': None,
+                'links': []}
+        with mock.patch.object(app, 'collection_background', True, create=True):
+            app.handle('collect_page', page)
+        last = self.logged(app).rstrip('\n').splitlines()[-1]
+        self.assertIn(_sandbox.en_t('log.collect.page', title=_sandbox.en_t('value.link_kind.direct'), count=0), last)
+        self.assertEqual(chinese(last), [], last)
+        return 1
 
     def live_channels(self, app, key, m, shown, lang, index):
         checked = 0

@@ -259,25 +259,49 @@ def collect(options, emit):
     emit('collect_checkpoint', dict(visited=sorted(visited), todo=deferred))
 
 
+PROXY_ENV = 'YTDLP_DESKTOP_COLLECT_PROXY'     # the worker's proxy: CollectionRunner.run -> worker_main
+
+
 def worker_main(job):
     # File IPC also works in the packaged Windows windowed executable, whose stdio is None.
     job = Path(job)
+    # The proxy comes in the environment, not in request.json (it may hold a password); it is taken out
+    # at once, so what this process starts (Chrome) does not inherit it.
+    proxy = os.environ.pop(PROXY_ENV, '')
     with job.with_suffix('.events').open('a', encoding='utf-8', newline='\n') as output:
         store = None
+
+        def store_failed(error):
+            # The history is optional: after a failed write (locked, damaged) the worker stops writing it,
+            # keeps collecting and gives the window the real cause.
+            nonlocal store
+            store = None
+            return cut(masked(message_of(error), [(options.proxy, PROXY_TOKEN)] if options.proxy else []), 900)
+
         def emit(kind, value):
             # The store gets the in-memory values; the IPC line carries them in the wire form
             # (MESSAGES.md 2.8), so the window receives the same messages.
+            reason = None
             if store and kind in ('collect_page', 'collect_checkpoint', 'collect_error'):
-                store.collection_event(options.job_id, kind, value)
+                try:
+                    store.collection_event(options.job_id, kind, value)
+                except Exception as error:
+                    reason = store_failed(error)
             output.write(json.dumps([kind, messages.wire(value)], ensure_ascii=False) + '\n')
             output.flush()
+            if reason is not None and reason != value:
+                emit('collect_error', reason)
         options = None
         try:
             options = CollectOptions(**json.loads(job.read_text(encoding='utf-8')))
+            options.proxy = proxy or options.proxy
             if options.job_id and options.history_path:
                 from library import Library
-                store = Library(options.history_path)
-                store.change_job(options.job_id, worker=os.getpid())
+                try:
+                    store = Library(options.history_path)
+                    store.change_job(options.job_id, worker=os.getpid())
+                except Exception as error:
+                    emit('collect_error', store_failed(error))
             with open(os.devnull, 'w') as sink, redirect_stdout(sink), redirect_stderr(sink):
                 collect(options, emit)
             if store:
@@ -341,7 +365,12 @@ class CollectionRunner:
             environment.update(TEMP=str(temp), TMP=str(temp))
             with tempfile.TemporaryDirectory(prefix='job-', dir=temp) as directory:
                 job = Path(directory) / 'request.json'
-                job.write_text(json.dumps(asdict(options), ensure_ascii=False), encoding='utf-8')
+                request = asdict(options)
+                request['proxy'] = ''                   # the proxy goes in the environment, never on disk
+                job.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
+                environment.pop(PROXY_ENV, None)
+                if options.proxy:
+                    environment[PROXY_ENV] = options.proxy
                 events = job.with_suffix('.events')
                 events.touch()
                 with self.lock:

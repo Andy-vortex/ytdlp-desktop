@@ -21,8 +21,8 @@ CatalogRuleTests check the catalogs directly and every failure says which file a
 (2.0.0 S4 A1) C11 went with formats.Preset.label: a format has one name, i18n.t('format.' + id) (test_11 checks
 that every preset has it in both languages).
 
-(2.0.0 S3 W1) ParityTests went with the Chinese constants only tests read; the CJK literals of src are G1a's
-(test_text_guard.py).  No window, no network.
+(2.0.0 S3 W1) ParityTests went with the Chinese constants only tests read; the CJK literals of src are checked by
+test_source_rules.py (S1).  No window, no network.
 """
 import _sandbox
 import ast
@@ -220,15 +220,33 @@ def stored_keys():
 
 
 def src_constants():
-    """(file, line, text) of every str constant of src outside the catalogs (G1_EXCLUDED), docstrings left out."""
+    """(file, line, text) of every str constant of src outside the catalogs (CATALOG_STEMS), docstrings left out."""
     found = []
     for path in sorted(i18n_tool.SRC.glob('*.py')):
-        if path.stem in i18n_tool.G1_EXCLUDED:
+        if path.stem in i18n_tool.CATALOG_STEMS:
             continue
         tree = ast.parse(path.read_text(encoding='utf-8'))
-        docstrings = i18n_tool._docstring_ids(tree)
+        docstrings = i18n_tool.docstring_ids(tree)
         found += [(path.name, node.lineno, node.value) for node in ast.walk(tree)
                   if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings]
+    return found
+
+
+def computed_msg_keys():
+    """(2.0.1 C8(d)) [(file, line, key expression)] of the msg() / messages.msg() calls of src outside the catalogs
+    whose key is not a literal (or a conditional of literals): C8 cannot check such a key or its params."""
+    found = []
+    for path in sorted(i18n_tool.SRC.glob('*.py')):
+        if path.name == 'i18n.py' or path.name.startswith('i18n_'):
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            func = getattr(node, 'func', None)
+            if isinstance(node, ast.Call) and node.args and (
+                    (isinstance(func, ast.Name) and func.id == 'msg')
+                    or (isinstance(func, ast.Attribute) and func.attr == 'msg'
+                        and isinstance(func.value, ast.Name) and func.value.id == 'messages')) \
+                    and i18n_tool._key_literals(node.args[0]) is None:
+                found.append((path.name, node.lineno, ast.unparse(node.args[0])))
     return found
 
 
@@ -551,10 +569,11 @@ class CatalogRuleTests(unittest.TestCase):
         self.assertEqual(problems, [], '\n'.join(problems))
 
     def test_c8_every_key_and_group_the_code_names_exists(self):
-        """(a) the literal first argument of i18n.t / all_values / msg / messages.template
-        is a key (each branch of a conditional msg key), and of i18n.label / choices a group; (b) every other
-        key-shaped str constant of src outside the catalogs is a key, and every value of i18n.GROUPS; (c) a
-        t() call with a literal key and no ** passes exactly the placeholders of its text."""
+        """(a) the literal first argument of i18n.t / all_values / msg is a key (each branch of a conditional
+        msg key), and of i18n.label / choices a group; (b) every other key-shaped str constant of src outside the
+        catalogs is a key, and every value of i18n.GROUPS; (c) a t() or msg() call with a literal key and no **
+        passes exactly the placeholders of its text; (d) (2.0.1) the key of a msg() call is a literal (or a
+        conditional of literals)."""
         zh, problems, reported = i18n.CATALOG['zh'], [], set()
         for call in i18n_tool.api_calls():
             where_ = f'src/{call["file"]}:{call["line"]}'
@@ -569,13 +588,17 @@ class CatalogRuleTests(unittest.TestCase):
                 problems.append(f"{where_} {call['function']}('{name}')：目录里没有这个编号。{suggestion(name)}"
                                 f"改成已有编号，或在 {catalog_file(name)} 的 TEXTS 里加 '{name}': ('中文', 'English')")
                 continue
-            if call['function'] == 't' and call['keywords'] is not None:
+            if call['function'] in ('t', 'msg') and call['keywords'] is not None:
                 given, wanted = set(call['keywords']), fields(zh[name])
                 if given != wanted:
                     holders = ' '.join('{' + field + '}' for field in sorted(wanted)) or '（没有）'
                     passed = ', '.join(f'{field}=…' for field in sorted(given)) or '没有参数'
-                    problems.append(f"{where_} i18n.t('{name}', {passed})：这条文字的占位符是 {holders}——"
+                    function = 'messages.msg' if call['function'] == 'msg' else 'i18n.t'
+                    problems.append(f"{where_} {function}('{name}', {passed})：这条文字的占位符是 {holders}——"
                                     f"少传的会原样显示在界面上，多传的没有用：让参数名与占位符一致")
+        for file, line, expression in computed_msg_keys():
+            problems.append(f"src/{file}:{line} messages.msg 的编号要写成字面量（'core.…'），C8 才能核对它在目录里、"
+                            f"参数对得上；要选编号就写 a if 条件 else b。（现在是 {expression}）")
         for file, line, text in key_shaped_constants():
             if text not in zh and (file, line, text) not in reported:
                 problems.append(f"src/{file}:{line} '{text}' 形状像编号，但目录里没有。{suggestion(text)}改成已有编号，或在 "
@@ -672,13 +695,6 @@ class CatalogRuleTests(unittest.TestCase):
                 for name in sorted(missing):
                     problems.append(f"{where(key)} '{key}' 的{'中文' if language == 'zh' else '英文'}不能去掉 {{{name}}}："
                                     f"这句话要告诉用户文件被保留在哪里（PLAN 4.7）。可以缩短，但要保留这个位置")
-        self.assertEqual(problems, [], '\n'.join(problems))
-
-    def test_g1a_no_unlisted_chinese_in_src(self):
-        """(S3 review fix, quick tier) G1a of test_text_guard, without its data flow: a Chinese literal in src outside
-        the catalogs is an interface text written in the code (it belongs in the catalog) unless the module's allow
-        file lists it as never shown.  The full G1 / G5 run stays in test_text_guard (default tier)."""
-        problems = [f"src/{item['file']}:{item['line']} {item['detail']}" for item in i18n_tool.g1a_scan()]
         self.assertEqual(problems, [], '\n'.join(problems))
 
     def test_i18n_imports_no_app_module(self):

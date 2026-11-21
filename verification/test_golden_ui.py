@@ -232,8 +232,6 @@ def script(app, clock, out, failed_path):
         # --- operation update
         ('update 1: set_busy(True)', busy('update')),
         ('update 1: animate(True)', lambda: app.animate(True)),
-        ('update: title', handle('title', _sandbox.zh_t('core.update.checking'))),
-        ('update: progress with status updating', progress(.25, 1000, 4000, None, None, 'updating')),
         ('updated: new version', handle('updated', {'version': '2099.01.01', 'unchanged': False})),
         ('update_done', handle('update_done', {'cancelled': False})),
         ('update 2: set_busy(True)', busy('update')),

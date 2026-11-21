@@ -141,14 +141,6 @@ def synthetic_done():
     return {'success': 0, 'failed': 0, 'files': [], 'cancelled': True, 'failed_urls': [], 'pending_urls': []}
 
 
-def _cancel(widget, job):
-    if job is not None:
-        try:
-            widget.after_cancel(job)
-        except (tk.TclError, ValueError):
-            pass
-
-
 class DownloadUI:
     # ================================================================ page
     def build_download_page(self):
@@ -343,7 +335,7 @@ class DownloadUI:
             pass
 
     def _links_typed(self, _event=None):
-        _cancel(self, self.link_after)
+        ui_theme.cancel_after(self, self.link_after)
         self.link_after = self.after(150, self._links_debounced)
 
     def _links_debounced(self):
@@ -408,7 +400,7 @@ class DownloadUI:
     def set_hint(self, text, tone='info', timeout=8000):
         """A one-off feedback under the box (``tone`` 'info' or 'warn'), gone after ``timeout`` ms (None:
         until the next one); '' clears it.  A reason is wrapped, never cut."""
-        _cancel(self, self.hint_after)
+        ui_theme.cancel_after(self, self.hint_after)
         self.hint_after = None
         self.hint_note = (text, tone) if text else None
         if text and timeout:
@@ -566,7 +558,7 @@ class DownloadUI:
             applog.get('ui').exception('clipboard check failed')
 
     def schedule_clipboard_check(self, _event=None):
-        _cancel(self, self.clip_after)
+        ui_theme.cancel_after(self, self.clip_after)
         self.clip_after = self.after(300, self.check_clipboard)
 
     def hide_clipboard(self):
@@ -695,7 +687,7 @@ class DownloadUI:
         """The notice above the task area (one at a time: a new one takes the place of the last)."""
         self.notice_kind = kind
         self.notice_bar.show(text, list(actions)[:2], tone='warn' if kind in WARN_NOTICES else 'idle')
-        _cancel(self, self.notice_after)
+        ui_theme.cancel_after(self, self.notice_after)
         self.notice_after = None
         if timeout:
             self.notice_after = self.after(timeout, lambda: self.hide_notice(kind))
@@ -735,7 +727,7 @@ class DownloadUI:
     def populate_queue(self, urls, options=None, overrides=None):
         """Replace the task list by one waiting row per link.  Built rows are kept for reuse, not destroyed."""
         self.row_generation += 1
-        _cancel(self, self.row_after)
+        ui_theme.cancel_after(self, self.row_after)
         self.row_after = None
         self.row_queue = []
         for row in self.rows:
@@ -1022,7 +1014,7 @@ class DownloadUI:
         during the last LIST_HANDS_OFF seconds."""
         if index is None or time.monotonic() - self.list_scrolled_at < LIST_HANDS_OFF:
             return
-        _cancel(self, self.follow_after)
+        ui_theme.cancel_after(self, self.follow_after)
         self.follow_after = self.after(60, self._follow_now, index)
 
     def _follow_now(self, index):
@@ -1722,13 +1714,13 @@ class DownloadUI:
         if self.bot_retry is None:
             return
         self.bot_retry = None
-        _cancel(self, self.bot_after)
+        ui_theme.cancel_after(self, self.bot_after)
         self.bot_after = None
         self.hide_notice('bot')
         self.refresh_shell()
 
     def _schedule_bot_tick(self):
-        _cancel(self, self.bot_after)
+        ui_theme.cancel_after(self, self.bot_after)
         self.bot_after = self.after(1000, self.bot_retry_tick)
 
     def render_bot_notice(self):
@@ -1917,8 +1909,6 @@ class DownloadUI:
             if self.active_index is not None and now - self.title_stamp >= 1:
                 self.title_stamp = now
                 self.set_window_title(f'{self.active_index + 1}/{self.job_row_count()} · {percent}')
-        else:
-            self.update_status.configure(text=i18n.t('settings.update.downloading_pct', percent=percent))
 
     def on_media(self, value):
         if not isinstance(value, dict):

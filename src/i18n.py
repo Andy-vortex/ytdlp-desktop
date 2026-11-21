@@ -211,11 +211,20 @@ def store_choice(prefs, value) -> bool:
 
 # ------------------------------------------------------------------------------- lookup
 
+def _value_text(value, language_) -> str:
+    """A t() value as text: a message (or an exception that carries one) in the language of this call
+    (messages.Message.text_in; i18n imports no app module, so it asks the type), anything else str()."""
+    if isinstance(value, BaseException) and len(value.args) == 1 and hasattr(type(value.args[0]), 'text_in'):
+        value = value.args[0]
+    text_in = getattr(type(value), 'text_in', None)
+    return text_in(value, language_) if text_in else str(value)
+
+
 class _Values(dict):
     """The values of one t() call; a missing placeholder stays '{name}' (logged once)."""
 
     def __init__(self, values, language_, key):
-        super().__init__((name, str(value)) for name, value in values.items())
+        super().__init__((name, _value_text(value, language_)) for name, value in values.items())
         self.language = language_
         self.key = key
 

@@ -12,7 +12,8 @@ One entry point that never downloads anything:
      and of these tests: its tests_sha256 must be that of verification/ and vendor/manifest.json now);
   3. PyInstaller app.spec (onedir) into build/dist, work files in build/work;
   4. stage build/dist/YT-DLP下载器 as build/package-<version>/YT-DLP下载器 (an older stage is replaced, never merged)
-     and write build/package-<version>/build.json {source_sha256, exe_sha256, built};
+     and write build/package-<version>/build.json {source_sha256, exe_sha256, built}; then build/dist and build/work
+     are removed (best effort: a folder that cannot be removed is only noted and the build goes on);
   5. (2.0.0) verification/run_tests.py --only-tier exe --exe <staged exe> (build/verify/report-exe.json; until 1.8.1
      this ran every tier again, though only the tier exe reads the exe), then verification/verify_release.py, which
      takes the two reports together.
@@ -213,6 +214,16 @@ def remove_folder(path: Path) -> None:
     raise BuildError(f'could not remove {path} (is a file in it open?)')
 
 
+def remove_leftovers() -> None:
+    """(2.0.1) After the stage is checked, PyInstaller's output and work files are not needed any more (about
+    0.5 GB).  Best effort: a folder that cannot be removed is noted and the build goes on."""
+    for folder in (BUILD / 'dist', BUILD / 'work'):
+        try:
+            remove_folder(folder)
+        except (BuildError, OSError) as error:
+            say(f'note: {error}; left in place, the build goes on')
+
+
 def tree_size(folder: Path) -> tuple:
     count = size = 0
     for item in folder.rglob('*'):
@@ -287,6 +298,7 @@ def main(argv=None) -> int:
         os.replace(temporary, stale_record)
         count, size = tree_size(stage)
         say(f'staged {stage} ({count} files, {size / 1e6:.1f} MB); build.json written')
+        remove_leftovers()
 
         # 5. the tier exe against the staged exe, then the release gate
         clock = time.monotonic()

@@ -19,13 +19,12 @@ check and cannot pass on stale evidence:
      and all, that lists every test file of those tiers that exists now; build\\verify\\report-exe.json, a serial run
      without -k / --quick with --exe = the staged exe, that lists every test file of the tier exe, each one passed
      (not skipped).  In both: every result passed or skipped, app_version APP_VERSION, source_sha256 = the sources
-     now, msg_guard checked test files and found no violation; the exe report's exe sha256 = the staged exe.  (Before
+     now, tests_sha256 = the tests now; the exe report's exe sha256 = the staged exe.  (Before
      2.0.0 one report.json had to hold a run of every tier against the exe; only the exe tier reads VERIFY_EXE, so
      the other files ran twice on the same sources.)  build\\package-<version>\\build.json
-     ties the staged exe to the same sources; (1.8.0, MESSAGES.md 10.3 WP-6) the message-key evidence: the
-     reports' msg_guard (above), and no verification\\golden\\text-allow file holds a
-     pending_keys entry or a literal of category pending ((2.0.0) the pins of the frozen released sources went
-     with those sources);
+     ties the staged exe to the same sources.  (2.0.1) The message-key evidence of 1.8.0 (msg_guard, pending_keys)
+     is gone with the G2 guard and the per-module allow files: what it checked is in test files every report
+     above must have passed (test_source_rules, test_i18n_catalog), pinned by tests_sha256;
   6. the stage must still match the list of step 1 file by file (the program's runs did not change it);
   7. writes build\\verify\\release-<version>.json with that list under "file_list" ({count, size, sha256 of the list,
      files}) and prints it without the per-file entries.  install_release.py checks the stage and its copy against
@@ -54,8 +53,6 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / 'build'
-# (1.8.0) the message-key evidence of step 5 (MESSAGES.md 10.3 WP-6)
-ALLOW_DIR = ROOT / 'verification' / 'golden' / 'text-allow'
 
 
 def _app_version() -> str:
@@ -448,10 +445,6 @@ def _check_report(report: dict, name: str, sources: str, tiers_needed, expected_
     check(not bad, f'{name} has results that did not pass: ' + ', '.join(bad))
     missing = sorted(set(expected_files) - {item.get('file') for item in results})
     check(not missing, f'{name} lacks test files that exist now: ' + ', '.join(missing))
-    guard = report.get('msg_guard')
-    check(isinstance(guard, dict), f'{name} has no msg_guard (the 1.8.0 run_tests.py writes it)')
-    check((guard.get('files_checked') or 0) > 0, f'{name} msg_guard checked no test file')
-    check(guard.get('violations') == 0, f'{name} msg_guard.violations is {guard.get("violations")!r}, must be 0')
     return results
 
 
@@ -485,31 +478,6 @@ def check_evidence(stage: Path, run_tests, source_report=None, exe_report=None, 
     check(record.get('source_sha256') == sources, 'build.json: the staged exe was built from other sources')
     check(record.get('exe_sha256') == exe_hash, 'build.json: the staged exe is not the one build.py staged')
     return {'report': source, 'exe_report': exe, 'record': record, 'sources': sources, 'exe_hash': exe_hash}
-
-
-def pending_keys(allow_dir=ALLOW_DIR) -> list:
-    """['<module>: <key or literal>'] of every pending_keys entry and every literal of category
-    pending in the per-module allow files (MESSAGES.md 7.2, 10.2): the release needs none."""
-    found = []
-    for path in sorted(Path(allow_dir).glob('*.json')):
-        data = json.loads(path.read_text(encoding='utf-8'))
-        found += [f'{path.stem}: {key}' for key in (data.get('pending_keys') or {})]
-        found += [f'{path.stem}: {text} (category pending)' for text, entry in (data.get('literals') or {}).items()
-                  if isinstance(entry, dict) and entry.get('category') == 'pending']
-    return found
-
-
-def check_message_evidence(report, allow_dir=ALLOW_DIR) -> dict:
-    """(1.8.0, step 5) The run's G2 guard checked test files and recorded no violation; no pending key is
-    left."""
-    guard = report.get('msg_guard')
-    check(isinstance(guard, dict), 'report-source.json has no msg_guard (the 1.8.0 run_tests.py writes it)')
-    check((guard.get('files_checked') or 0) > 0, 'report-source.json msg_guard checked no test file')
-    check(guard.get('violations') == 0, f'report-source.json msg_guard.violations is {guard.get("violations")!r}, must be 0')
-    pending = pending_keys(allow_dir)
-    check(not pending, 'pending_keys are left in the allow files: ' + '; '.join(pending[:10]))
-    return {'msg_guard': {name: guard.get(name) for name in ('files_checked', 'violations', 'exemptions', 'not_guarded')},
-            'pending_keys': pending}
 
 
 def load_run_tests():
@@ -568,10 +536,7 @@ def main(argv=None) -> int:
         say(f'4 GUI smoke ok (window after {gui["time_to_window"]} s: {gui["title"]})')
 
         evidence = check_evidence(stage, run_tests)
-        messages_evidence = check_message_evidence(evidence['report'])
-        say('5 evidence ok (report-source.json, report-exe.json and build.json belong to these sources and this exe; '
-            'msg_guard '
-            f'{messages_evidence["msg_guard"]["files_checked"]} files, 0 violations; no pending_keys)')
+        say('5 evidence ok (report-source.json, report-exe.json and build.json belong to these sources and this exe)')
 
         # The record lists the stage as it was before the program ran; it must not have changed since.
         changes = file_list_differences(files, stage_file_list(stage))
@@ -600,8 +565,6 @@ def main(argv=None) -> int:
             'report': {'started': report.get('started'), 'finished': report.get('finished')},
             # (2.0.0) the exe pass is its own report
             'exe_report': {'started': exe_report.get('started'), 'finished': exe_report.get('finished')},
-            # (1.8.0) the message-key evidence of step 5
-            'msg_guard': messages_evidence['msg_guard'], 'pending_keys': messages_evidence['pending_keys'],
             'timestamp': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
             # Every file of the stage; install_release.py checks the stage and its copy against this list.
             'file_list': {'count': len(files), 'size': sum(item['size'] for item in files),

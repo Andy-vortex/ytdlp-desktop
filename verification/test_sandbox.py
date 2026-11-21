@@ -283,18 +283,11 @@ class SandboxTests(unittest.TestCase):
         for name in ('argv.json', 'events.json', 'runonce.json', 'ui.json'):
             self.assertTrue(json.loads((_sandbox.GOLDEN / name).read_text(encoding='utf-8')), name)
 
-    def test_release_sources_and_fixture_texts(self):
-        """(1.8.0) The G2 exemption helper (MESSAGES.md 7.3).  (2.0.0 S2) The frozen released
-        sources are gone, and with them release_src."""
+    def test_release_sources_are_gone(self):
+        """(2.0.0 S2) The frozen released sources are gone, and with them release_src.  (2.0.1) The G2
+        exemption helper fixture_texts went with the message guard."""
         self.assertFalse(hasattr(_sandbox, 'release_src'))
         self.assertFalse((_sandbox.ROOT / 'verification' / 'release-sources').exists())
-        with _sandbox.fixture_texts('test_sandbox: the helper itself'):
-            pass
-        guarded = bool(os.environ.get(_sandbox.MSG_GUARD))
-        self.assertEqual('messages' in sys.modules, guarded or 'messages' in sys.modules)
-        if guarded:
-            import messages
-            self.assertTrue(messages.GUARD)
 
     def test_a_child_that_never_imports_the_sandbox_is_isolated_too(self):
         code = 'import os, tempfile; print(os.environ["LOCALAPPDATA"]); print(tempfile.gettempdir()); ' \
@@ -388,36 +381,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual({name: plain[name] for name in expected}, expected)
         self.assertEqual((full['VERIFY_EXE'], full['VERIFY_NET']), ('X:\\app.exe', '1'))
 
-    def test_child_environment_turns_the_message_guard_on_except_for_guard_off(self):
-        sandbox = self.root / 'two'
-        with mock.patch.dict(os.environ, {self.runner.MSG_GUARD: 'stale'}):
-            on = self.runner.child_environment(sandbox, Path('X:\\state'), None, False)
-            off = self.runner.child_environment(sandbox, Path('X:\\state'), None, False, guard=False)
-        self.assertEqual(on[self.runner.MSG_GUARD], '1')
-        self.assertNotIn(self.runner.MSG_GUARD, off)
-        self.assertEqual(set(self.runner.GUARD_OFF), {'test_golden_ui.py', 'test_golden_runonce.py'})
-        self.assertTrue(all(self.runner.GUARD_OFF.values()))
-        seen = self.run_file('test_golden_ui.py', 'import os\nprint(os.environ.get("YTDLP_DESKTOP_MSG_GUARD"))\n')
-        self.assertEqual((seen['status'], seen['msg_guard']['guarded']), ('passed', False))
-        self.assertEqual((self.root / 'base' / '_logs' / 'test_golden_ui.stdout.txt').read_text(encoding='utf-8').strip(),
-                         'None')
-        seen = self.run_file('test_other.py', 'import os\nprint(os.environ.get("YTDLP_DESKTOP_MSG_GUARD"))\n')
-        self.assertEqual((seen['status'], seen['msg_guard']['guarded']), ('passed', True))
-
-    def test_message_guard_lines_fail_the_file(self):
-        code = ('import json, os\n'
-                'path = os.path.join(os.environ["VERIFY_OUT"], "msg-guard-%d.jsonl" % os.getpid())\n'
-                'lines = [{"exempt": "fixture"}] + [{"rule": "R-text", "where": "show", "producer": "engine.py:%d" % n,\n'
-                '          "key": "core.x", "text": "t", "test": "T"} for n in range(7)]\n'
-                'open(path, "w", encoding="utf-8").write("\\n".join(json.dumps(item) for item in lines) + "\\n")\n')
-        result = self.run_file('test_violating.py', code)
-        self.assertEqual(result['status'], 'failed')
-        self.assertEqual(result['msg_guard'], {'guarded': True, 'violations': 7, 'exemptions': 1})
-        self.assertIn('7 message-guard violation(s):', result['tail'])
-        self.assertEqual(len([line for line in result['tail'] if line.startswith('msg-guard R-text')]), 5)
-        clean = self.run_file('test_exempt_only.py', code.replace('range(7)', 'range(0)'))
-        self.assertEqual((clean['status'], clean['msg_guard']['exemptions']), ('passed', 1))
-
     def test_source_hash_definition(self):
         digest = hashlib.sha256()
         for path in sorted((_sandbox.ROOT / 'src').glob('*.py'), key=lambda item: item.name):
@@ -435,7 +398,7 @@ class RunnerTests(unittest.TestCase):
         status = (_sandbox.ROOT / 'verification' / 'run_tests.py').stat()
         self.assertEqual(tree['run_tests.py'], (status.st_size, status.st_mtime_ns))
         self.assertIsNone(tree['golden'])
-        self.assertIn('golden/text-allow/engine.json', tree)
+        self.assertIn('golden/text-allow.json', tree)
 
     def test_isolation_check_reports_new_paths_and_state_changes(self):
         real = self.root / 'real-state'
@@ -573,8 +536,6 @@ class RunnerMainTests(unittest.TestCase):
         self.assertEqual(report['reports'], {'test_one/one.json': {'status': 'passed'}})
         self.assertEqual((report['exe'], report['filter']), (None, None))
         self.assertEqual(report['source_sha256'], self.runner.source_sha256())
-        self.assertEqual(report['msg_guard'], {'files_checked': 1, 'violations': 0, 'exemptions': 0, 'not_guarded': []})
-        self.assertIn('MSG_GUARD: 1 files checked, 0 violations, 0 exemptions; not guarded: none', text)
         self.assertEqual(report['app_version'], self.runner.app_version())
         sandbox = Path(next(line for line in text.splitlines() if line.startswith('sandbox ')).split(None, 1)[1])
         self.assertFalse(sandbox.exists(), 'the sandbox of a green run must be removed')
@@ -634,7 +595,7 @@ class RunnerMainTests(unittest.TestCase):
         self.assertEqual(content(parallel), content(serial))
         self.assertEqual([item['file'] for item in parallel['results']],
                          ['test_a.py', 'test_b.py', 'test_c.py', 'test_d.py', 'test_f.py', 'test_e.py'])
-        for key in ('tiers', 'filter', 'not_run', 'msg_guard', 'source_sha256', 'app_version', 'exe', 'quick',
+        for key in ('tiers', 'filter', 'not_run', 'source_sha256', 'app_version', 'exe', 'quick',
                     'only_tier'):
             self.assertEqual(parallel[key], serial[key], key)
         self.assertEqual(set(parallel['reports']), set(serial['reports']))

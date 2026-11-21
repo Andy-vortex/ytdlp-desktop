@@ -28,6 +28,7 @@ import applog
 import collector
 import engine
 import library
+import messages
 import paths
 import procutil
 import updater
@@ -259,6 +260,23 @@ class RunOnceTests(EngineCase):
         self.assertIn(('log', _sandbox.zh_t('core.engine.error', error='boom')), self.events, 'the line shown to the user is unchanged')
         self.assertEqual(self.events[-1][0], 'done')
 
+    def test_an_aborted_queue_keeps_the_reason_key_of_the_active_item(self):
+        """(2.0.1 N2b) The link that was running when the queue aborted is failed with the abort's message as
+        its reason, key kept (the list and the history show it in the running language)."""
+        runner = engine.Runner(self.emit)
+
+        def abort(*_args, **_kwargs):
+            runner.items[0].state = 'active'
+            raise RuntimeError(messages.msg('core.links.none'))
+
+        with mock.patch.object(runner, '_run_once', side_effect=abort), \
+                self.assertLogs('YtDlpDesktop.engine', 'ERROR'):
+            runner.download(['https://example.invalid/a'], engine.Options(self.root / 'out'))
+        item = runner.items[0]
+        self.assertEqual(item.state, 'failed')
+        self.assertIs(type(item.reason), messages.Message, repr(item.reason))
+        self.assertEqual(item.reason.key, 'core.links.none')
+
 
 class RunnerInitTests(EngineCase):
     def test_library_argument_and_initial_state(self):
@@ -270,7 +288,6 @@ class RunnerInitTests(EngineCase):
         self.assertIsNone(plain.library)
         plain.library = store    # the 1.5.1 window and app.py still attach it afterwards
         self.assertIs(plain.library, store)
-        # (1.8.0) In a guarded test process emit is wrapped by the G2 emit hook (messages.guarded).
         self.assertEqual(getattr(plain.emit, '__wrapped__', plain.emit), self.emit)
         self.assertEqual((plain.archive, plain.archive_folder, plain.archive_errors, plain.last_error),
                          (None, None, [], ''))
@@ -405,6 +422,11 @@ class CollectorTests(EngineCase):
             self.run_collection(broken)
         self.assertEqual([kind for kind, _value in self.events], ['collect_error', 'collect_done'])
         self.assertEqual(self.events[-1], ('collect_done', {'cancelled': False}))
+        # (2.0.1 N2a) the error event carries the validation message itself: its key reaches the page
+        kind, value = self.events[0]
+        self.assertEqual(kind, 'collect_error')
+        self.assertIs(type(value), messages.Message, repr(value))
+        self.assertEqual(value.key, 'core.links.bad_line')
         # A job that is missing from a working database.
         self.events.clear()
         store = library.Library(self.root / 'history.sqlite3')

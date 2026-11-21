@@ -10,29 +10,21 @@ text the producer knows is not app text (titles from the source, engine output).
     cut / masked / stripped         derived texts that keep the type (and the key)
     message_of(error)               the Message an exception carries, else str(error)
     show(value) / error_text(error) the text in the running language (never raises)
-    zh(value) / template(key)       the plain zh text / the zh catalog template
+    zh(value)                       the plain zh text
     to_json / from_json / read_slots / write_slots   the format-2 store (2.0.0, S2-DESIGN.md 1.1;
                                     library and unfinished only)
     wire / unwire                   the collector IPC form (2.8; 2.0.0: {"$m": {"k", "p"}})
-    exempt(reason)                  the G2 test hook (7.3)
 
 (2.0.0, S2 P4) The 1.8.x store codec (decode / decode_columns / encode), Value and a message's
 origin / entry are gone: 2.0.0 does not read the stores of older versions.
 
-When YTDLP_DESKTOP_MSG_GUARD is set (tests only), importing this module installs the G2 hooks:
-the strict-mode tripwires of 2.9 (on Message) and the checked i18n.t wrapper (R-param); without the variable
-nothing is installed and every method is the plain str one.  (2.0.0, S2 P2) The text recognition
-of G2 (R-text: plain strings that read like an app text, found by the reverse reading of old texts)
-is gone with the reverse reading's place in the runtime; S2-DESIGN.md section 5 says what covers it.
+(2.0.1) i18n.t shows a message param (or an exception that carries one) in the language of the call
+(Message.text_in); an f-string, a concatenation or a widget text still needs show() / error_text().
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
-import os
-from pathlib import Path
-import sys
 import threading
 import types
 
@@ -41,8 +33,6 @@ import i18n
 PROXY_TOKEN = '[代理]'                 # the single definition of the proxy mask token in src
 CLAUSES = 'common.clauses'            # structural key: zh '；'.join(parts), en i18n._join_sentences
 JOIN = '；'
-GUARD_ENV = 'YTDLP_DESKTOP_MSG_GUARD'
-GUARD = bool(os.environ.get(GUARD_ENV))
 
 _log = logging.getLogger('YtDlpDesktop.messages')
 _lock = threading.RLock()
@@ -99,6 +89,11 @@ class Message(str):
     def __reduce__(self):
         return _message, (_plain(self), self.key, dict(self._params))
 
+    def text_in(self, language):
+        """This message's text in ``language``, whatever the running language is (i18n.t shows a message
+        param with it, in the language of its call); in the running language it equals show()."""
+        return _shown(self, language)
+
 
 class Raw(str):
     """Text the producer knows is not app text: never translated, never reverse-read."""
@@ -125,10 +120,6 @@ def _message(value, key, params):
     return Message(value, key, params)
 
 
-class MessageFlattened(RuntimeError):
-    """(tests only) A guarded src module turned a Message into plain text (2.9)."""
-
-
 # ------------------------------------------------------------------------------- constructors
 
 def zh(value) -> str:
@@ -138,11 +129,6 @@ def zh(value) -> str:
     if isinstance(value, str):
         return _plain(value)
     return str(value)
-
-
-def template(key) -> str:
-    """The zh catalog template of ``key`` (plain).  No src module uses it now; the guard tools still know it."""
-    return _plain(i18n.CATALOG['zh'].get(key, key))
 
 
 def _zh_param(value):
@@ -258,14 +244,6 @@ def message_of(error):
 
 # ------------------------------------------------------------------------------- rendering
 
-_ORIGINAL_T = i18n.t
-
-
-def _t(key, **values):
-    """i18n.t without the G2 wrapper (show() hands it shown params only)."""
-    return _ORIGINAL_T(key, **values)
-
-
 def _render(value, language) -> str:
     if value is None:
         return ''
@@ -280,32 +258,33 @@ def _render(value, language) -> str:
             params = value._params
             if value.key == CLAUSES:
                 return i18n._join_sentences(language, [_render(part, language) for part in params.get('parts', ())])
-            return _t(value.key, **{name: _render(item, language) for name, item in params.items()})
+            return i18n._t_in(language, value.key, {name: _render(item, language) for name, item in params.items()})
         text = _plain(value)
-        return text.replace(PROXY_TOKEN, _t('core.proxy_mask')) if PROXY_TOKEN in text else text
+        return text.replace(PROXY_TOKEN, i18n._t_in(language, 'core.proxy_mask', {})) if PROXY_TOKEN in text else text
     if isinstance(value, (list, tuple)):
         return i18n._join_sentences(language, [_render(part, language) for part in value])
     return str(value)
 
 
-def show(value) -> str:
-    """``value`` as plain text in the running language; None -> ''; never raises (on an internal
-    error: the zh text, one WARNING per process)."""
+def _shown(value, language) -> str:
+    """``value`` as plain text in ``language``; never raises (on an internal error: the zh text, one
+    WARNING per process)."""
     try:
-        return _render(value, i18n.language())
+        return _render(value, language)
     except Exception as error:
         _warn_once(('show', type(error).__name__), 'messages: show failed: %s', error)
         return zh(value)
 
 
+def show(value) -> str:
+    """``value`` as plain text in the running language; None -> ''; never raises (on an internal
+    error: the zh text, one WARNING per process)."""
+    return _shown(value, i18n.language())
+
+
 def error_text(error) -> str:
     """show(message_of(error))."""
-    shown = message_of(error)
-    try:
-        return _render(shown, i18n.language())
-    except Exception as failure:
-        _warn_once(('show', type(failure).__name__), 'messages: show failed: %s', failure)
-        return zh(shown)
+    return _shown(message_of(error), i18n.language())
 
 
 # ------------------------------------------------------------------------------- format-2 store
@@ -515,222 +494,3 @@ def unwire(obj):
             text = key
         return Message(text, key, params)
     return {name: unwire(item) for name, item in obj.items()}
-
-
-# ------------------------------------------------------------------------------- G2 (tests only)
-
-# (MESSAGES.md 7.8, 2.9) Every src module outside TRANSIT is guarded: a runtime check records a
-# violation when its producer frame is any such module.  TRANSIT modules pass texts through without
-# deciding what is shown and are skipped when the producer frame is looked for; ui_theme is not one
-# of them: it is the display boundary, so a text operation of ui_theme on a Message (a value
-# that reached a widget without show()) is charged to ui_theme itself.  (2.0.0 S2 P4) The tripwires are
-# on Message only (Value is gone).
-TRANSIT = frozenset({'messages', 'i18n'})
-TRIPWIRES = ('__getitem__', '__add__', '__radd__', '__mul__', '__rmul__', '__mod__', '__rmod__', 'strip', 'lstrip',
-             'rstrip', 'replace', 'split', 'rsplit', 'splitlines', 'partition', 'rpartition', 'format', 'format_map',
-             'ljust', 'rjust', 'center', 'lower', 'upper', 'casefold', 'title', 'capitalize', 'swapcase', 'translate',
-             'expandtabs', 'zfill', 'removeprefix', 'removesuffix')
-SRC_DIR = Path(__file__).resolve().parent
-VERIFICATION_DIR = SRC_DIR.parent / 'verification'
-
-_state = threading.local()
-_exempt = []                  # reasons of the active exempt() blocks (process-wide)
-_capture = []                 # lists receiving records instead of the report file (self-tests)
-_records = []                 # every record of this process (also written to the report file)
-_kinds = {}
-
-
-def _busy() -> bool:
-    return getattr(_state, 'busy', False)
-
-
-class _Busy:
-    def __enter__(self):
-        self.saved = _busy()
-        _state.busy = True
-
-    def __exit__(self, *_exc):
-        _state.busy = self.saved
-        return False
-
-
-def _classify(filename):
-    """('src', module) / ('verification', None) / ('tk', None) / ('other', None) of a code file."""
-    found = _kinds.get(filename)
-    if found is not None:
-        return found
-    found = ('other', None)
-    try:
-        path = Path(filename).resolve()
-        if path.parent == SRC_DIR and path.suffix == '.py':
-            found = ('src', path.stem)
-        elif path.is_relative_to(VERIFICATION_DIR):
-            found = ('verification', None)
-        elif path.name == '__init__.py' and path.parent.name == 'tkinter':
-            found = ('tk', None)
-    except (OSError, ValueError):
-        pass
-    _kinds[filename] = found
-    return found
-
-
-def _producer(frame, skip=frozenset()):
-    """The nearest src frame outside TRANSIT (and ``skip``), walking outward; None at a
-    verification/ frame, a Tk callback boundary or the bottom of the stack (2.9)."""
-    while frame is not None:
-        kind, module = _classify(frame.f_code.co_filename)
-        if kind == 'tk' and frame.f_code.co_name == '__call__':
-            return None
-        if kind == 'verification':
-            return None
-        if kind == 'src' and module not in TRANSIT and module not in skip:
-            return module, frame
-        frame = frame.f_back
-    return None
-
-
-def _current_test():
-    frame = sys._getframe(1)
-    while frame is not None:
-        candidate = frame.f_locals.get('self')
-        if candidate is not None and type(candidate).__module__ != __name__:
-            test_id = getattr(candidate, 'id', None)
-            if callable(test_id) and hasattr(candidate, 'assertEqual'):
-                try:
-                    return test_id()
-                except Exception:
-                    return None
-        frame = frame.f_back
-    return None
-
-
-def _report_path():
-    folder = os.environ.get('VERIFY_OUT')
-    return Path(folder) / f'msg-guard-{os.getpid()}.jsonl' if folder else None
-
-
-def _write(line) -> None:
-    if _capture:
-        _capture[-1].append(line)
-        return
-    _records.append(line)
-    path = _report_path()
-    if path is None:
-        return
-    try:
-        with _lock, open(path, 'a', encoding='utf-8') as handle:
-            handle.write(json.dumps(line, ensure_ascii=False) + '\n')
-    except OSError:
-        pass
-
-
-def _record(rule, where, found, key, text) -> bool:
-    """Write one violation when there is a producer frame (a src module outside TRANSIT) and no
-    exemption is active; True when written."""
-    if found is None or _exempt:
-        return False
-    module, frame = found
-    _write({'rule': rule, 'where': where, 'producer': f'{module}.py:{frame.f_lineno}', 'key': key,
-            'text': zh(text)[:80], 'test': _current_test()})
-    return True
-
-
-@contextlib.contextmanager
-def exempt(reason):
-    """G2 / tripwire exemption for test fixtures (7.3); counted in the per-file report."""
-    if not GUARD:
-        yield
-        return
-    if not reason:
-        raise ValueError('an exemption needs a reason')
-    _write({'exempt': str(reason), 'test': _current_test()})
-    with _lock:
-        _exempt.append(reason)
-    try:
-        yield
-    finally:
-        with _lock:
-            _exempt.remove(reason)
-
-
-@contextlib.contextmanager
-def guard_capture():
-    """(self-tests only) Collect the records of a block in a list instead of the report file."""
-    records = []
-    _capture.append(records)
-    try:
-        yield records
-    finally:
-        _capture.remove(records)
-
-
-def _checked_t(key, **values):
-    """i18n.t with the G2 parameter rule R-param (a Message / Raw / exception param)."""
-    if values and not _busy() and not _exempt:
-        with _Busy():
-            try:
-                hits = []
-                for name, item in values.items():
-                    if isinstance(item, (Message, Raw, BaseException)):
-                        hits.append(('R-param', name, type(item).__name__, item))
-                if hits:
-                    producer = _producer(sys._getframe(1))
-                    for rule, name, found, item in hits:
-                        _record(rule, f't {key} {name}', producer, found, item if isinstance(item, str) else str(item))
-            except Exception as error:
-                _warn_once(('guard', type(error).__name__), 'messages: guard check failed: %s', error)
-    return _ORIGINAL_T(key, **values)
-
-
-def _flattened(obj, method, frame):
-    if _busy() or _exempt:
-        return
-    with _Busy():
-        found = _producer(frame)
-        written = _record('tripwire', f'{type(obj).__name__}.{method}', found, getattr(obj, 'key', None), obj)
-    if written:
-        raise MessageFlattened(f'{type(obj).__name__}.{method} on {zh(obj)[:40]!r} in {found[0]}.py:{found[1].f_lineno}')
-
-
-def _tripwire(name):
-    if name == '__radd__':
-        def method(self, other):
-            if not isinstance(other, str):
-                return NotImplemented
-            result = str.__add__(other, self)
-            _flattened(self, name, sys._getframe(1))
-            return result
-    elif name == '__rmod__':
-        def method(self, other):
-            if not isinstance(other, str):
-                return NotImplemented
-            result = str.__mod__(other, self)
-            if result is not self:
-                _flattened(self, name, sys._getframe(1))
-            return result
-    elif name == '__rmul__':
-        def method(self, other):
-            result = str.__mul__(self, other)
-            _flattened(self, name, sys._getframe(1))
-            return result
-    else:
-        original = getattr(str, name)
-
-        def method(self, *args, **kwargs):
-            result = original(self, *args, **kwargs)
-            if result is not self:
-                _flattened(self, name, sys._getframe(1))
-            return result
-    method.__name__ = name
-    return method
-
-
-def _install() -> None:
-    for name in TRIPWIRES:
-        setattr(Message, name, _tripwire(name))
-    if getattr(i18n.t, '__name__', '') != '_checked_t':
-        i18n.t = _checked_t
-
-
-if GUARD:
-    _install()

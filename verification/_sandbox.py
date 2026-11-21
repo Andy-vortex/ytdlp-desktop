@@ -14,9 +14,7 @@ Two modes:
   fresh temp folder that is removed at exit (YTDLP_VERIFY_KEEP=1 keeps it,
   YTDLP_VERIFY_BASE=DIR uses and keeps DIR).
 
-No src module is imported here, except (1.8.0) ``messages`` in a guarded process: when
-run_tests.py sets YTDLP_DESKTOP_MSG_GUARD, importing this module imports messages, which installs
-the G2 hooks (MESSAGES.md 7.3), so every guarded test process has them.
+No src module is imported here.
 
 (1.7.0) Tests run in Chinese: YTDLP_DESKTOP_LANG=zh in this process and its children.
 language(lang, env=True) runs a block in another language (env=False: without the variable, like
@@ -139,17 +137,6 @@ sys.dont_write_bytecode = True
 if str(SRC) in sys.path:
     sys.path.remove(str(SRC))
 sys.path.insert(0, str(SRC))
-
-
-MSG_GUARD = 'YTDLP_DESKTOP_MSG_GUARD'
-
-
-def fixture_texts(reason):
-    """(1.8.0, MESSAGES.md 7.3) A block whose fixtures feed plain app texts on purpose (old-format
-    rows, user data that resembles app text): messages.exempt(reason), counted in the per-file
-    report.  Without the guard it changes nothing."""
-    import messages
-    return messages.exempt(reason)
 
 
 def out(*parts) -> Path:
@@ -699,8 +686,3 @@ def check_golden(test, name: str, data, keyed=False) -> None:
         test.assertEqual(expected, actual,
                          f'\n{name}: this run differs from the golden. {summary}\n'
                          'Unified diff (golden -> this run):\n' + '\n'.join(shown) + more)
-
-
-# (1.8.0) In a guarded process the G2 hooks are installed before any test code runs.
-if os.environ.get(MSG_GUARD):
-    import messages  # noqa: E402,F401

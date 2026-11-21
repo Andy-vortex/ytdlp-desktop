@@ -703,14 +703,14 @@ class Library:
 
     def subscriptions(self):
         with self.db() as db:
-            rows = [dict(r) for r in db.execute('SELECT * FROM subscriptions ORDER BY rowid')]
+            rows = [dict(r) for r in db.execute('SELECT s.*, (SELECT count(*) FROM entries e WHERE e.subscription=s.id '
+                                                'AND e.pending=1) AS pending FROM subscriptions s ORDER BY s.rowid')]
             for row in rows:
                 # (2.0.0) 'name': the name to show (the owner's text, or the untitled message);
                 # 'name_text': the stored text ('' for an untitled subscription)
                 row['data'] = _load(row['data'], 'subscription')
                 row['name_text'] = row['name'] if isinstance(row['name'], str) else ''
                 row['name'] = raw(row['name_text']) or msg('value.subscription.untitled')
-                row['pending'] = db.execute('SELECT count(*) FROM entries WHERE subscription=? AND pending=1', (row['id'],)).fetchone()[0]
             return rows
 
     def configure_subscription(self, key, enabled, interval):

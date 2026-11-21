@@ -36,8 +36,10 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 ## 界面文字
 
 - 文字只写在 `src\i18n_<页>.py` 的 `TEXTS` 里：`'编号': ('中文', 'English')`，编号按字母序。编号前缀决定文件（`verification\test_i18n_catalog.py` 的 `PREFIX_FILES`）。
-- 改一条：`git grep -n "旧文字" -- src/i18n_*.py`，在那一行同时改中文和英文（`{占位符}` 两边一致）。然后跑 `--quick`，再跑 `-k test_golden_ui,test_i18n_ui,test_text_guard`。
+- 改一条：`git grep -n "旧文字" -- src/i18n_*.py`，在那一行同时改中文和英文（`{占位符}` 两边一致）。然后跑 `--quick`，再跑 `-k test_golden_ui,test_i18n_ui`。
 - 加一条：在对应文件里按字母序加 `'页.区域.名字': ('中文', 'English')`；代码里写 `i18n.t('页.区域.名字', 名字=值)`，核心模块写 `messages.msg`。菜单的值 → 编号写在同一文件的 `GROUPS`；日志里要标红或标绿的新行，自己在同一文件的 `TAGS` 里写 `'error'` 或 `'ok'`（不写就是普通颜色，没有测试会提醒）。
+- 消息怎么显示：**只有 `i18n.t` 的参数**可以直接传消息（`messages.msg` 的结果）或带一条消息的异常，`t()` 按界面语言显示它；f-string、拼接、`configure(text=…)`、messagebox 仍要 `messages.show()` / `error_text()`。已有的 `show()` 不要去掉。
+- 新加一条显示通道（新的事件种类、新的 `append_log` 或 `configure(text=…)` 来源）时，在 `verification\test_messages_ui.py` / `test_messages_ui_download.py` 的通道矩阵里加一条英文腿。
 - 换了调用处用的编号（`t('a')` 改成 `t('b')`）：目录检查测不出用错，跑那一页的页面测试（`-k test_page_download` 等）和 `-k test_golden_ui`。
 - 编号没人用了就删掉那一条。几个人并行改不同页面、要停用公共文件（`i18n_core / common / shell`）的编号时，不删公共文件：在自己那一页的文件里写 `RETIRED = ('common.x',)`，由合并的人删编号和这一行。
 - 编号说作用，不说措辞；只改文字时不改编号。测试里要用界面文字时按编号取（`_sandbox.zh_t` / `en_t` / `zh_head` 或 `i18n.t`），不抄文字；测机制的测试用自己注入的假编号。
@@ -45,7 +47,7 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 
 ## 改界面
 
-- 共用组件都在 `src\ui_theme.py`，直接用，不在页面里另做一套：菜单 `MenuItem` / `SEPARATOR` / `popup` / `menu_button` / `bind_menu`；`ask_text`（一行输入框）、`empty_state`、`notice_bar`（`NoticeBar`）、`path_button`、`textbox`、`segmented`、`tabs`（`Tabs`）、`table`、`section_label`、`show`（只在变化时显隐）、`AppButton.set_kind`。`ui_theme` 不导入任何应用模块（`test_theme` 钉住），它要显示的几个词在 `ui_theme.WORDS`，由 `studio` 填。
+- 共用组件都在 `src\ui_theme.py`，直接用，不在页面里另做一套：菜单 `MenuItem` / `SEPARATOR` / `popup` / `menu_button` / `bind_menu`；`ask_text`（一行输入框）、`empty_state`、`notice_bar`（`NoticeBar`）、`path_button`、`textbox`、`segmented`、`tabs`（`Tabs`）、`table`、`section_label`、`show`（只在变化时显隐）、`cancel_after`（取消还没触发的 `after`）、`AppButton.set_kind`。`ui_theme` 不导入任何应用模块（`test_theme` 钉住），它要显示的几个词在 `ui_theme.WORDS`，由 `studio` 填。
 - 页头只放标题。每个视图只有一个实心按钮。每个动作都要有看得见的入口：右键菜单和"⋯"用同一个 `<区域>_menu_items`（`link_` / `row_` / `task_` / `collect_` / `history_` / `subscription_` / `pending_` / `archive_` / `log_menu_items`）。不可用的控件置灰，不弹"请先选择"。不加说明句，要说明的内容写进 `使用说明.txt`。改完用 `snapshot_ui.py` 截图，看中文、英文、浅色、深色四种组合。
 - 跟着忙碌状态变化的控件：只看忙不忙的，放进 `self.controls`、`input_controls` 或 `update_buttons`；还要看选中项或内容的，由本视图在 `set_busy` 里调用的刷新函数计算。
 - 增删、移动这类控件或菜单项时，同步改 `verification\test_busy_matrix.py`：清单 `CONTROLS` / `INPUT_CONTROLS` / `UPDATE_BUTTONS` / `HOOKED` / `ALWAYS`（不受忙碌控制的导航或只读控件进 `NAVIGATION`，写理由；不进任何清单的可操作控件会让 `test_no_operable_control_is_left_out_*` 失败），数量断言（`(23, 2, 1, 17, 16)` 和 `len(wanted) == 43`），`expected` / `expected_shown` / `expected_menus` 里的期望；`set_busy` 新加刷新函数时加进 `REFRESHES`。然后跑 `-k test_busy_matrix`。
@@ -53,8 +55,9 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 ## 守卫报错怎么修
 
 报错写明 `<文件>:<行>`、事实和怎么改。常见的几种：
-- `test_text_guard` / `test_i18n_catalog` 的 G1a：`src` 里有未登记的中文字面量。界面文字改成 `i18n.t`（核心模块用 `msg`）。只写进日志文件、磁盘文件名或存储标记、从不显示的，登记进 `verification\golden\text-allow\<模块>.json` 的 `literals`，写 `category` 和 `reason`。`test_text_guard` 还要求所有文本文件用 LF 换行，并且不含本机用户名、用户目录、git 邮箱或真实邮箱：路径改成相对仓库根或占位符（`C:\Users\<you>`），邮箱用 `example.org`。
-- `test_i18n_catalog`：目录规则（排序、重复、占位符、英文里没有中文、每个编号都有人用、存储编号契约）。
+- `test_source_rules` 的中文字面量：`src` 里（`i18n_*.py` 以外）有未登记的中文。界面上看得到的文字（包括只在少见状态出现的）一律进目录，代码写 `i18n.t`（核心模块写 `messages.msg`）。只有从不显示的中文（写进日志文件、磁盘文件名、存储标记）才登记进 `verification\golden\text-allow.json` 的 `"<模块>"` 下，写一句理由（它去哪）；等于目录里某条中文的不能登记。`ALLOW_COUNT` 是故意钉死的总数：改它要在交接里写明这一条去哪。
+- `test_source_rules` 的其他规则：核心模块用了 `i18n` → 改成 `messages.msg`；写了 `from i18n import …` → 改成 `import i18n` 再用 `i18n.t`。它还要求所有文本文件用 LF 换行，并且不含本机用户名、用户目录、git 邮箱或真实邮箱：路径改成相对仓库根或占位符（`C:\Users\<you>`），邮箱用 `example.org`。
+- `test_i18n_catalog`：目录规则（排序、重复、占位符、英文里没有中文、每个编号都有人用、存储编号契约）；`messages.msg` 的编号要写成字面量（要选编号就写 `a if 条件 else b`）。
 - `isolation` / `sources`：运行期间改了 `verification\` 或 `src`，或者已安装的程序在运行、写了真实状态目录。关掉程序，重跑。
 - golden 不一致：先确认行为确实应该变，再直接运行那个测试文件重录，例如 `$env:GOLDEN_UPDATE='1'; .venv\Scripts\python.exe -X utf8 -B verification\test_golden_ui.py; Remove-Item Env:GOLDEN_UPDATE`（不删的话，这个会话里之后直接运行的 golden 测试都会被重录）。在 `run_tests.py` 下重录会被拒绝。golden 里的界面文字记成编号，只改措辞不需要重录。`ui.json` 各页共用：并行改页面时只由合并的人在合并后重录。
 - 门禁说报告 "produced with other tests"：测试、golden 或 vendor 清单在报告生成后改过。重跑串行 `--all`。

@@ -297,11 +297,7 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
     def schedule_save(self, *_):
         if self.smoke_mode:
             return
-        if self.save_after is not None:
-            try:
-                self.after_cancel(self.save_after)
-            except (tk.TclError, ValueError):
-                pass
+        ui_theme.cancel_after(self, self.save_after)
         self.save_after = self.after(400, self.save_settings)
 
     def report_error(self, kind, value, trace):
@@ -486,12 +482,8 @@ class StudioApp(DownloadUI, SettingsUI, LogUI, LibraryUI, CollectionUI, ctk.CTk)
         """Write settings.json from the variables and the kept values; never in smoke mode."""
         if self.smoke_mode:
             return
-        if self.save_after is not None:
-            try:
-                self.after_cancel(self.save_after)
-            except (tk.TclError, ValueError):
-                pass
-            self.save_after = None
+        ui_theme.cancel_after(self, self.save_after)
+        self.save_after = None
         values = dict(self.prefs)
         try:
             for name in PERSISTED:

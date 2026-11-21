@@ -373,7 +373,7 @@ def _ellipsize(text, measure, width):
     return text[:low].rstrip() + '…'
 
 
-def _cancel(widget, job):
+def cancel_after(widget, job):
     """Cancel a pending ``after`` job, so that it cannot fire on a destroyed widget."""
     if job is not None:
         try:
@@ -854,7 +854,7 @@ class AppEntry(ctk.CTkEntry):
 
     def destroy(self):
         self._hint_unwatch()
-        _cancel(self, self._hint_job)
+        cancel_after(self, self._hint_job)
         self._hint_job = None
         super().destroy()
 
@@ -1333,7 +1333,7 @@ class ScrollArea(ctk.CTkScrollableFrame):
 
     def destroy(self):
         self._closing = True            # the children that go now must not schedule another check
-        _cancel(self, self._bar_job)
+        cancel_after(self, self._bar_job)
         self._bar_job = None
         super().destroy()
 
@@ -1913,7 +1913,7 @@ class AppTable(ttk.Treeview):
             pass        # the table is gone
 
     def destroy(self):
-        _cancel(self, getattr(self, '_cut_job', None))
+        cancel_after(self, getattr(self, '_cut_job', None))
         self._cut_job = None
         super().destroy()
 
@@ -2219,11 +2219,12 @@ class TextDialog(ctk.CTkToplevel):
             pass
 
     def _place_over(self, top):
-        """Centred over ``top`` (physical pixels; the raw wm call is not scaled by customtkinter)."""
+        """Centred over ``top`` (physical pixels; the raw wm call is not scaled by customtkinter), never left of or
+        above its top-left corner (which may be negative on a monitor left of or above the primary one)."""
         self.update_idletasks()
         x = top.winfo_rootx() + (top.winfo_width() - self.winfo_reqwidth()) // 2
         y = top.winfo_rooty() + (top.winfo_height() - self.winfo_reqheight()) // 3
-        self.tk.call('wm', 'geometry', self._w, f'+{max(0, x)}+{max(0, y)}')
+        self.tk.call('wm', 'geometry', self._w, f'+{max(top.winfo_rootx(), x)}+{max(top.winfo_rooty(), y)}')
 
     def _typed(self, *_):
         self.ok_button.configure(state='normal' if self.value.get().strip() else 'disabled')
@@ -2278,9 +2279,13 @@ class NoticeBar(ctk.CTkFrame):
         fit(self.label, '')
         self._text = ''
         self._buttons = ()
+        self._painted = None
         self._paint(tone)
 
     def _paint(self, tone):
+        if tone == self._painted:       # repainting the frame redraws every child: only on a change
+            return
+        self._painted = tone
         ink, fill = _NOTICE_TONES[tone]
         self.configure(fg_color=fill)
         self.label.configure(text_color=ink, fg_color=fill)
@@ -2290,14 +2295,21 @@ class NoticeBar(ctk.CTkFrame):
         'warn' (None: the bar's own tone)."""
         self._text = '' if text is None else str(text)
         self._paint(tone if tone in _NOTICE_TONES else self.tone)
-        for old in self._buttons:
-            old.destroy()
-        actions, made = tuple(actions)[:2], []
-        for column, (caption, command) in enumerate(actions, 1):
-            action = button(self, caption, command, kind='ghost', size='sm', width=fitted_width(self, caption, 'sm', ghost=True))
-            action.grid(row=0, column=column, padx=(0, INLINE))
-            made.append(action)
-        self._buttons = tuple(made)
+        actions = tuple(actions)[:2]
+        if tuple(caption for caption, _ in actions) == tuple(old.cget('text') for old in self._buttons):
+            # The same captions (a countdown ticking every second): keep the buttons, so they do not blank and
+            # rebuild; only the commands change.
+            for old, (_, command) in zip(self._buttons, actions):
+                old.configure(command=command)
+        else:
+            for old in self._buttons:
+                old.destroy()
+            made = []
+            for column, (caption, command) in enumerate(actions, 1):
+                action = button(self, caption, command, kind='ghost', size='sm', width=fitted_width(self, caption, 'sm', ghost=True))
+                action.grid(row=0, column=column, padx=(0, INLINE))
+                made.append(action)
+            self._buttons = tuple(made)
         self.label.configure(text=self._text)
         if not self.winfo_manager():
             self.grid()

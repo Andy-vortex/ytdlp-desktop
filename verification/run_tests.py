@@ -43,11 +43,6 @@ The results are in the order of the selection whatever -j is, so a parallel repo
 -k and --quick: report-source.json by a run of the tiers default and all without --exe and --only-tier;
 report-exe.json by a run with --exe that includes the tier exe.
 Every test file starts with YTDLP_DESKTOP_LANG=zh (1.7.0: the tests run in Chinese).
-(1.8.0, MESSAGES.md 7.3) Every test file except those of GUARD_OFF also runs with
-YTDLP_DESKTOP_MSG_GUARD=1: the G2 message guard writes each violation as a JSON line to
-msg-guard-<pid>.jsonl in the file's output folder; any such line fails the file (its first five
-violations go to the tail), and the report gets msg_guard {files_checked, violations,
-exemptions}.
 Exit code 0 only when nothing failed.  The sandbox is removed after a green run
 (--keep keeps it) and kept, with its path printed, after a failure; the captured
 output of every file is in <sandbox>\\_logs.
@@ -91,14 +86,6 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # Places an unsandboxed source run would write to (the leak the 1.6.0 audit reproduced).
 LEAK_SIGNATURES = (ROOT / 'data', ROOT / '下载文件', ROOT / 'build' / 'collection-temp',
                    Path(ROOT.anchor) / '.yt-dlp-cache')
-# (1.8.0, MESSAGES.md 7.3) The G2 message guard: on for every test file except these (a file is added
-# only by a spec change).
-MSG_GUARD = 'YTDLP_DESKTOP_MSG_GUARD'
-GUARD_OFF = {'test_golden_ui.py': 'replays the recorded events of golden/ui.json with plain strings',
-             'test_golden_runonce.py': 'byte-identical golden test; its FakeArchive raises a plain Chinese text '
-                                       'that becomes a raw param'}
-GUARD_FILES = 'msg-guard-*.jsonl'
-GUARD_TAIL = 5
 
 
 def real_state_dir() -> Path:
@@ -224,10 +211,10 @@ def app_version():
     return match.group(1) if match else None
 
 
-def child_environment(sandbox: Path, real: Path, exe, net: bool, guard: bool = True) -> dict:
+def child_environment(sandbox: Path, real: Path, exe, net: bool) -> dict:
     environment = os.environ.copy()
     for name in ('YTDLP_DESKTOP_STATE', 'YTDLP_VERIFY_BASE', 'YTDLP_VERIFY_KEEP', 'GOLDEN_UPDATE',
-                 'VERIFY_EXE', 'VERIFY_NET', 'YTDLP_VERIFY_LANG_OVERRIDE', MSG_GUARD):
+                 'VERIFY_EXE', 'VERIFY_NET', 'YTDLP_VERIFY_LANG_OVERRIDE'):
         environment.pop(name, None)
     environment.update({
         'YTDLP_VERIFY_SANDBOX': str(sandbox),
@@ -248,31 +235,7 @@ def child_environment(sandbox: Path, real: Path, exe, net: bool, guard: bool = T
         environment['VERIFY_EXE'] = str(exe)
     if net:
         environment['VERIFY_NET'] = '1'
-    if guard:
-        environment[MSG_GUARD] = '1'
     return environment
-
-
-def guard_lines(sandbox: Path) -> tuple:
-    """(violations, exemptions) read from every msg-guard-*.jsonl of a test file's sandbox."""
-    violations, exemptions = [], []
-    for path in sorted(Path(sandbox).rglob(GUARD_FILES)):
-        for line in read_text(path).splitlines():
-            if not line.strip():
-                continue
-            try:
-                item = json.loads(line)
-            except ValueError:
-                item = {'rule': 'unreadable guard line', 'text': line[:80]}
-            (exemptions if isinstance(item, dict) and 'exempt' in item else violations).append(item)
-    return violations, exemptions
-
-
-def guard_text(item) -> str:
-    if not isinstance(item, dict):
-        return f'msg-guard: {item!r}'[:200]
-    return (f'msg-guard {item.get("rule")} at {item.get("where")} by {item.get("producer")}: key {item.get("key")}, '
-            f'text {item.get("text")!r}, test {item.get("test")}')
 
 
 class Job:
@@ -412,11 +375,10 @@ def run_file(path: Path, tier: str, base: Path, real: Path, exe, net: bool) -> d
     started = time.monotonic()
     timed_out = False
     job = Job()
-    guard = path.name not in GUARD_OFF
     # Output goes to files, not pipes: a leaked grandchild holding a pipe could block the runner.
     with out_path.open('wb') as out_file, err_path.open('wb') as err_file:
         process = subprocess.Popen([sys.executable, '-B', str(path)], cwd=str(ROOT),
-                                   env=child_environment(sandbox, real, exe, net, guard),
+                                   env=child_environment(sandbox, real, exe, net),
                                    stdin=subprocess.DEVNULL, stdout=out_file, stderr=err_file,
                                    creationflags=NO_WINDOW)
         job.assign(process)
@@ -448,15 +410,9 @@ def run_file(path: Path, tier: str, base: Path, real: Path, exe, net: bool) -> d
     else:
         status = 'failed'
         lines.append(f'exit code {code}')
-    violations, exemptions = guard_lines(sandbox)
     tail = [] if status == 'passed' else lines[-TAIL_LINES:]
-    if violations:
-        status = 'failed'
-        tail = tail + [f'{len(violations)} message-guard violation(s):'] + \
-            [guard_text(item) for item in violations[:GUARD_TAIL]]
     return {'file': path.name, 'tier': tier, 'status': status, 'seconds': seconds,
-            'tail': tail, 'leftover_processes': stray,
-            'msg_guard': {'guarded': guard, 'violations': len(violations), 'exemptions': len(exemptions)}}
+            'tail': tail, 'leftover_processes': stray}
 
 
 def process_table() -> dict:
@@ -751,15 +707,10 @@ def main(argv=None) -> int:
              for status in ('passed', 'failed', 'skipped')}
     failed = [result['file'] for result in results if result['status'] == 'failed']
     not_run = [f'{path.name} ({tier})' for path, tier in tests if (path, tier) not in selected]
-    guarded = [result['msg_guard'] for result in results if result.get('msg_guard', {}).get('guarded')]
-    msg_guard = {'files_checked': len(guarded), 'violations': sum(item['violations'] for item in guarded),
-                 'exemptions': sum(item['exemptions'] for item in guarded),
-                 'not_guarded': sorted(result['file'] for result in results
-                                       if 'msg_guard' in result and not result['msg_guard']['guarded'])}
     report = {'app_version': app_version(), 'source_sha256': sources, 'tests_sha256': tests_digest,
               'exe': {'path': str(exe), 'sha256': file_sha256(exe)} if exe else None,
               'tiers': tiers, 'filter': options.k or None, 'not_run': not_run,
-              'started': started, 'finished': now(), 'results': results, 'msg_guard': msg_guard,
+              'started': started, 'finished': now(), 'results': results,
               'reports': collect_reports(base, results),
               'quick': options.quick, 'only_tier': options.only_tier, 'jobs': options.j}
     write_report(report)
@@ -772,8 +723,6 @@ def main(argv=None) -> int:
     print(f'SUMMARY: {count["passed"]} passed, {count["failed"]} failed, {count["skipped"]} skipped; '
           f'isolation {"FAILED" if problems else "ok"}; tiers {"+".join(tiers)}; '
           f'{time.monotonic() - clock:.1f} s' + (f' with -j {options.j}' if options.j > 1 else ''))
-    print(f'MSG_GUARD: {msg_guard["files_checked"]} files checked, {msg_guard["violations"]} violations, '
-          f'{msg_guard["exemptions"]} exemptions; not guarded: {", ".join(msg_guard["not_guarded"]) or "none"}')
     if failed:
         print('FAILED: ' + ', '.join(failed))
         print(f'sandbox kept for diagnosis: {base}')

@@ -288,11 +288,7 @@ class CollectionUI:
                 self.active_subscription = None
                 self.set_collect_status(i18n.t('collect.status.waiting_library'), 'running')
                 self.library_busy(error)
-                if self.collect_retry_after is not None:
-                    try:
-                        self.after_cancel(self.collect_retry_after)
-                    except (tk.TclError, ValueError):
-                        pass
+                ui_theme.cancel_after(self, self.collect_retry_after)
                 try:
                     self.collect_retry_after = self.after(LIBRARY_RETRY_MS, self.retry_collection)
                 except tk.TclError:

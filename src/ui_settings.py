@@ -589,7 +589,6 @@ class SettingsUI:
         self.set_busy(True)
         self.progress.set(0, immediate=True)
         self.animate(True)
-        self.operation = 'update'
         self.update_status.configure(text=i18n.t('core.update.checking'), text_color=ui_theme.ACCENT_TEXT)
         _reveal(self.update_status)
         self.run_token += 1

@@ -229,14 +229,6 @@ class _QueuedIndex:
         return getattr(self._library, name)
 
 
-def _cancel_after(widget, job):
-    if job is not None:
-        try:
-            widget.after_cancel(job)
-        except (tk.TclError, ValueError):
-            pass
-
-
 def pin_rows(table, rows):
     """Make a table ask for ``rows`` rows plus its heading, whether or not its scrollbar is shown.
 
@@ -682,7 +674,7 @@ class LibraryUI:
         """The lock is gone and nothing waits to be written: notice and strip go, one log line."""
         self.library_waiting = False
         self.library_busy_logged = False
-        _cancel_after(self, self.library_watch_after)
+        ui_theme.cancel_after(self, self.library_watch_after)
         self.library_watch_after = None
         written = self.history_writer.written
         self.history_writer.written = 0
@@ -694,7 +686,7 @@ class LibraryUI:
 
     def library_closing(self):
         """The window closes: writes that still wait for the lock are given up (logged)."""
-        _cancel_after(self, self.library_watch_after)
+        ui_theme.cancel_after(self, self.library_watch_after)
         self.library_watch_after = None
         left = self.history_writer.close()
         if left:
@@ -729,7 +721,7 @@ class LibraryUI:
 
     # ------------------------------------------------------------ (1.7.0 U2) search and paging
     def history_search_changed(self):
-        _cancel_after(self, self.history_search_after)
+        ui_theme.cancel_after(self, self.history_search_after)
         try:
             self.history_search_after = self.after(HISTORY_SEARCH_MS, self.run_history_search)
         except tk.TclError:

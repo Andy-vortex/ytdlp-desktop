@@ -215,7 +215,9 @@ class A_TokensTest(unittest.TestCase):
                      'wrap_to_width', 'apply_ttk_styles', 'set_page_cap', 'contrast', 'theme_patch',
                      # 2.0.0 S4 A1
                      'popup', 'menu_button', 'bind_menu', 'menu_items', 'ask_text', 'notice_bar', 'path_button',
-                     'section_label', 'show'):
+                     'section_label', 'show',
+                     # 2.0.1 F6
+                     'cancel_after'):
             self.assertTrue(callable(getattr(ui_theme, name)), name)
             self.assertNotIn(name, taken, name)
 
@@ -2198,6 +2200,96 @@ class F_SharedPiecesTest(unittest.TestCase):
         self.assertFalse(bar.shown)
         warn = ui_theme.notice_bar(self.stage, 'warn')
         self.assertEqual(warn.cget('fg_color'), ui_theme.WARN_SOFT)
+
+    def test_notice_bar_keeps_its_buttons_while_only_the_text_changes(self):
+        # (2.0.1 F1) A countdown shows the bar every second with the same captions: the buttons stay (no blank
+        # rebuild), only their commands change; the frame is repainted only when the tone changes.
+        bar = ui_theme.notice_bar(self.stage)
+        bar.grid(row=0, column=0, sticky='ew')
+        done = []
+        bar.show('等待 29:59', [('立即重试', lambda: done.append('retry 1')), ('取消', lambda: done.append('cancel 1'))],
+                 tone='warn')
+        settle(self.root, 2)
+        first = bar.buttons
+        with mock.patch.object(bar, 'configure', wraps=bar.configure) as frame_configure:
+            for second in range(58, 55, -1):
+                bar.show(f'等待 29:{second}', [('立即重试', lambda s=second: done.append(f'retry {s}')),
+                                               ('取消', lambda s=second: done.append(f'cancel {s}'))], tone='warn')
+            settle(self.root, 2)
+        self.assertEqual(frame_configure.call_count, 0, 'the same tone: the frame is not repainted')
+        self.assertEqual(len(bar.buttons), 2)
+        self.assertTrue(all(new is old for new, old in zip(bar.buttons, first)), 'the same captions keep the buttons')
+        self.assertTrue(all(button.winfo_exists() for button in first))
+        self.assertEqual((bar.full_text, bar.label.cget('text')), ('等待 29:56', '等待 29:56'))
+        bar.buttons[0].invoke()
+        bar.buttons[1].invoke()
+        self.assertEqual(done, ['retry 56', 'cancel 56'], 'the newest commands')
+        self.assertEqual(bar.cget('fg_color'), ui_theme.WARN_SOFT)
+        # The tone changes, the captions stay: repainted, the buttons kept.
+        bar.show('就绪', [('立即重试', None), ('取消', None)], tone='idle')
+        self.assertEqual((bar.cget('fg_color'), bar.label.cget('text_color')), (ui_theme.SURFACE_ALT, ui_theme.INK))
+        self.assertTrue(all(new is old for new, old in zip(bar.buttons, first)))
+        # Other captions: the old buttons go, new ones in their place.
+        bar.show('已暂缓', [('知道了', lambda: done.append('ok'))], tone='warn')
+        settle(self.root, 1)
+        self.assertEqual([button.cget('text') for button in bar.buttons], ['知道了'])
+        self.assertFalse(any(button.winfo_exists() for button in first))
+        self.assertEqual(bar.cget('fg_color'), ui_theme.WARN_SOFT)
+        bar.buttons[0].invoke()
+        self.assertEqual(done[-1], 'ok')
+        bar.show('无按钮')
+        self.assertEqual(bar.buttons, ())
+
+    def test_text_dialog_stays_over_a_window_on_a_monitor_left_of_or_above_the_primary(self):
+        # (2.0.1 F2) The dialog is centred over the main window even at negative screen coordinates (a second
+        # monitor left of or above the primary one); it never goes left of or above the window's corner.
+        class Top:
+            def __init__(self, x, y, width=1000, height=740):
+                self.x, self.y, self.width, self.height = x, y, width, height
+
+            def winfo_rootx(self):
+                return self.x
+
+            def winfo_rooty(self):
+                return self.y
+
+            def winfo_width(self):
+                return self.width
+
+            def winfo_height(self):
+                return self.height
+
+        dialog = ui_theme.TextDialog(self.root, '改名', '订阅')
+        try:
+            dialog.attributes('-alpha', 0.0)
+            for x, y in ((300, 200), (-1620, 200), (300, -880), (-500, 200), (-1620, -880)):
+                top = Top(x, y)
+                dialog._place_over(top)
+                dialog.update_idletasks()
+                want = (x + (top.width - dialog.winfo_reqwidth()) // 2, y + (top.height - dialog.winfo_reqheight()) // 3)
+                self.assertTrue(dialog.wm_geometry().endswith(f'+{want[0]}+{want[1]}'), (x, y, dialog.wm_geometry()))
+            # A window smaller than the dialog: the dialog starts at the window's corner, not left of or above it.
+            small = Top(-1620, -880, 100, 50)
+            dialog._place_over(small)
+            dialog.update_idletasks()
+            self.assertTrue(dialog.wm_geometry().endswith('+-1620+-880'), dialog.wm_geometry())
+        finally:
+            dialog.destroy()
+
+    def test_cancel_after(self):
+        # (2.0.1 F6) The one helper every page uses to cancel an ``after`` job.
+        fired = []
+        job = self.root.after(50, lambda: fired.append('job'))
+        ui_theme.cancel_after(self.root, job)
+        ui_theme.cancel_after(self.root, None)
+        ui_theme.cancel_after(self.root, job)                   # twice: no error
+        ui_theme.cancel_after(self.root, 'after#999999')       # an id that never existed: no error
+        self.root.after(150, lambda: fired.append('later'))
+        deadline = time.monotonic() + 2
+        while 'later' not in fired and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(.01)
+        self.assertEqual(fired, ['later'])
 
     def test_set_kind(self):
         start = ui_theme.button(self.stage, '开始下载', kind='primary',

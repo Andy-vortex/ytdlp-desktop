@@ -3,8 +3,8 @@
 
     python -X utf8 -B test_messages_ui_download.py
 
-* studio, ui_download and ui_log are converted (WP-6 removed the flag MESSAGES_READY), G1 and G5
-  clean, no localize call, no stored_text; their H4 constants keep the 1.7.0 values (PROXY_REASON now
+* studio, ui_download and ui_log are converted (WP-6 removed the flag MESSAGES_READY), no localize
+  call, no stored_text; their H4 constants keep the 1.7.0 values (PROXY_REASON now
   a message, D-F46);
 * D-F40 ... D-F49: the page raises messages, shows exceptions with error_text and core values with
   show (badge, log.ready, report_error, history write failure, placeholder title, proxy reason);
@@ -14,13 +14,13 @@
   reason dialog, unfinished row and reason dialog after save / load, dialogs and the hint, the row
   title.  en: no CJK (the samples are ASCII); zh: exactly zh(msg);
 * census (7.5): log, waiting, item_done and title as a Message, a Raw and a plain str (the last two
-  inside messages.exempt, they imitate an unconverted producer): no exception, the zh widget state
+  imitate an unconverted producer): no exception, the zh widget state
   identical for the three, en renders the message and shows the others as they are; (2.0.0 S2 P2) the
   history stores the message as {"k"} and the other two as their text (format 2);
 * regression cases through a scripted Runner into the window: D-H-1 (cookies echo), D-H-2 (reasons
   cut at 70), D-H-4 (a raw engine line that quotes app text); the 6.2b OS-error dialogs in en;
-* G2 at the display boundary: a message handed to i18n.t by a ready UI module is recorded (R-param;
-  the text recognition R-text is gone with S2 P2).
+* (2.0.1) a message handed to i18n.t by the page reads in the running language (i18n.t shows a message
+  param in the language of the call; the G2 guard that recorded it is gone).
 Smoke-mode windows (alpha 0, no frame), no network, no real engine.
 """
 import _sandbox
@@ -179,33 +179,12 @@ class AppCase(unittest.TestCase):
         return title, json.loads(data)
 
 
-# ============================================================================ modules, guards, constants
+# ============================================================================ modules and constants
 
 class ModuleTests(unittest.TestCase):
     def test_the_three_modules_are_ready(self):
         for name, module in (('studio', studio), ('ui_download', ui_download), ('ui_log', ui_log)):
             self.assertFalse(hasattr(module, 'MESSAGES_READY'), f'{name}: WP-6 removed the staging flag (7.8)')
-            self.assertIn(name, i18n_tool.g1_modules(), name)
-
-    def test_g1_and_g5_are_clean_and_no_allow_entry_is_stale(self):
-        context = i18n_tool.GuardContext()
-        findings = []
-        for name in MODULES:
-            findings += i18n_tool.g1_module(context, name)
-            findings += i18n_tool.g1c_module(context, context.module(name))
-        self.assertEqual([f'{f["rule"]} {f["file"]}:{f["line"]} {f["text"][:60]!r}' for f in findings], [])
-        self.assertEqual(i18n_tool.sinks_scan(modules=list(MODULES)), [])
-        # with all six UI modules (sink methods resolve across the mixins): nothing in these three files
-        everywhere = i18n_tool.sinks_scan(modules=list(i18n_tool.UI_MODULES))
-        self.assertEqual([f for f in everywhere if f['file'] in {f'{name}.py' for name in MODULES}], [])
-        for name in MODULES:
-            self.assertEqual(i18n_tool.allow_stale(context, name), [], name)
-            allow = context.allow(name)
-            self.assertNotIn('pending_keys', allow, name)
-            self.assertEqual([text for text, entry in allow['literals'].items() if entry['category'] == 'pending'], [])
-            for text, entry in allow['sinks'].items():
-                self.assertTrue(entry.get('reason'), f'{name}: {text!r}')
-                self.assertIsInstance(entry.get('line_hint'), int, f'{name}: {text!r}')
 
     def test_localize_and_stored_text_are_gone(self):
         for name in MODULES:
@@ -280,6 +259,19 @@ class FlowTests(AppCase):
                 self.assertEqual(CJK.findall(line), [], line)
             else:
                 self.assertIn(zh(failure.args[0]), line)
+
+    def test_launch_shows_connecting_in_the_running_language(self):
+        """(2.0.1 N4) Right after launch (before any engine event) the metrics line reads
+        download.metrics.connecting in the running language."""
+        for lang in ('en', 'zh'):
+            app = self.make_app(lang)
+            with mock.patch.object(ui_download, 'Runner', FakeRunner):
+                self.assertTrue(app.launch([URL], engine.Options(_sandbox.out('ui-download-msgs', 'out'))))
+                metrics = ui_theme.full_text(app.metrics)
+                pump(app, lambda: not app.busy, timeout=5)
+            self.assertEqual(metrics, i18n.t('download.metrics.connecting'), lang)
+            if lang == 'en':
+                self.assertEqual(CJK.findall(metrics), [], metrics)
 
     def test_d_f43_badge_and_ready_line_show_the_builtin_message(self):
         for lang, badge, ready in (('en', 'yt-dlp ' + en_t('core.update.builtin'),
@@ -760,19 +752,17 @@ class RegressionTests(AppCase):
                 self.assertEqual(expected, str(failure))
             self.close(app)
 
-
-# ============================================================================ G2 at the display boundary
-
-@unittest.skipUnless(messages.GUARD, 'needs the guard (run_tests.py sets it)')
-class BoundaryGuardTests(AppCase):
-
-    def test_a_message_handed_to_t_by_the_page_is_recorded(self):
+    def test_a_message_handed_to_t_by_the_page_reads_english(self):
+        """(2.0.1) A message handed straight to i18n.t by the page (no show()) reads as the shown one: in
+        English, no Chinese (i18n.t shows a message param in the language of the call)."""
         app = self.make_app('en')
-        with messages.guard_capture() as records:
-            app.hint_subscription_check(msg('value.subscription.untitled'))
-            app.hint_subscription_check(messages.show(msg('value.subscription.untitled')))
-        self.assertEqual([(item['rule'], item['producer'].split(':')[0]) for item in records],
-                         [('R-param', 'ui_download.py')])
+        app.hint_subscription_check(msg('value.subscription.untitled'))
+        handed = app.link_note.cget('text')
+        app.hint_subscription_check(messages.show(msg('value.subscription.untitled')))
+        shown = app.link_note.cget('text')
+        self.assertEqual(handed, shown)
+        self.assertEqual(handed, en_t('download.hint.subscription_check', name=en_t('value.subscription.untitled')))
+        self.assertEqual(CJK.findall(handed), [], handed)
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 # 架构
 
-YT-DLP 下载器 2.0.0：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
-怎么跑程序和测试、怎么改文字见 `AGENTS.md`；数据格式的细节见 `docs\DATA.md`，文字守卫的合约见 `docs\GUARDS.md`；用户能看到的规则见 `使用说明.txt`。
+YT-DLP 下载器 2.0.1：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
+怎么跑程序和测试、怎么改文字见 `AGENTS.md`；数据格式的细节见 `docs\DATA.md`；用户能看到的规则见 `使用说明.txt`。
 代码注释里形如 `MESSAGES.md 6`、`I18N.md`、`GLOSSARY.md`、`WP3` 的引用指 1.x 的设计文档，它们在标签 `v1.8.1` 里，不在主干。
 
 ## 1. 进程与线程
@@ -31,7 +31,7 @@ YT-DLP 下载器 2.0.0：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 
 ## 2. 模块地图
 
-`src\` 平铺。依赖方向：界面 → 核心 → 基础。核心模块（`engine`、`unfinished`、`library`、`collector`、`updater`、`urls`、`formats`、`naming`）不用任何 `i18n` 属性，唯一例外是 `library` 写文件时的 `i18n.t('filetext.*')`；它们用 `messages.msg` 造消息（守卫 G1d）。
+`src\` 平铺。依赖方向：界面 → 核心 → 基础。核心模块（`engine`、`unfinished`、`library`、`collector`、`updater`、`urls`、`formats`、`naming`）不用任何 `i18n` 属性，唯一例外是 `library` 写文件时的 `i18n.t('filetext.*')`；它们用 `messages.msg` 造消息（`test_source_rules` 的 S2 钉住）。
 
 | 模块 | 职责 | 主要入口 |
 |---|---|---|
@@ -132,7 +132,7 @@ YT-DLP 下载器 2.0.0：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 | 其余 `log.` `dialog.` `filetext.` | 显示它的那一页；两页以上用到的放 `i18n_common`（不检查） |
 
 - 同一文件里还有 `GROUPS`（菜单的代码值 → 编号）和 `TAGS`（日志行标红 / 标绿：编号 → `'error'` / `'ok'`）。只放编号，不放文字。
-- 界面代码用 `i18n.t(编号, 名字=值)`、`i18n.label(组, 代码值)`。核心模块按第 2 节的规则用 `messages.msg(编号, ...)` 造消息，界面显示时经 `messages.show` / `error_text` 按当前语言渲染。
+- 界面代码用 `i18n.t(编号, 名字=值)`、`i18n.label(组, 代码值)`。核心模块按第 2 节的规则用 `messages.msg(编号, ...)` 造消息，界面显示时经 `messages.show` / `error_text` 按当前语言渲染；`i18n.t` 的参数是消息（或只带一条消息的异常）时，也按本次调用的语言显示（`Message.text_in`），f-string、拼接、`configure(text=…)` 不经过 `t()`，仍要 `show`。
 - 语言：环境变量 `YTDLP_DESKTOP_LANG`（`zh` / `en`）> 设置 `language` > Windows 显示语言或区域格式（有一个是中文就用中文）。进程内固定，切换要重启。
 
 ## 6. 测试
@@ -158,9 +158,8 @@ YT-DLP 下载器 2.0.0：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 | `test_poll_order` | poll 的事件顺序、`progress` 合并、出错不停 |
 | `test_engine_blocks`、`test_golden_runonce`、`test_golden_events`、`test_golden_argv` | `_run_once` 读取循环、`_cooled` 的 429 冷却、`finally` 里的清单合并；事件序列；命令行参数矩阵 |
 | `test_identity_vectors` | `urls.identity`、`link_key` 的固定结果（它们是用户数据里的键） |
-| `test_i18n_catalog` | 目录规则：编号排序与不重复、所在文件、占位符两边一致、英文无中文、每个编号有使用者、`stored-keys.json` 只增不减 |
-| `test_text_guard` | 静态守卫，对 `src` 实跑：G1（目录文件以外的中文字面量都登记在 `verification\golden\text-allow\<模块>.json`；核心模块的 `i18n` 用法 G1d）、G5（界面上显示的值是当前语言的文字），合约见 `docs\GUARDS.md`，报错写出规则、`<文件>:<行>` 和文字；所有文本文件是 LF；仓库文件里没有本机用户名、用户目录、git 邮箱、`<盘符>:\Users\<真名>` 路径，邮箱只用保留测试域名（example.org 等） |
-| G2（`run_tests.py` 给 `GUARD_OFF` 以外的每个测试文件开 `YTDLP_DESKTOP_MSG_GUARD`） | 运行时：消息被当普通字符串拼接、切片或渲染错语言时记一条违规，有违规该文件就失败 |
+| `test_i18n_catalog` | 目录规则：编号排序与不重复、所在文件、占位符两边一致、英文无中文、每个编号有使用者、`stored-keys.json` 只增不减；`messages.msg` 的编号必须写成字面量（要选编号就写 `a if 条件 else b`） |
+| `test_source_rules` | 读源码的规则：`src` 里目录文件以外的中文字面量都登记在 `verification\golden\text-allow.json`（逐条写理由，不能等于目录中文，总数钉住）；核心模块不用 `i18n`；不写 `from i18n import`；所有文本文件是 LF；仓库文件里没有本机用户名、用户目录、git 邮箱、`<盘符>:\Users\<真名>` 路径，邮箱只用保留测试域名（example.org 等）。报错写出 `<文件>:<行>`、事实和怎么改 |
 | `test_messages_ui`、`test_messages_ui_download`、`test_messages_store` | G4：每个消息编号经每条通道（事件、存储、对话框、日志）在英文下显示正确 |
 | `test_golden_ui` | 按固定顺序送入每种事件和忙闲切换后，外壳和各页控件的状态与 `verification\golden\ui.json` 一致 |
 | `test_i18n_ui`、`test_i18n_snapshot` | 英文界面除用户数据外没有中文 |

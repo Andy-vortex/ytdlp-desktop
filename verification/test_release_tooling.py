@@ -513,48 +513,6 @@ class GateLayout(Base):
         self.assertIn('_internal/vendor/bin/ffmpeg.exe', [item['path'] for item in files])
 
 
-class GateMessageEvidence(unittest.TestCase):
-    """(1.8.0 WP-6, MESSAGES.md 10.3) Step 5's message-key evidence: msg_guard.violations == 0 on checked test
-    files, no pending_keys.  (2.0.0 S2 Q4) The check of the frozen released sources against their pins went
-    with those sources."""
-
-    REPORT = {'msg_guard': {'files_checked': 51, 'violations': 0, 'exemptions': 49, 'not_guarded': ['x.py']}}
-
-    def setUp(self):
-        self.work = Path(tempfile.mkdtemp(prefix='gate-messages-', dir=os.environ['TEMP']))
-        self.addCleanup(shutil.rmtree, self.work, True)
-
-    def test_the_live_tree_passes_and_the_receipt_fields_are_complete(self):
-        evidence = gate.check_message_evidence(self.REPORT)
-        self.assertEqual(evidence['msg_guard']['violations'], 0)
-        self.assertEqual(evidence['pending_keys'], [])
-        self.assertEqual(set(evidence), {'msg_guard', 'pending_keys'})
-        self.assertEqual(evidence['msg_guard'], self.REPORT['msg_guard'])
-        self.assertFalse(hasattr(gate, 'release_sources'))
-        self.assertEqual(gate.pending_keys(), [])
-
-    def test_a_guard_violation_or_a_missing_guard_refuses(self):
-        for report, pattern in (({'msg_guard': dict(self.REPORT['msg_guard'], violations=1)}, 'violations is 1'),
-                                ({}, 'no msg_guard'),
-                                ({'msg_guard': dict(self.REPORT['msg_guard'], files_checked=0)}, 'checked no test file')):
-            with self.subTest(pattern=pattern), self.assertRaisesRegex(gate.GateError, pattern):
-                gate.check_message_evidence(report)
-
-    def test_a_pending_key_refuses(self):
-        allow = self.work / 'text-allow'
-        shutil.copytree(gate.ALLOW_DIR, allow)
-        path = allow / 'engine.json'
-        data = json.loads(path.read_text(encoding='utf-8'))
-        data['pending_keys'] = {'core.engine.new_text': {'zh': '新文字', 'en': 'New text'}}
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
-        with self.assertRaisesRegex(gate.GateError, 'pending_keys are left.*engine: core.engine.new_text'):
-            gate.check_message_evidence(self.REPORT, allow_dir=allow)
-        data['pending_keys'] = {}
-        data['literals']['新文字'] = {'category': 'pending', 'reason': 'test'}
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
-        self.assertEqual(gate.pending_keys(allow), ['engine: 新文字 (category pending)'])
-
-
 class GateTestEvidence(unittest.TestCase):
     """(2.0.0 S1) Step 5 takes the pair "source report + exe report".  The pair is made here by run_tests.main with
     the very arguments build.py passes, over a throwaway test folder (one file per tier), then altered one way at a
@@ -636,6 +594,11 @@ class GateTestEvidence(unittest.TestCase):
                          (self.runner.source_sha256(), sha(self.exe.read_bytes())))
         self.assertFalse((self.work / 'verify' / 'report.json').read_text(encoding='utf-8') == self.good['report-source.json'],
                          'report.json is the last run (the exe pass); the gate does not read it')
+        # (2.0.0 S2 Q4) the frozen released sources are gone; (2.0.1) so is the message-key evidence of 1.8.0
+        # (msg_guard, pending_keys): the reports carry no msg_guard and the gate asks for none
+        self.assertFalse(hasattr(gate, 'release_sources'))
+        self.assertFalse(hasattr(gate, 'check_message_evidence') or hasattr(gate, 'pending_keys'))
+        self.assertNotIn('msg_guard', evidence['report'])
 
     def test_a_missing_report_refuses(self):
         with self.assertRaisesRegex(gate.GateError, r'missing .*report-source\.json; run build\.py'):
@@ -673,8 +636,6 @@ class GateTestEvidence(unittest.TestCase):
             self.gate(exe=lambda data: data.update(tiers=['default']))
         with self.assertRaisesRegex(gate.GateError, 'report-exe.json is a partial run'):
             self.gate(exe=lambda data: data.update(filter='packaged'))
-        with self.assertRaisesRegex(gate.GateError, 'report-exe.json msg_guard.violations is 2'):
-            self.gate(exe=lambda data: data['msg_guard'].update(violations=2))
 
     def test_an_incomplete_or_parallel_source_report_refuses(self):
         def without(name):
@@ -691,8 +652,7 @@ class GateTestEvidence(unittest.TestCase):
                                 (lambda data: data.update(only_tier='all'), 'run of the sources'),
                                 (lambda data: data['results'][1].update(status='failed'), 'did not pass: test_b.py'),
                                 (lambda data: data['results'].append({'file': 'isolation', 'tier': 'default',
-                                                                      'status': 'failed'}), 'did not pass: isolation'),
-                                (lambda data: data.update(msg_guard={}), 'checked no test file')):
+                                                                      'status': 'failed'}), 'did not pass: isolation')):
             with self.subTest(pattern=pattern), self.assertRaisesRegex(gate.GateError, pattern):
                 self.gate(source=change)
 
@@ -854,6 +814,20 @@ class InstallerFileList(Base):
         code, text = self.install()
         self.assertEqual(code, 1, text)
         self.assertIn('文件清单不完整或已被改动', text)
+
+
+class Leftovers(unittest.TestCase):
+    def test_leftovers_that_cannot_be_removed_only_note_and_the_build_goes_on(self):
+        # (2.0.1 F7) build/dist and build/work after the checked stage are removed best effort
+        tried, said = [], []
+        def refuse(path):
+            tried.append(Path(path).name)
+            raise build.BuildError(f'could not remove {path}')
+        with patch.object(build, 'remove_folder', refuse), patch.object(build, 'say', said.append):
+            build.remove_leftovers()                         # no exception
+        self.assertEqual(tried, ['dist', 'work'])
+        self.assertEqual(len(said), 2)
+        self.assertTrue(all('the build goes on' in line for line in said), said)
 
 
 if __name__ == '__main__':
