@@ -266,14 +266,14 @@ def history_title(row):
     form, text = parts[0], parts[1]
     if form == 'subscription':
         return i18n.t('value.job_title.subscription',
-                      name=messages.show(messages.raw(text) or messages.msg('value.subscription.untitled')))
+                      name=messages.show(text or messages.msg('value.subscription.untitled')))
     if form == 'multi':
-        return i18n.t('value.job_title.multi', title=messages.show(messages.raw(text)), count=int(parts[2]))
+        return i18n.t('value.job_title.multi', title=messages.show(text), count=parts[2])
     if form == 'link':
         return urltools.display(text)
     if form == 'multi_link':
-        return i18n.t('value.job_title.multi', title=urltools.display(text), count=int(parts[2]))
-    return messages.show(messages.raw(text))
+        return i18n.t('value.job_title.multi', title=urltools.display(text), count=parts[2])
+    return messages.show(text)
 
 
 def history_status(row):
@@ -858,12 +858,11 @@ class LibraryUI:
             error, reason = (last.get('error'), last.get('reason')) if isinstance(last, dict) else (last, None)
             error = error if isinstance(error, str) else str(error)
             if record['kind'] != 'collect':
-                if isinstance(reason, str) and messages.zh(reason):
+                if isinstance(reason, str) and reason:
                     error = reason
                 else:
-                    plain = messages.zh(error)
-                    error = explain_error(error, bot_check=bool(BOT_CHECK_PATTERN.search(plain)),
-                                          stale=bool(STALE_PATTERN.search(plain)))
+                    error = explain_error(error, bot_check=bool(BOT_CHECK_PATTERN.search(error)),
+                                          stale=bool(STALE_PATTERN.search(error)))
             # a collector message, a stored reason or explain_error's result; the 1.7.0 cut of the shown text
             text += i18n.t('library.history.last_error', error=messages.show(error)[:130])
         return text
@@ -1344,7 +1343,7 @@ class LibraryUI:
             return
         count = self.library.ignore_entries(row['id'], [item['url'] for item in items])
         self.refresh_library()
-        self.append_log(i18n.t('library.pending.log_ignored', count=int(count), name=messages.show(row['name'])))
+        self.append_log(i18n.t('library.pending.log_ignored', count=count, name=messages.show(row['name'])))
 
     def delete_subscription(self):
         self.subscription_action(self._delete_subscription)
@@ -1368,7 +1367,7 @@ class LibraryUI:
             return
         if not messagebox.askyesno(i18n.t('library.subscription.delete_title'),
                                    i18n.t('library.subscription.delete_text', name=messages.show(row['name']),
-                                          pending=int(row['pending'])),
+                                          pending=row['pending']),
                                    icon='warning', default='no', parent=self):
             return
         # The dialog runs the event loop: the subscription timer may have started a check meanwhile.
@@ -1383,7 +1382,7 @@ class LibraryUI:
         self.refresh_library()
         if found:
             self.append_log(i18n.t('library.subscription.log_deleted', name=messages.show(row['name']),
-                                   pending=int(row['pending'])))
+                                   pending=row['pending']))
         else:
             self.subscription_hint(i18n.t('library.subscription.gone'))
 

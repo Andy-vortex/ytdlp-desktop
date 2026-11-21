@@ -829,6 +829,34 @@ class Leftovers(unittest.TestCase):
         self.assertEqual(len(said), 2)
         self.assertTrue(all('the build goes on' in line for line in said), said)
 
+    def test_leftovers_are_removed_without_a_note(self):
+        # (2.0.2) the success path: build/dist and build/work (with files in them) are gone, nothing is said
+        base = Path(tempfile.mkdtemp(prefix='leftovers-')).resolve()
+        try:
+            for name in ('dist', 'work'):
+                (base / name / 'sub').mkdir(parents=True)
+                (base / name / 'sub' / 'file.bin').write_bytes(b'x' * 10)
+            (base / 'keep.txt').write_text('stays', encoding='utf-8')
+            said = []
+            with patch.object(build, 'BUILD', base), patch.object(build, 'say', said.append):
+                build.remove_leftovers()
+            self.assertFalse((base / 'dist').exists())
+            self.assertFalse((base / 'work').exists())
+            self.assertTrue((base / 'keep.txt').exists())            # only the two folders
+            self.assertEqual(said, [])
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
+
+    def test_main_removes_the_leftovers(self):
+        # (2.0.2) build.main really calls remove_leftovers() (once, without arguments)
+        import ast
+        tree = ast.parse((ROOT / 'build.py').read_text(encoding='utf-8'))
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        calls = [node for node in ast.walk(main) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'remove_leftovers']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual((calls[0].args, calls[0].keywords), ([], []))
+
 
 if __name__ == '__main__':
     unittest.main()

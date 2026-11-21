@@ -35,7 +35,7 @@ from updater import engine_path
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '2.0.1'
+APP_VERSION = '2.0.2'
 # The persisted format values (the preset ids, formats.MODES) and resolutions ('best': no limit).
 MODES = formats.MODES
 RESOLUTIONS = (formats.BEST, '2160p / 4K', '1440p', '1080p', '720p', '480p')
@@ -101,7 +101,7 @@ def explain_error(text, code=1, bot_check=False, stale=False) -> str:
     type of ``text``: a Message keeps its key (en shows it whole) and its zh text is the 1.7.0
     expression (stripped, the extractor prefix removed, cut to 70 characters), a Raw text stays
     Raw, a plain text gives the 1.7.0 expression."""
-    plain = messages.zh(text or '').strip()
+    plain = str(text or '').strip()
     if bot_check:
         return BOT_CHECK_REASON
     for pattern, reason in ERROR_REASONS:
@@ -113,7 +113,7 @@ def explain_error(text, code=1, bot_check=False, stale=False) -> str:
         return msg('core.reason.exit_code', code=code)
     fallback = _EXTRACTOR_PREFIX.sub('', plain, count=1)[:70]
     if isinstance(text, messages.Message):
-        if fallback == messages.zh(text)[:70]:
+        if fallback == text[:70]:
             return cut(text, 70)
         # (final review 1, ZH-1) edge whitespace or an extractor prefix: the 1.7.0 zh text, key kept
         # (rebuilt the way cut() rebuilds a Message)
@@ -1002,7 +1002,7 @@ def _sentence(error) -> str:
     a str method that would flatten it.  The zh text is the 1.7.0 one either way."""
     text = message_of(error)
     if isinstance(text, messages.Message):
-        return cut(text, len(messages.zh(text).rstrip().rstrip('。.．').rstrip()))
+        return cut(text, len(text.rstrip().rstrip('。.．').rstrip()))
     return str(error).rstrip().rstrip('。.．').rstrip()
 
 

@@ -1,6 +1,6 @@
 # 架构
 
-YT-DLP 下载器 2.0.1：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
+YT-DLP 下载器 2.0.2：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
 怎么跑程序和测试、怎么改文字见 `AGENTS.md`；数据格式的细节见 `docs\DATA.md`；用户能看到的规则见 `使用说明.txt`。
 代码注释里形如 `MESSAGES.md 6`、`I18N.md`、`GLOSSARY.md`、`WP3` 的引用指 1.x 的设计文档，它们在标签 `v1.8.1` 里，不在主干。
 
@@ -172,7 +172,7 @@ YT-DLP 下载器 2.0.1：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 | 命令 | 做什么 |
 |---|---|
 | `prepare_vendor.py` | 按 `vendor.lock.json` 下载 yt-dlp、Deno、FFmpeg，逐个核对 SHA-256 后填好 `vendor\`（`vendor\` 不进仓库）；`--update` 只改锁文件；`--record-local` 离线记录现有文件 |
-| `build.py [--skip-tests]` | ① 按 `vendor\manifest.json` 核对 vendor；② 串行 `run_tests.py --all`；③ PyInstaller `app.spec`（文件夹版）；④ 暂存到 `build\package-<版本>\YT-DLP下载器` 并写 `build.json`；⑤ 对暂存的 exe 跑 exe 层，再跑发布门禁。从不联网下载 |
+| `build.py [--skip-tests]` | ① 按 `vendor\manifest.json` 核对 vendor；② 串行 `run_tests.py --all`；③ PyInstaller `app.spec`（文件夹版）；④ 暂存到 `build\package-<版本>\YT-DLP下载器` 并写 `build.json`，随后尽力删除 `build\dist`、`build\work`（删不掉只提示）；⑤ 对暂存的 exe 跑 exe 层，再跑发布门禁。从不联网下载 |
 | `verification\verify_release.py [--stage 目录]` | 门禁：文件布局与 vendor 哈希；两次 `--self-test`；打包 exe 的夹具下载；界面冒烟；两份测试报告属于这份源码、这些测试（`tests_sha256`）和这个 exe；暂存目录在运行后没变。通过后写 `build\verify\release-<版本>.json`（含逐文件清单） |
 | `install_release.py --stage <暂存目录> --target <程序目录> [--dry-run]` | 程序在运行时拒绝；按 `release-<版本>.json` 逐文件核对暂存目录；复制并再核对；上一版移进 `_previous\`；改名切换（写 `install-receipt.json` 是提交点）；在安装位置自检、下载冒烟、界面冒烟；任何一步失败自动回滚。`data\`、`下载文件\` 不碰 |
 | `install_release.py --target <程序目录> --rollback` | 按 `install-receipt.json` 把当前版本移到 `_rolledback-<版本>\`，恢复上一版。中途断电留下的 `install-journal.json` 在下次运行时先被撤销或补完 |

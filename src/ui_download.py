@@ -775,7 +775,7 @@ class DownloadUI:
         except ValueError:
             mode = str((entry.get('options') or {}).get('mode', ''))
             # an unknown id shows itself
-            label = i18n.t('format.' + mode) if mode in formats.MODES else messages.show(messages.raw(mode))
+            label = i18n.t('format.' + mode) if mode in formats.MODES else messages.show(mode)
         url = entry.get('url', '')
         return {'index': len(self.row_model), 'url': url, 'key': entry.get('key', ''),
                 'options': self._entry_options(entry, log=False), 'state': 'unfinished',

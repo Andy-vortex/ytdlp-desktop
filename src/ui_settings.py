@@ -546,7 +546,7 @@ class SettingsUI:
         self.show_engine_notice(newer)
         if newer and not self.busy and not self.update_status.cget('text'):
             # a newer version known from an earlier check is said at start too, until something else is said
-            shown_latest = messages.show(messages.raw(latest))
+            shown_latest = messages.show(latest)
             self.update_status.configure(text=i18n.t('settings.update.available', latest=shown_latest),
                                          text_color=ui_theme.ACCENT_TEXT)
             _reveal(self.update_status)

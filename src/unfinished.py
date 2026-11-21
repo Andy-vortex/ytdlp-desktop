@@ -170,7 +170,7 @@ def _report(text, log=None) -> None:
     """One Chinese line to download.log and, when given, to ``log`` (the task log page).  (1.8.0)
     ``text`` is a message: download.log gets its zh text, as in 1.7.0; ``log`` the message."""
     try:
-        _log.warning('%s', messages.zh(text))     # (1.8.0) the plain zh text: a handler composes it
+        _log.warning('%s', text)     # (1.8.0) the plain zh text: a handler composes it
     except Exception:
         pass
     if log is not None:

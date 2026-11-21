@@ -71,7 +71,7 @@ def is_busy(error):
     code = getattr(error, 'sqlite_errorcode', None)
     if isinstance(code, int):
         return code & 0xFF in (5, 6)
-    text = messages.zh(str(error)).lower()     # (2.0.0) NotV2 carries a Message
+    text = str(error).lower()     # (2.0.0) NotV2 carries a Message
     return 'database is locked' in text or 'database table is locked' in text or 'database is busy' in text
 
 
@@ -292,7 +292,7 @@ def _storable(value):
             value.encode('utf-8')
             return value
         except UnicodeEncodeError:
-            text = messages.zh(value).encode('utf-8', 'replace').decode('utf-8')
+            text = value.encode('utf-8', 'replace').decode('utf-8')
         if isinstance(value, messages.Message):
             params = {name: _storable(item) for name, item in value.params.items()}
             return messages.Message(text, value.key, params)
@@ -616,7 +616,7 @@ class Library:
                 # The first title names the job, so the history shows a song instead of a link.
                 # (2.0.0, S2-DESIGN.md 1.2) The title column gets the media's own text; with several
                 # links, title_links keeps how many the job had at that moment ('<title> 等 n 条').
-                if isinstance(value, str) and messages.zh(value).strip() and not row['title']:
+                if isinstance(value, str) and value.strip() and not row['title']:
                     count = len((data.get('options') or {}).get('urls') or [])
                     db.execute('UPDATE jobs SET title=? WHERE id=?', (messages.zh(value), job))
                     if count > 1:
@@ -669,7 +669,7 @@ class Library:
                     # shows (polish ui-wording-consistency-5); None when there was none.
                     error = value['error']
                     reason = value.get('reason')
-                    reason = stripped(reason) if isinstance(reason, str) and messages.zh(reason).strip() else None
+                    reason = stripped(reason) if isinstance(reason, str) and reason.strip() else None
                     error = error if isinstance(error, str) else raw(str(error))
                     data.setdefault('errors', []).append({'error': error, 'reason': reason})
                     data['errors'] = data['errors'][-20:]
@@ -695,7 +695,7 @@ class Library:
         data = dict(options=options, media_only=media_only, first_new=first_new,
                     initialized=False, last_check=None, last_error='', last_new=0)
         # (2.0.0) The name column holds the name the owner typed ('' for none: shown as the untitled one).
-        name = messages.zh(name).strip()[:100]
+        name = name.strip()[:100]
         with self.db() as db:
             db.execute('INSERT INTO subscriptions VALUES(?,?,?,?,?,?)',
                        (key, name, 1, interval, time.time(), _dump(data, 'subscription')))
@@ -723,7 +723,7 @@ class Library:
         """(1.8.1) The name column, in one transaction.  The owner's text, cut to 100 characters; an
         empty name is the untitled one (as subscription()).  The record is not touched.  True when the
         subscription exists."""
-        name = messages.zh(str(name)).strip()[:100]
+        name = str(name).strip()[:100]
         with self.tx() as db:
             return db.execute('UPDATE subscriptions SET name=? WHERE id=?', (name, key)).rowcount > 0
 

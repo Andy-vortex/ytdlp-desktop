@@ -212,6 +212,16 @@ class CarrierTests(unittest.TestCase):
             self.assertEqual(i18n.t('test.start', error=value), '无法开始：' + str.__str__(str(value)))
         self.assertEqual(m.text_in('zh'), str.__str__(m))
         self.assertIs(type(m.text_in('zh')), str)
+        # (2.0.2) the proxy mask token too: in a zh UI, text_in('en') (and _shown(…, 'en')) give the English token
+        self.assertEqual(i18n.language(), 'zh')
+        proxy = _sandbox.en_t('core.proxy_mask')
+        self.assertNotEqual(proxy, messages.PROXY_TOKEN)
+        token_text = messages.PROXY_TOKEN + ' x'
+        masked = msg('test.start', error=raw(token_text))
+        self.assertEqual(masked.text_in('en'), 'Could not start: ' + proxy + ' x')
+        self.assertEqual(messages._shown(raw(token_text), 'en'), proxy + ' x')
+        self.assertEqual(messages._shown(token_text, 'en'), proxy + ' x')
+        self.assertEqual(messages.show(masked), '无法开始：' + token_text, 'the zh UI keeps the stored token')
 
 
 # ============================================================================ constructors

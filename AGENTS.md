@@ -38,7 +38,7 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 - 文字只写在 `src\i18n_<页>.py` 的 `TEXTS` 里：`'编号': ('中文', 'English')`，编号按字母序。编号前缀决定文件（`verification\test_i18n_catalog.py` 的 `PREFIX_FILES`）。
 - 改一条：`git grep -n "旧文字" -- src/i18n_*.py`，在那一行同时改中文和英文（`{占位符}` 两边一致）。然后跑 `--quick`，再跑 `-k test_golden_ui,test_i18n_ui`。
 - 加一条：在对应文件里按字母序加 `'页.区域.名字': ('中文', 'English')`；代码里写 `i18n.t('页.区域.名字', 名字=值)`，核心模块写 `messages.msg`。菜单的值 → 编号写在同一文件的 `GROUPS`；日志里要标红或标绿的新行，自己在同一文件的 `TAGS` 里写 `'error'` 或 `'ok'`（不写就是普通颜色，没有测试会提醒）。
-- 消息怎么显示：**只有 `i18n.t` 的参数**可以直接传消息（`messages.msg` 的结果）或带一条消息的异常，`t()` 按界面语言显示它；f-string、拼接、`configure(text=…)`、messagebox 仍要 `messages.show()` / `error_text()`。已有的 `show()` 不要去掉。
+- 消息怎么显示：**只有 `i18n.t` 的参数**可以直接传消息（`messages.msg` 的结果）或带一条消息的异常，`t()` 按界面语言显示它；f-string、拼接、`configure(text=…)`、messagebox 仍要 `messages.show()` / `error_text()`。已有的 `show()` 不要去掉。遮蔽过代理的普通文本同样要先 `messages.show()`，不要直接当 `t()` 的参数。
 - 新加一条显示通道（新的事件种类、新的 `append_log` 或 `configure(text=…)` 来源）时，在 `verification\test_messages_ui.py` / `test_messages_ui_download.py` 的通道矩阵里加一条英文腿。
 - 换了调用处用的编号（`t('a')` 改成 `t('b')`）：目录检查测不出用错，跑那一页的页面测试（`-k test_page_download` 等）和 `-k test_golden_ui`。
 - 编号没人用了就删掉那一条。几个人并行改不同页面、要停用公共文件（`i18n_core / common / shell`）的编号时，不删公共文件：在自己那一页的文件里写 `RETIRED = ('common.x',)`，由合并的人删编号和这一行。
