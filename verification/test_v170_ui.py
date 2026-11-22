@@ -717,14 +717,36 @@ class FixRound1Tests(Base):
     is not JSON never stops the list) and v-ui-1-u1-worker-wait (the Runner's find_download does not
     hold a download's start for the worker timeout)."""
 
-    @staticmethod
-    def counting(thread):
-        """A sqlite3.connect stand-in that counts the connections ``thread`` opens."""
+    TRY = 0.03   # s: one try against an exclusive lock on Windows at the default timer resolution (library.py)
+
+    class Clock:
+        """library's time for the calling thread: monotonic() reads a clock the test moves and
+        sleep() moves it without sleeping; other threads and every other name get the real time."""
+
+        def __init__(self):
+            self.thread, self.now = threading.get_ident(), time.monotonic()
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def monotonic(self):
+            return self.now if threading.get_ident() == self.thread else time.monotonic()
+
+        def sleep(self, seconds):
+            if threading.get_ident() != self.thread:
+                return time.sleep(seconds)
+            self.now += seconds
+
+    @classmethod
+    def counting(cls, clock):
+        """A sqlite3.connect stand-in that counts the connections ``clock.thread`` opens; each costs
+        that thread TRY on ``clock``, so the count does not depend on the machine's timer resolution."""
         real, calls = sqlite3.connect, []
 
         def connect(*args, **kwargs):
-            if threading.get_ident() == thread:
+            if threading.get_ident() == clock.thread:
                 calls.append(time.perf_counter())
+                clock.now += cls.TRY
             return real(*args, **kwargs)
         return connect, calls
 
@@ -739,8 +761,10 @@ class FixRound1Tests(Base):
         try:
             for label, wait in (('default', None), ('write', library_ui.UI_WRITE_WAIT), ('once', 0)):
                 library._ui_quiet_until = 0.0
-                connect, calls = self.counting(threading.get_ident())
+                clock = self.Clock()
+                connect, calls = self.counting(clock)
                 with mock.patch.object(library.sqlite3, 'connect', connect), \
+                        mock.patch.object(library, 'time', clock), \
                         self.assertRaises(sqlite3.OperationalError):
                     if wait is None:
                         store.history()
@@ -751,8 +775,9 @@ class FixRound1Tests(Base):
                 self.assertIsNone(getattr(library._local, 'wait', None), 'ui_wait() ends with its block')
             # The HistoryWriter's immediate try on the window's thread (history_create, 加入队列, ...).
             library._ui_quiet_until = 0.0
-            connect, calls = self.counting(threading.get_ident())
-            with mock.patch.object(library.sqlite3, 'connect', connect):
+            clock = self.Clock()
+            connect, calls = self.counting(clock)
+            with mock.patch.object(library.sqlite3, 'connect', connect), mock.patch.object(library, 'time', clock):
                 self.assertFalse(writer.run(lambda: store.create_job('download', 'y', {'urls': []})))
             tries['writer'] = len(calls)
         finally:

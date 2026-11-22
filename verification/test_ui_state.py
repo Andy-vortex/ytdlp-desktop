@@ -23,6 +23,7 @@ import i18n
 import library
 import messages
 import paths
+import progress
 import settings
 import ui_download
 import ui_log
@@ -595,6 +596,347 @@ class CDownloadTests(Base):
             bar.set(value, immediate=True)
             self.assertEqual(bar.canvas.itemcget(bar._fill, 'state'), state, value)
         bar.destroy()
+
+    # --- 2.0.4: switches cross-fade (progress.FADE = 0.2 s); a hand-turned clock, frames run by hand ---
+
+    def fading_bar(self):
+        """A 306 x 6 px bar (span 300) on ``clock[0]``; after() only records, so nothing runs by itself."""
+        app = self.make_app()
+        bar = SmoothProgressBar(app, height=6)
+        clock = [100.0]
+        for patcher in (mock.patch('progress.time.perf_counter', lambda: clock[0]),
+                        mock.patch.object(bar.canvas, 'winfo_width', return_value=306),
+                        mock.patch.object(bar.canvas, 'winfo_height', return_value=6),
+                        mock.patch.object(bar, 'after', return_value='frame'),
+                        mock.patch.object(bar, 'after_cancel')):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return bar, clock
+
+    def assert_line(self, bar, item, span=None, opacity=1.0, side=0):
+        """``item`` is hidden (span None) or drawn over ``span`` (x0, x1) at ``opacity``: its colour
+        that share of the way from the track to the fill token; at 1 exactly the token."""
+        if span is None:
+            self.assertEqual(bar.canvas.itemcget(item, 'state'), 'hidden')
+            return
+        self.assertEqual(bar.canvas.itemcget(item, 'state'), 'normal')
+        x0, _y, x1, _y = bar.canvas.coords(item)
+        self.assertEqual((round(x0), round(x1)), span)
+        colour = bar.canvas.itemcget(item, 'fill').upper()
+        if opacity == 1:
+            self.assertEqual(colour, ui_theme.ACCENT[side])
+            return
+        track, fill = ([int(token[side][i:i + 2], 16) for i in (1, 3, 5)] for token in (ui_theme.TRACK, ui_theme.ACCENT))
+        drawn = [int(colour[i:i + 2], 16) for i in (1, 3, 5)]
+        channel = max(range(3), key=lambda i: abs(fill[i] - track[i]))
+        self.assertAlmostEqual((drawn[channel] - track[channel]) / (fill[channel] - track[channel]), opacity, delta=.01)
+
+    def frame_at(self, bar, clock, now):
+        clock[0] = now
+        bar._tick()
+
+    def test_a_reset_or_a_new_file_fades_the_old_fill_out(self):
+        bar, clock = self.fading_bar()
+        bar.set(1, immediate=True)
+        self.assert_line(bar, bar._fill, (3, 303))
+        clock[0] = 101
+        bar.set(0, immediate=True)                          # launch, retry, the next link
+        self.assertEqual((bar.target, bar.get()), (0, 0))   # the value lands at once; only the picture fades
+        self.assert_line(bar, bar._fill, None)
+        self.assert_line(bar, bar._ghost, (3, 303))
+        self.assertEqual(bar._frame_id, 'frame')
+        self.frame_at(bar, clock, 101.08)                   # the first frame, late (a busy main thread):
+        self.assert_line(bar, bar._ghost, (3, 303))         # the fade has not started, not half over
+        self.frame_at(bar, clock, 101.08)                   # the next one on time: the fade starts here
+        self.assert_line(bar, bar._ghost, (3, 303))
+        self.frame_at(bar, clock, 101.13)
+        self.assert_line(bar, bar._ghost, (3, 303), .75)
+        self.frame_at(bar, clock, 101.23)
+        self.assert_line(bar, bar._ghost, (3, 303), .25)
+        self.frame_at(bar, clock, 101.29)
+        self.assert_line(bar, bar._ghost, None)
+        self.assertIsNone(bar._frame_id, 'no frames once the fade is over')
+        bar.set(.9, immediate=True)
+        clock[0] = 102
+        bar.set(.05)                                        # video done, audio starts: a drop of 0.15 or more
+        self.assertEqual(bar.get(), .05)
+        self.assert_line(bar, bar._fill, (3, 18))           # the new fill is there at once
+        self.assert_line(bar, bar._ghost, (3, 273))
+        self.frame_at(bar, clock, 102)
+        self.frame_at(bar, clock, 102)
+        self.frame_at(bar, clock, 102.1)
+        self.assert_line(bar, bar._ghost, (3, 273), .5)
+        self.assertEqual(bar.canvas.find_all()[-1], bar._fill, 'the solid new fill stays on top')
+        self.frame_at(bar, clock, 102.25)
+        self.assert_line(bar, bar._ghost, None)
+        self.assert_line(bar, bar._fill, (3, 18))
+        self.assertIsNone(bar._frame_id)
+
+    def test_mode_switches_cross_fade_the_segment_and_the_fill(self):
+        bar, clock = self.fading_bar()
+        bar.configure(mode='indeterminate')                 # ui_download.animate(True)
+        bar.start()
+        self.frame_at(bar, clock, 100.9)                    # half a pass: the segment is in the middle
+        self.assert_line(bar, bar._fill, (108, 198))
+        self.assert_line(bar, bar._ghost, None)
+        bar.stop()                                          # animate(False), then the first report
+        bar.configure(mode='determinate')
+        bar.set(.4)
+        self.assert_line(bar, bar._ghost, (108, 198))       # the segment fades where it was
+        self.assert_line(bar, bar._fill, None)              # and the fill grows from 0
+        self.frame_at(bar, clock, 100.9)
+        self.frame_at(bar, clock, 100.9)
+        self.frame_at(bar, clock, 100.95)
+        self.assert_line(bar, bar._ghost, (108, 198), .75)
+        self.assert_line(bar, bar._fill, (3, 28), .25)
+        self.assertEqual(bar.canvas.find_all()[-1], bar._ghost, 'the more visible line is on top')
+        self.frame_at(bar, clock, 101.05)
+        self.assert_line(bar, bar._ghost, (108, 198), .25)
+        self.assert_line(bar, bar._fill, (3, 78), .75)
+        self.assertEqual(bar.canvas.find_all()[-1], bar._fill)
+        self.frame_at(bar, clock, 101.11)
+        self.assert_line(bar, bar._ghost, None)
+        self.assert_line(bar, bar._fill, (3, 108))          # the token colour, exactly
+        self.assertLessEqual(bar.get(), bar.target)
+        self.frame_at(bar, clock, 101.2)
+        self.assert_line(bar, bar._fill, (3, 123))
+        self.assertIsNone(bar._frame_id, 'settled and faded: no more frames')
+        clock[0] = 102
+        bar.configure(mode='indeterminate')                 # [Merger]: the fill fades, the segment enters
+        bar.start()
+        self.assert_line(bar, bar._ghost, (3, 123))
+        self.assert_line(bar, bar._fill, None)
+        self.frame_at(bar, clock, 102)
+        self.frame_at(bar, clock, 102)
+        self.frame_at(bar, clock, 102.1)
+        self.assert_line(bar, bar._ghost, (3, 123), .5)
+        self.assert_line(bar, bar._fill, (3, 25))
+        self.addCleanup(ctk.set_appearance_mode, 'light')
+        ctk.set_appearance_mode('dark')                     # the look changes half way
+        self.frame_at(bar, clock, 102.15)
+        self.assert_line(bar, bar._ghost, (3, 123), .25, side=1)
+        self.assert_line(bar, bar._fill, (3, 36), side=1)
+        ctk.set_appearance_mode('light')
+        clock[0] = 102.5
+        bar.stop()                                          # done with links unfinished: a drop to their share
+        bar.configure(mode='determinate')
+        bar.set(.2)
+        self.assert_line(bar, bar._ghost, (3, 36))
+        self.assert_line(bar, bar._fill, (3, 63), 0)        # it fades in: no frame of solid fill
+        self.assertEqual(bar.canvas.find_all()[-1], bar._ghost)
+        self.frame_at(bar, clock, 102.5)
+        self.frame_at(bar, clock, 102.5)
+        self.frame_at(bar, clock, 102.55)
+        self.assert_line(bar, bar._fill, (3, 63), .25)
+        self.frame_at(bar, clock, 102.71)
+        self.assert_line(bar, bar._ghost, None)
+        self.assert_line(bar, bar._fill, (3, 63))
+        self.assertEqual(bar.canvas.itemcget(bar._track, 'fill').upper(), ui_theme.TRACK[0])
+        self.assertIsNone(bar._frame_id)
+
+    def test_a_stop_during_a_fade_lets_it_finish(self):
+        """stop() cancels the frame; a fade under way still runs to its end (ghost hidden, token colour)."""
+        bar, clock = self.fading_bar()
+        bar.set(1, immediate=True)
+        clock[0] = 101
+        bar.set(0, immediate=True)
+        bar.stop()
+        self.assertEqual(bar._frame_id, 'frame')
+        for now in (101.01, 101.02, 101.25):
+            self.frame_at(bar, clock, now)
+        self.assert_line(bar, bar._ghost, None)
+        self.assertIsNone(bar._frame_id)
+        bar.configure(mode='indeterminate')
+        bar.start()
+        self.frame_at(bar, clock, 101.9)
+        bar.stop()
+        bar.configure(mode='determinate')
+        bar.set(.5)
+        bar.stop()                                          # the fill is fading in from the track colour
+        self.assertEqual(bar._frame_id, 'frame')
+        for now in (101.91, 101.92, 102.2):
+            self.frame_at(bar, clock, now)
+        self.assert_line(bar, bar._fill, (3, 153))
+        self.assert_line(bar, bar._ghost, None)
+        self.assertIsNone(bar._frame_id)
+
+    def test_a_fade_starts_once_frames_come_on_time(self):
+        """After a switch the main thread is often busy for a while (on_done, launch): the fade's clock
+        starts at the first frame that comes on time after the one before, not at a frame followed by a stall."""
+        bar, clock = self.fading_bar()
+        bar.set(1, immediate=True)
+        clock[0] = 101
+        bar.set(0, immediate=True)
+        for now in (101.005, 101.19):                       # a frame at once, then the main thread stalls
+            self.frame_at(bar, clock, now)
+            self.assert_line(bar, bar._ghost, (3, 303))
+        self.frame_at(bar, clock, 101.2)                    # on time: the fade starts here
+        self.assert_line(bar, bar._ghost, (3, 303))
+        self.frame_at(bar, clock, 101.25)
+        self.assert_line(bar, bar._ghost, (3, 303), .75)
+        bar.set(1, immediate=True)
+        clock[0] = 102
+        bar.set(0, immediate=True)
+        for now in (102.05, 102.1, 102.15, 102.2, 102.25):  # never on time: it starts at its fifth frame
+            self.frame_at(bar, clock, now)
+        self.assert_line(bar, bar._ghost, (3, 303))
+        self.frame_at(bar, clock, 102.3)
+        self.assert_line(bar, bar._ghost, (3, 303), .75)
+        self.frame_at(bar, clock, 102.5)
+        self.assert_line(bar, bar._ghost, None)
+        self.assertIsNone(bar._frame_id)
+
+    def test_a_bar_without_room_or_real_colours_does_not_fade(self):
+        bar, clock = self.fading_bar()
+        bar.set(1, immediate=True)
+        with mock.patch.object(bar.canvas, 'winfo_width', return_value=1):   # not mapped: nothing is drawn
+            clock[0] = 101
+            bar.set(0, immediate=True)
+            self.assertIsNone(bar._frame_id)
+        self.frame_at(bar, clock, 101.05)
+        self.assert_line(bar, bar._ghost, None)             # no ghost turns up later
+        plain = SmoothProgressBar(bar.master, height=6, fg_color='transparent')
+        for name, value in (('winfo_width', 306), ('winfo_height', 6)):
+            patcher = mock.patch.object(plain.canvas, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        plain.set(1, immediate=True)
+        plain.set(0, immediate=True)
+        self.assert_line(plain, plain._ghost, None)         # no colours to mix: it cuts
+        self.assertEqual(plain.canvas.itemcget(plain._track, 'fill'), '')
+        plain.destroy()
+
+    def test_a_bar_hidden_and_shown_again_does_not_fade_its_old_fill(self):
+        """The download page hides the bar without rows; launch shows it again in the same callback as
+        set(0, immediate=True): the old full bar was not on screen, so it does not flash up as a ghost."""
+        app = self.make_app(visible=True)
+        bar = SmoothProgressBar(app, width=300, height=6)
+        bar.place(x=0, y=0)
+        self.assertTrue(pump(app, lambda: bar.canvas.winfo_width() > 100, 5))
+        bar.set(1, immediate=True)
+        bar.place_forget()
+        self.assertTrue(pump(app, lambda: not bar.winfo_ismapped(), 5))
+        bar.place(x=0, y=0)
+        bar.set(0, immediate=True)
+        self.assertEqual(bar.canvas.itemcget(bar._ghost, 'state'), 'hidden')
+        bar.destroy()
+
+    def shown_bar(self, app):
+        """A 300 px bar on screen in ``app`` (visible), on ``clock[0]``; after() only records, frames run by hand."""
+        bar = SmoothProgressBar(app, width=300, height=6)
+        bar.place(x=0, y=0)
+        self.assertTrue(pump(app, lambda: bar.canvas.winfo_width() > 100, 5))
+        clock = [100.0]
+        for patcher in (mock.patch('progress.time.perf_counter', lambda: clock[0]),
+                        mock.patch.object(bar, 'after', return_value='frame'),
+                        mock.patch.object(bar, 'after_cancel')):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return bar, clock
+
+    def put(self, bar, shown):
+        """Really hide or show ``bar`` (Tk does not dispatch a generated <Unmap>) and let the events arrive."""
+        if shown:
+            bar.place(x=0, y=0)
+        else:
+            bar.place_forget()
+        self.assertTrue(pump(bar, lambda: bool(bar.winfo_ismapped()) == shown, 5))
+
+    def test_a_shape_drawn_while_hidden_never_fades_out_later(self):
+        """2.0.4 (RULINGS-2): the rows cleared while the fill glides or fades in hide the bar, and its frames go
+        on meanwhile.  What they draw was never on screen: launch (shown again, then set(0, immediate=True) and
+        animate(True)) shows an empty bar and the segment entering, as 2.0.3, with no ghost of the old fill."""
+        app = self.make_app(visible=True)
+        for fade in (False, True):
+            bar, clock = self.shown_bar(app)
+            if fade:                                        # done: the segment hands over to the fill, which fades in
+                bar.configure(mode='indeterminate')
+                bar.start()
+                self.frame_at(bar, clock, 100.5)
+                bar.stop()
+                bar.configure(mode='determinate')
+            clock[0] = 100.5
+            bar.set(1)                                      # it glides to the end
+            for now in (100.516, 100.532, 100.548):
+                self.frame_at(bar, clock, now)
+            self.put(bar, False)                            # the rows are cleared half way
+            for _ in range(30):
+                if bar._frame_id is None:
+                    break
+                self.frame_at(bar, clock, clock[0] + .016)
+            clock[0] += .8
+            self.put(bar, True)                             # launch: the bar is shown (mapped before set(0)) ...
+            bar.set(0, immediate=True)
+            self.assert_line(bar, bar._fill, None)
+            self.assert_line(bar, bar._ghost, None)
+            bar.configure(mode='indeterminate')             # ... and the segment enters
+            bar.start()
+            for _ in range(5):
+                self.assert_line(bar, bar._ghost, None)
+                self.frame_at(bar, clock, clock[0] + .016)
+            self.assert_line(bar, bar._ghost, None)
+            bar.stop()                                      # done again, on screen since a frame: it fades again
+            bar.configure(mode='determinate')
+            bar.set(1)
+            self.assertEqual(bar.canvas.itemcget(bar._ghost, 'state'), 'normal')
+            bar.destroy()
+
+    def test_a_bar_shown_again_shows_what_it_is_now(self):
+        """2.0.4 (RULINGS-2): a seen full bar reset still fades out; hidden half way, the fade ends there, and a
+        value set while hidden (an engine update ends) is what the bar shows when it is shown again with no
+        new call: at once, in the token colour, with no ghost and no frame waiting."""
+        app = self.make_app(visible=True)
+        bar, clock = self.shown_bar(app)
+        width, radius = bar.canvas.winfo_width(), bar.canvas.winfo_height() / 2     # the display's scale
+        full = (round(radius), round(width - radius))
+        bar.set(1)                                          # done: the fill glides to the end, on screen
+        for now in (100.1, 100.3):
+            self.frame_at(bar, clock, now)
+        self.assert_line(bar, bar._fill, full)
+        self.assertIsNone(bar._frame_id)
+        clock[0] = 101
+        bar.set(0, immediate=True)
+        self.assert_line(bar, bar._ghost, full)             # it was on screen: it fades out
+        for now in (101.016, 101.032, 101.082):
+            self.frame_at(bar, clock, now)
+        self.assert_line(bar, bar._ghost, full, .75)
+        self.put(bar, False)
+        if bar._frame_id is not None:                       # the frame already asked for
+            self.frame_at(bar, clock, 101.096)
+        bar.set(.5, immediate=True)
+        self.assertEqual((bar.target, bar.get(), bar.cget('mode')), (.5, .5, 'determinate'))
+        self.put(bar, True)
+        self.assert_line(bar, bar._fill, (round(radius), round(width / 2)))
+        self.assert_line(bar, bar._ghost, None)
+        self.assertIsNone(bar._frame_id)
+        bar.destroy()
+
+    def test_a_fade_never_starts_at_the_first_frame_after_a_switch(self):
+        """2.0.4 (RULINGS-2): the last frame before a switch is not 'the one before' for the first frame after
+        it.  However short the switch's callback, a stall right after that first frame does not swallow the
+        fade in one step: it starts at a frame on time after it."""
+        bar, clock = self.fading_bar()
+        for takes in (0, .002, .01):
+            bar.configure(mode='indeterminate')
+            bar.start()
+            for _ in range(40):                             # the segment runs, frames on the timer tick
+                self.frame_at(bar, clock, clock[0] + .0156)
+            clock[0] += takes                               # on_done: animate(False), then set(1)
+            bar.stop()
+            bar.configure(mode='determinate')
+            bar.set(1)
+            self.assertEqual(bar.canvas.itemcget(bar._ghost, 'state'), 'normal')
+            ghost, steps = 1.0, []
+            for gap in [.005, .2] + [.0156] * 40:           # the first frame 5 ms later, then a 0.2 s stall
+                if bar._frame_id is None:
+                    break
+                self.frame_at(bar, clock, clock[0] + gap)
+                now = bar._opacities(clock[0])[0] if bar.canvas.itemcget(bar._ghost, 'state') == 'normal' else 0.0
+                steps.append(ghost - now)
+                ghost = now
+            self.assertLessEqual(max(steps), .2, f'{takes} s callback: {[round(s, 3) for s in steps]}')
+            self.assert_line(bar, bar._ghost, None)
+            self.assertIsNone(bar._frame_id)
 
     def test_retry_keeps_the_form_r13(self):
         app = self.make_app()

@@ -4,7 +4,7 @@ import queue
 import unittest
 from unittest.mock import Mock, patch
 
-from progress import FLOW_PERIOD, ProgressMotion, flow
+from progress import FLOW_PERIOD, ProgressMotion, blend, flow
 from studio import StudioApp
 
 
@@ -124,6 +124,16 @@ class ProgressTests(unittest.TestCase):
         for elapsed in (0.0, .3, .9, 1.5):
             for got, want in zip(flow(elapsed + FLOW_PERIOD, span), flow(elapsed, span)):
                 self.assertAlmostEqual(got, want, places=9)
+
+    # --- 2.0.4: the cross-fade mixes the track and fill colours ---
+
+    def test_blend_ends_middle_and_clamp(self):
+        track, fill = (0xe4, 0xe9, 0xf2), (0x3f, 0x6f, 0xe8)
+        self.assertEqual(blend(track, fill, 0), '#e4e9f2')
+        self.assertEqual(blend(track, fill, 1), '#3f6fe8')
+        self.assertEqual(blend((0, 0, 0), (255, 255, 255), .5), '#808080')
+        self.assertEqual(blend(track, fill, -.4), '#e4e9f2')        # a fade clock running early or late
+        self.assertEqual(blend(track, fill, 1.7), '#3f6fe8')
 
     def test_progress_coalescing_preserves_task_boundaries(self):
         fake = Mock()

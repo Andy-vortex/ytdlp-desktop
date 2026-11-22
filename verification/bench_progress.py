@@ -3,15 +3,25 @@
     .venv\\Scripts\\python.exe -X utf8 -B verification\\bench_progress.py [light|dark]
 
 The real bar (904 logical px, like the download page) under mainloop in a borderless window at the bottom
-left that never takes the focus, about 32 s; _tick and _render are wrapped on the instance.  Parts:
+left that never takes the focus, about 39 s; _tick and _render are wrapped on the instance.  Parts:
 indeterminate (8 s), set1 (8 s, set() once a second, growing evenly), sequence (download, [Merger], done,
-retry, next item in ui_download's order at the real program's report times, two 0.18 s main-thread blocks).
+retry, next item in ui_download's order at the real program's report times, two 0.18 s main-thread blocks),
+switch (2.0.4, 7 s: video then audio, resume, wait, done with links unfinished, next item, stop).
 Prints one JSON line and the gates; exits 1 when one fails.  The limits were measured on the owner's
 machine (200 %); elsewhere compare with the old build, except set1_moving_pct >= 85.
+
+switch_max_px (2.0.4): the largest change in one frame at a switch, measured as in design-polish 5: the
+visible amount of every painted picture (after each frame and each switch) is the sum over the visible
+lines of (length + bar height) x the opacity their colour shows between the track and the fill colour,
+here taken pixel by pixel in the canvas's stacking order so that a line covered by another one does not
+count; the change is the difference between two pictures in a row, the largest up to 0.5 s after each
+switch (or up to the next scripted event, such as a main-thread block) counts.  A fade of the whole bar changes about width x 15.5 / 200 px a frame by itself; the gate
+is 10 % of the width.
 """
 import _sandbox                                    # first: a private state and app folder, removed at exit
 import ctypes
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -33,7 +43,9 @@ GATES = [('indeterminate_over20_pct', '<=', 1), ('indeterminate_median_ms', '<='
          ('indeterminate_move_ratio', '<=', 1.2), ('set1_over20_pct', '<=', 1), ('set1_moving_pct', '>=', 85),
          ('set1_speed_ratio', '<=', 1.1), ('set1_render_ms_p95', '<=', .5), ('download_moving_pct', '>=', 85),
          ('download_stops_over_200ms', '<=', 2), ('sequence_over20_pct', '<=', 3),
-         ('over_target_frames', '<=', 0), ('focus_taken', '<=', False)]
+         ('over_target_frames', '<=', 0), ('focus_taken', '<=', False), ('switch_max_pct', '<=', 10)]
+SWITCHES = ('launch', 'progress', 'merger', 'done', 'retry', 'progress2', 'item2', 'switch', 'drop', 'resume', 'wait',
+            'merger2', 'partial', 'item3', 'stop')
 
 
 def q(values, share):
@@ -62,8 +74,13 @@ def run():
         user32.SetForegroundWindow(before)
     user32.ShowWindow(hwnd, 4)                      # SW_SHOWNOACTIVATE
     root.update()
-    frames, marks, now = [], [], {'part': 'setup', 'tick': False, 'animating': False}
+    frames, marks, pictures, now = [], [], [], {'part': 'setup', 'tick': False, 'animating': False}
     render, tick = bar._render, bar._tick
+
+    def picture():                                  # what is on the canvas now: (x0, x1, colour), bottom first
+        lines = [(*bar.canvas.coords(item)[::2], bar.canvas.itemcget(item, 'fill')) for item in bar.canvas.find_all()
+                 if item != bar._track and bar.canvas.itemcget(item, 'state') != 'hidden']
+        pictures.append((time.perf_counter(), lines))
 
     def recorded_render():
         start = time.perf_counter()
@@ -79,6 +96,7 @@ def run():
         now['tick'] = True
         tick()
         now['tick'] = False
+        picture()
     bar._render, bar._tick = recorded_render, recorded_tick
 
     def animate(enabled):                           # ui_download.animate
@@ -96,7 +114,7 @@ def run():
         bar.set(value)
 
     def at(seconds, name, action):
-        root.after(int(seconds * 1000), lambda: (marks.append((time.perf_counter(), name)), action()))
+        root.after(int(seconds * 1000), lambda: (marks.append((time.perf_counter(), name)), action(), picture()))
 
     at(0, 'indeterminate', lambda: (now.update(part='indeterminate'), animate(True)))
     at(8, 'set1', lambda: (animate(False), bar.set(0, immediate=True), now.update(part='set1')))
@@ -113,17 +131,59 @@ def run():
     at(end + 2.4, 'progress2', lambda: progress(.05))
     at(end + 2.8, 'progress2', lambda: progress(.12))
     at(end + 3.6, 'item2', lambda: (bar.set(0, immediate=True), animate(True)))
-    root.after(int((end + 4.6) * 1000), root.quit)
+    start = end + 4.6                               # 2.0.4: the switches the sequence does not have
+    at(start, 'switch', lambda: (now.update(part='switch'), progress(.05)))
+    at(start + .4, 'report', lambda: progress(.9))
+    at(start + .9, 'drop', lambda: progress(.04))   # video done, audio starts
+    at(start + 1.4, 'report', lambda: progress(.9))
+    at(start + 1.9, 'resume', lambda: animate(True))                # on_resuming, after a robust-mode wait
+    at(start + 2.6, 'wait', lambda: animate(False))                 # on_waiting
+    at(start + 3.3, 'merger2', lambda: animate(True))
+    at(start + 4.0, 'partial', lambda: (animate(False), bar.set(.5)))   # done, half the links unfinished
+    at(start + 4.7, 'item3', lambda: (bar.set(0, immediate=True), animate(True)))
+    at(start + 5.4, 'report', lambda: progress(.6))
+    at(start + 5.9, 'resume', lambda: animate(True))
+    at(start + 6.4, 'stop', lambda: animate(False))                 # stopped: the segment becomes the fill
+    root.after(int((start + 7) * 1000), root.quit)
     root.mainloop()
     focus_taken = user32.GetForegroundWindow() == hwnd
     width, height = bar.canvas.winfo_width(), bar.canvas.winfo_height()
+    colours = [[part // 257 for part in bar.canvas.winfo_rgb(bar._apply_appearance_mode(colour))]
+               for colour in (bar._track_color, bar._fill_color)]
     bar.stop()
     root.destroy()
-    return frames, marks, width, height, focus_taken
+    return frames, marks, pictures, colours, width, height, focus_taken
+
+
+def switch_changes(pictures, marks, colours, width, height):
+    """{switch: the largest one-frame change of the visible amount (px) up to 0.5 s after it}."""
+    track, fill = colours
+    channel = max(range(3), key=lambda i: abs(fill[i] - track[i]))
+
+    def amount(lines):
+        pixels = [0.0] * width
+        for x0, x1, colour in lines:
+            shade = int(colour[1 + 2 * channel:3 + 2 * channel], 16) if colour.startswith('#') and len(colour) == 7 \
+                else None
+            opacity = 1.0 if shade is None else (shade - track[channel]) / (fill[channel] - track[channel])
+            left, right = max(0, round(x0 - height / 2)), min(width, round(x1 + height / 2))
+            pixels[left:right] = [opacity] * (right - left)
+        return sum(pixels)
+    changes = {}
+    for (when, name), (following, _name) in zip(marks, marks[1:] + [(math.inf, '')]):
+        if name not in SWITCHES:
+            continue
+        shown = [lines for t, lines in pictures if when <= t <= min(when + .5, following)]
+        before = [lines for t, lines in pictures if t < when][-1:]
+        amounts = [amount(lines) for lines in before + shown]
+        biggest = max((abs(b - a) for a, b in zip(amounts, amounts[1:])), default=0.0)
+        changes[name] = round(max(changes.get(name, 0.0), biggest), 1)
+    return changes
 
 
 def main():
-    frames, marks, width, height, focus_taken = run()
+    frames, marks, pictures, colours, width, height, focus_taken = run()
+    changes = switch_changes(pictures, marks, colours, width, height)
 
     def gaps(name):
         ticks = [f['t'] for f in frames if f['tick'] and f['part'] == name]
@@ -155,7 +215,9 @@ def main():
         'download_moving_pct': round(100 * sum(dt for dt, moved in steps if moved) / (last - first), 1),
         'download_stops_over_200ms': sum(dt > .2 for dt, _moved in steps),
         'sequence_over20_pct': over20('sequence'),
-        'over_target_frames': sum(f['over'] for f in frames), 'focus_taken': focus_taken}
+        'over_target_frames': sum(f['over'] for f in frames), 'focus_taken': focus_taken,
+        'switch_px': changes, 'switch_max_px': max(changes.values()),
+        'switch_max_pct': round(100 * max(changes.values()) / width, 1)}
     print(json.dumps(result), flush=True)
     failed = 0
     for key, op, limit in GATES:

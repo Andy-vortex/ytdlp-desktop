@@ -35,7 +35,7 @@ from updater import engine_path
 import urls as urltools   # under another name: Runner.download keeps its parameter ``urls``
 
 APP_NAME = 'YT-DLP下载器'
-APP_VERSION = '2.0.3'
+APP_VERSION = '2.0.4'
 # The persisted format values (the preset ids, formats.MODES) and resolutions ('best': no limit).
 MODES = formats.MODES
 RESOLUTIONS = (formats.BEST, '2160p / 4K', '1440p', '1080p', '720p', '480p')
