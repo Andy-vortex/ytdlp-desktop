@@ -585,6 +585,17 @@ class CDownloadTests(Base):
         default.destroy()
         explicit.destroy()
 
+    def test_an_empty_bar_draws_nothing(self):
+        """2.0.3: at 0 the fill is hidden, not a round dot at the left end (``immediate`` lands at once)."""
+        app = self.make_app(visible=True)            # a withdrawn window gives the canvas no width
+        bar = SmoothProgressBar(app, width=300, height=6)
+        bar.place(x=0, y=0)
+        self.assertTrue(pump(app, lambda: bar.canvas.winfo_width() > 100, 5))
+        for value, state in ((0, 'hidden'), (.5, 'normal'), (0, 'hidden')):
+            bar.set(value, immediate=True)
+            self.assertEqual(bar.canvas.itemcget(bar._fill, 'state'), state, value)
+        bar.destroy()
+
     def test_retry_keeps_the_form_r13(self):
         app = self.make_app()
         _sandbox.save_unfinished(['https://example.org/two'], Options(_sandbox.out('original'), MODES[2], '720p', True))

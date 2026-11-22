@@ -1,5 +1,8 @@
 """Lightweight, time-based progress animation; never predicts unreported progress.
 
+A determinate bar glides at an even speed to each reported value; an indeterminate bar runs one
+segment left to right at an even speed.
+
 Colours come from ui_theme tokens ((light, dark) pairs); explicit colour strings still work.
 """
 import math
@@ -10,19 +13,35 @@ import customtkinter as ctk
 import ui_theme
 
 
+FLOW_PERIOD = 1.8      # s: one pass of the indeterminate segment across the bar
+FLOW_LENGTH = 0.3      # the indeterminate segment, as a share of the bar
+
+
+def flow(elapsed, span):
+    """(start, end) of the indeterminate segment ``elapsed`` s into a run: it enters at the left and
+    leaves at the right at an even speed, clipped to 0..span."""
+    length = span * FLOW_LENGTH
+    head = elapsed / FLOW_PERIOD % 1 * (span + length)
+    return max(head - length, 0.0), min(head, span)
+
+
 class ProgressMotion:
-    def __init__(self, duration=0.24):
-        self.duration = duration
+    """Glides at an even speed to the newest reported value, taking LEAD times as long as the last two
+    reports were apart (SHORTEST to LONGEST s): yt-dlp reports about once a second, so the bar is still
+    moving when the next report comes instead of jumping and waiting.  It never passes the reported value."""
+    SHORTEST, LONGEST, LEAD = 0.24, 1.2, 1.25
+
+    def __init__(self):
+        self.duration = self.SHORTEST
         self.origin = self.target = 0.0
         self.started = 0.0
+        self.reported = None
 
     def value(self, now):
         elapsed = max(0.0, now - self.started)
         if elapsed >= self.duration or self.origin == self.target:
             return self.target
-        position = elapsed / self.duration
-        eased = 1 - (1 - position) ** 3
-        return self.origin + (self.target - self.origin) * eased
+        return self.origin + (self.target - self.origin) * elapsed / self.duration
 
     def settled(self, now):
         return self.origin == self.target or now - self.started >= self.duration
@@ -35,14 +54,20 @@ class ProgressMotion:
         if not immediate and target == self.target:
             return
         current = self.value(now)
-        # A large drop is a new file/stream, rather than a slow backwards sweep.
+        # A large drop is a new file/stream, rather than a slow backwards sweep: shown at once, and the
+        # stream's first glide has no interval to go by.
         if immediate or current - target >= 0.15:
-            current = target
-        self.origin, self.target, self.started = current, target, now
+            self.origin, self.target, self.started, self.reported = target, target, now, None
+            return
+        gap = self.SHORTEST if self.reported is None else (now - self.reported) * self.LEAD
+        self.duration = min(max(gap, self.SHORTEST), self.LONGEST)
+        self.origin, self.target, self.started, self.reported = current, target, now, now
 
 
 class SmoothProgressBar(ctk.CTkFrame):
-    FRAME_MS = 16
+    # Tk's after() wakes on the Windows timer tick (about 15.5 ms): 16 ms waits one or two ticks at
+    # random (16/31 ms frames), anything from 2 to 15 ms waits exactly one (an even ~64 frames a second).
+    FRAME_MS = 10
 
     def __init__(self, master, height=6, progress_color=None, fg_color=None, surface=None, **kwargs):
         """``progress_color`` fills, ``fg_color`` is the track, ``surface`` the card behind the bar.
@@ -132,18 +157,13 @@ class SmoothProgressBar(ctk.CTkFrame):
         self.canvas.coords(self._track, radius, radius, width - radius, radius)
         self.canvas.itemconfigure(self._track, width=height)
         if self._mode == 'indeterminate':
-            phase = (time.perf_counter() - self._phase_started) / 1.8
-            position = (1 - math.cos(2 * math.pi * phase)) / 2
-            segment = span * 0.22
-            start = radius + position * (span - segment)
-            end = start + segment
+            start, end = flow(time.perf_counter() - self._phase_started, span)
         else:
-            fraction = self.get()
-            if fraction <= 0:
-                self.canvas.itemconfigure(self._fill, state='hidden')
-                return
-            start, end = radius, radius + span * fraction
-        self.canvas.coords(self._fill, start, radius, end, radius)
+            start, end = 0.0, span * self.get()
+        if end <= start:
+            self.canvas.itemconfigure(self._fill, state='hidden')
+            return
+        self.canvas.coords(self._fill, radius + start, radius, radius + end, radius)
         self.canvas.itemconfigure(self._fill, width=height, state='normal')
 
     def destroy(self):

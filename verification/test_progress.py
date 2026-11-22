@@ -4,7 +4,7 @@ import queue
 import unittest
 from unittest.mock import Mock, patch
 
-from progress import ProgressMotion
+from progress import FLOW_PERIOD, ProgressMotion, flow
 from studio import StudioApp
 
 
@@ -39,6 +39,91 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(motion.value(10.3), .5)
         motion.retarget(float('nan'), 11)
         self.assertEqual(motion.target, .5)
+
+    # --- 2.0.3: an even glide that lasts LEAD times the report interval, and the one-way indeterminate run ---
+
+    def test_glide_lasts_lead_times_the_report_interval(self):
+        motion = ProgressMotion()
+        motion.retarget(.1, 10)
+        motion.retarget(.2, 10.8)              # 0.8 s apart: a 1.0 s glide (1 s apart would hit LONGEST)
+        self.assertAlmostEqual(motion.duration, 1.0)
+        self.assertAlmostEqual(motion.value(10.8 + .5), .15)
+        self.assertFalse(motion.settled(10.8 + .95))
+        self.assertTrue(motion.settled(10.8 + 1.0 + .01))
+        self.assertEqual(motion.value(10.8 + 1.0 + .01), .2)
+
+    def test_glide_is_clamped(self):
+        motion = ProgressMotion()
+        motion.retarget(.1, 10)
+        motion.retarget(.2, 10.05)
+        self.assertAlmostEqual(motion.duration, .24)
+        motion.retarget(.3, 20.05)
+        self.assertAlmostEqual(motion.duration, 1.2)
+        self.assertFalse(motion.settled(21.1))
+        self.assertTrue(motion.settled(21.3))
+
+    def test_glide_never_passes_the_report(self):
+        motion = ProgressMotion()
+        values = []
+        for report in range(1, 9):
+            now = 10.0 + report
+            motion.retarget(report * .08, now)
+            if report >= 3:
+                for step in range(63):          # every 16 ms until just before the next report
+                    value = motion.value(now + step * .016)
+                    self.assertLessEqual(value, motion.target)
+                    values.append(value)
+        self.assertTrue(all(a < b for a, b in zip(values, values[1:])), 'the glide never stops between reports')
+
+    def test_new_stream_forgets_the_interval(self):
+        motion = ProgressMotion()
+        motion.retarget(.1, 10)
+        motion.retarget(.2, 11)
+        motion.retarget(.9, 12, immediate=True)
+        motion.retarget(.95, 13)
+        self.assertAlmostEqual(motion.duration, .24)
+        motion.retarget(.96, 14)
+        self.assertAlmostEqual(motion.duration, 1.2)
+        motion.retarget(.1, 20)                  # a drop of 0.15 or more is a new file
+        self.assertEqual(motion.value(20), .1)
+        motion.retarget(.2, 21)
+        self.assertAlmostEqual(motion.duration, .24)
+
+    def test_real_report_times_keep_moving(self):
+        # Progress handled by the real program on the first fixture link (measure-frames, app-normal-trace).
+        reports = [(0.0, .008), (.397, .053), (.893, .114), (1.887, .235), (2.911, .356), (3.906, .476),
+                   (4.902, .596), (5.923, .716), (6.792, .835), (7.926, .971)]
+        motion = ProgressMotion()
+        samples, fed, index, step = [], 0.0, 0, 0
+        while step / 60 < reports[-1][0]:
+            now = step / 60
+            while index < len(reports) and reports[index][0] <= now:
+                motion.retarget(reports[index][1], reports[index][0])
+                fed = max(fed, reports[index][1])
+                index += 1
+            value = motion.value(now)
+            self.assertLessEqual(value, fed)
+            if index >= 4:
+                samples.append(value)
+            step += 1
+        still = sum(a == b for a, b in zip(samples, samples[1:])) / (len(samples) - 1)
+        self.assertLessEqual(still, .03, f'{still:.1%} of the samples did not move')
+
+    def test_flow_is_one_way_and_clipped(self):
+        span = 1000.0
+        steps = [i * FLOW_PERIOD / 360 for i in range(360)]
+        runs = [flow(elapsed, span) for elapsed in steps]
+        for start, end in runs:
+            self.assertTrue(0 <= start <= end <= span, (start, end))
+        ends = [end for _start, end in runs]
+        entering = ends[:ends.index(span)]
+        self.assertTrue(entering and all(a <= b for a, b in zip(entering, entering[1:])))
+        middle = [start for start, end in runs if 0 < start and end < span]
+        moves = [b - a for a, b in zip(middle, middle[1:])]
+        self.assertTrue(len(moves) > 10 and max(moves) - min(moves) < 1e-9, moves)
+        for elapsed in (0.0, .3, .9, 1.5):
+            for got, want in zip(flow(elapsed + FLOW_PERIOD, span), flow(elapsed, span)):
+                self.assertAlmostEqual(got, want, places=9)
 
     def test_progress_coalescing_preserves_task_boundaries(self):
         fake = Mock()

@@ -1,4 +1,4 @@
-# serial: measures frame intervals (about 17 ms) on the wall clock
+# serial: measures frame intervals (about 11 to 16 ms) on the wall clock
 import _sandbox
 import json
 from pathlib import Path
@@ -49,7 +49,21 @@ try:
         time.sleep(.001)
     assert len(ticks) > count_at_stall + 8
     app.animate(False)
+    # (2.0.3) The frame rhythm under a real mainloop (the busy loop above wakes Tk every millisecond).
+    # Tk's after() wakes on the Windows timer tick (about 15.5 ms): FRAME_MS 10 waits one tick, 16 ms
+    # waits one or two at random (36 % to 47 % of the frames took over 20 ms here).
+    del ticks[:]
+    app.animate(True)
+    app.after(1500, app.quit)
+    app.mainloop()
+    app.animate(False)
+    loop_intervals = [1000 * (b - a) for a, b in zip(ticks, ticks[1:]) if b - a < .2]
+    assert len(loop_intervals) >= 50, loop_intervals
+    over20 = 100 * sum(gap > 20 for gap in loop_intervals) / len(loop_intervals)
+    assert over20 <= 10, f'{over20:.1f} % of the mainloop frames took over 20 ms'
     report = {'status': 'passed', 'frame_callbacks': count_at_stall,
+              'mainloop_over20_pct': round(over20, 1),
+              'mainloop_median_ms': round(statistics.median(loop_intervals), 2),
               'median_interval_ms': round(statistics.median(intervals), 2),
               'maximum_interval_ms': round(max(intervals), 2),
               'distinct_positions': len(set(round(value, 4) for value in samples)),

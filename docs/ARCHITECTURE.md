@@ -1,6 +1,6 @@
 # 架构
 
-YT-DLP 下载器 2.0.2：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
+YT-DLP 下载器 2.0.3：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
 怎么跑程序和测试、怎么改文字见 `AGENTS.md`；数据格式的细节见 `docs\DATA.md`；用户能看到的规则见 `使用说明.txt`。
 代码注释里形如 `MESSAGES.md 6`、`I18N.md`、`GLOSSARY.md`、`WP3` 的引用指 1.x 的设计文档，它们在标签 `v1.8.1` 里，不在主干。
 
@@ -57,7 +57,7 @@ YT-DLP 下载器 2.0.2：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 | `i18n_<页>.py` ×8 | 手写的中英文字（第 5 节）：`core`、`common`、`shell`、`download`、`collect`、`library`、`log`、`settings` | `TEXTS`；需要时还有 `GROUPS`、`TAGS` |
 | **界面** | | |
 | `ui_theme.py` | 设计令牌（浅色 / 深色）、DPI、控件工厂、共用组件 | `menu_button` / `popup` / `bind_menu`、`ask_text`、`NoticeBar`、`path_button`、`textbox`、`empty_state`、`segmented`、`Tabs`、`on_appearance` |
-| `progress.py` | 平滑进度条 | `SmoothProgressBar` |
+| `progress.py` | 平滑进度条：定进度按上次报告间隔 ×1.25（0.24 到 1.2 秒）匀速追到报告值，从不超过它；不定进度一段线从左往右匀速流过；约 15.5 ms 一帧（`FRAME_MS = 10`） | `SmoothProgressBar`、`ProgressMotion`、`flow` |
 | `studio.py` | 外壳：窗口、侧栏、`page()`、状态、poll、`set_busy`、关闭 | `StudioApp` |
 | `ui_download.py` | 下载页（链接框、选项、任务列表、YouTube 暂缓重试） | `DownloadUI`：`start`、`launch`、`download_emit`、`on_*` |
 | `collection_ui.py` | 采集页 | `CollectionUI`：`launch_collection`、`handle_collection` |
@@ -149,6 +149,7 @@ YT-DLP 下载器 2.0.2：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 - 标记（文件前五行注释）：`# quick` = 不建窗口、不起子进程的快文件，`--quick` 只跑它们；`# serial: 原因` = 计时、抢前台或截屏，`-j N` 并行时放到最后串行跑。
 - 报告写到 `build\verify\report.json`；不带 `-k` / `--quick` 的串行运行另写 `report-source.json` / `report-exe.json` 给发布门禁用。
 - 基准文件放 `verification\golden\`（根目录的 `verification\*.json` 被 git 忽略）。
+- 手动运行的工具（不以 `test_` 开头，`run_tests.py` 不收集）：`sandbox_app.py`（在沙箱里从源码起程序）、`snapshot_ui.py`（截图和布局断言）、`i18n_drill.py`（改字演练）、`demo_theme.py`（`ui_theme` 各组件的演示）、`preview_collection.py`（采集页预览）、`bench_progress.py`（进度条的帧节奏和运动：不定进度、每秒一次 `set`、按下载页调用顺序走一次下载和重试，打印每条门槛，不达标以非 0 退出）。`verify_release.py` 见第 7 节；`_sandbox.py`、`fixture_server.py`、`i18n_tool.py`、`repo_files.py` 是测试共用的模块。
 
 **守卫保护什么**
 
