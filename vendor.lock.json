@@ -1,26 +1,26 @@
 {
-  "comment": "Pinned third-party programs bundled in vendor/. prepare_vendor.py downloads exactly these and verifies every SHA-256; prepare_vendor.py --update looks up newer releases and rewrites this file.",
-  "updated": "2026-11-16",
+  "comment": "Pinned third-party programs bundled in vendor/ and the licence texts of libraries built into the Python runtime and packages (\"notices\"). prepare_vendor.py downloads exactly these and verifies every SHA-256; prepare_vendor.py --update looks up newer releases of the tools and rewrites this file, keeping \"notices\" as they are (each names the package or Python version it was written for in \"with\"; build.py refuses when that differs from what it bundles).",
+  "updated": "2026-11-27",
   "tools": [
     {
       "name": "yt-dlp",
       "repository": "yt-dlp/yt-dlp",
-      "tag": "2026.10.21",
+      "tag": "2026.11.23",
       "asset": "yt-dlp.exe",
-      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp.exe",
-      "sha256": "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe",
+      "sha256": "622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c",
       "licenses": [
         {
           "file": "LICENSE",
           "destination": "yt-dlp_LICENSE.txt",
-          "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.21/LICENSE",
+          "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.11.23/LICENSE",
           "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c"
         },
         {
           "file": "THIRD_PARTY_LICENSES.txt",
           "destination": "yt-dlp_THIRD_PARTY_LICENSES.txt",
-          "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.10.21/THIRD_PARTY_LICENSES.txt",
-          "sha256": "472aefe951c7db35e1657c1d13fd337140511ed6f2b329205105ad441c5a02b7"
+          "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.11.23/THIRD_PARTY_LICENSES.txt",
+          "sha256": "510233b06ab5222b087d3384ac82ee3f369fde9991fb71e08175d88b72383584"
         }
       ]
     },
@@ -47,9 +47,231 @@
       "asset": "ffmpeg-N-128251-g6d1bfd7609-win64-gpl-shared.zip",
       "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-10-31-18-18/ffmpeg-N-128251-g6d1bfd7609-win64-gpl-shared.zip",
       "sha256": "de0839788c3f9a649dfb49f6f800a58532c5055ad9af7a75c0aa02043b880591",
+      "licenses": [],
       "display_version": "2026-10-31",
-      "build": "N-128251-g6d1bfd7609",
-      "licenses": []
+      "build": "N-128251-g6d1bfd7609"
+    }
+  ],
+  "notices": [
+    {
+      "name": "OpenSSL",
+      "version": "3.5.9",
+      "license": "Apache-2.0",
+      "part_of": "Python runtime (python-build-standalone 20261021): libssl-3-x64.dll, libcrypto-3-x64.dll",
+      "with": "python==3.11.17",
+      "source": "https://github.com/openssl/openssl/tree/openssl-3.5.9",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.openssl-3.txt",
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "destination": "openssl_LICENSE.txt"
+    },
+    {
+      "name": "libffi",
+      "version": "3.4 or later (libffi-8.dll)",
+      "license": "MIT",
+      "part_of": "Python runtime (python-build-standalone 20261021): libffi-8.dll; cffi",
+      "with": "python==3.11.17",
+      "source": "https://github.com/libffi/libffi",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.libffi.txt",
+      "sha256": "deaf3a42effb551a5b140fa9afefed183a27f1341c6d1bf430d106a5e6931fc0",
+      "destination": "libffi_LICENSE.txt"
+    },
+    {
+      "name": "bzip2",
+      "version": "1.0.8",
+      "license": "bzip2-1.0.6",
+      "part_of": "Python runtime (python-build-standalone 20261021): _bz2.pyd",
+      "with": "python==3.11.17",
+      "source": "https://sourceware.org/bzip2/",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.bzip2.txt",
+      "sha256": "1f38bbc7caacafd65169276d759c0d88c991b753b643ce35d0e45ea1971dd441",
+      "destination": "bzip2_LICENSE.txt"
+    },
+    {
+      "name": "XZ Utils (liblzma)",
+      "version": "5.8.4",
+      "license": "0BSD",
+      "part_of": "Python runtime (python-build-standalone 20261021): _lzma.pyd",
+      "with": "python==3.11.17",
+      "source": "https://github.com/tukaani-project/xz/tree/v5.8.4",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.liblzma.txt",
+      "sha256": "9a4062de0a2c388a98cf35a35d348b62fa97c838a71c3c28ee1a2d7d0a565b02",
+      "destination": "liblzma_LICENSE.txt"
+    },
+    {
+      "name": "Expat",
+      "version": "2.8.5",
+      "license": "MIT",
+      "part_of": "Python runtime (python-build-standalone 20261021): pyexpat.pyd",
+      "with": "python==3.11.17",
+      "source": "https://github.com/libexpat/libexpat",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.expat.txt",
+      "sha256": "122f2c27000472a201d337b9b31f7eb2b52d091b02857061a8880371612d9534",
+      "destination": "expat_LICENSE.txt"
+    },
+    {
+      "name": "mpdecimal (libmpdec)",
+      "version": "2.5.1",
+      "license": "BSD-2-Clause",
+      "part_of": "Python runtime (python-build-standalone 20261021): _decimal.pyd",
+      "with": "python==3.11.17",
+      "source": "https://www.bytereef.org/mpdecimal/",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.mpdecimal.txt",
+      "sha256": "669512af7219f58be03a398766d7c9da11a3b3df9d3f05cb74c5ceca25c8da3b",
+      "destination": "mpdecimal_LICENSE.txt"
+    },
+    {
+      "name": "SQLite",
+      "version": "3.53.1",
+      "license": "Public domain",
+      "part_of": "Python runtime (python-build-standalone 20261021): sqlite3.dll",
+      "with": "python==3.11.17",
+      "source": "https://sqlite.org/",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20261021/LICENSE.sqlite.txt",
+      "sha256": "38bef3d28b24f145ea293bd3b6eb4b20396982abc8303128fb493986ea5bc719",
+      "destination": "sqlite_LICENSE.txt"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.1 and 1.3.2",
+      "license": "Zlib",
+      "part_of": "Python runtime (python-build-standalone 20261021) (zlib module, zlib1.dll); curl_cffi; lxml",
+      "with": "python==3.11.17",
+      "source": "https://github.com/madler/zlib",
+      "url": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+      "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243",
+      "destination": "zlib_LICENSE.txt"
+    },
+    {
+      "name": "curl",
+      "version": "8.23.0",
+      "license": "curl",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/curl/curl/tree/curl-8_23_0",
+      "url": "https://raw.githubusercontent.com/curl/curl/curl-8_23_0/COPYING",
+      "sha256": "82f2f4427d6545ee5aaac4f0b80428da6cc8ba41c2cf5da3a03680ec327b9681",
+      "destination": "curl_COPYING.txt"
+    },
+    {
+      "name": "curl-impersonate",
+      "version": "2.3.1",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/lexiforest/curl-impersonate/tree/v2.3.1",
+      "url": "https://raw.githubusercontent.com/lexiforest/curl-impersonate/v2.3.1/LICENSE",
+      "sha256": "c25fc35eb1692c95fa1406efca2f08cc14afda2c71d5cb1ae44da60358d1787b",
+      "destination": "curl-impersonate_LICENSE.txt"
+    },
+    {
+      "name": "BoringSSL",
+      "version": "commit 156c7b75ae9b8c3b3f847acf264f17594c3859fb",
+      "license": "Apache-2.0",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/google/boringssl/tree/156c7b75ae9b8c3b3f847acf264f17594c3859fb",
+      "url": "https://raw.githubusercontent.com/google/boringssl/156c7b75ae9b8c3b3f847acf264f17594c3859fb/LICENSE",
+      "sha256": "827c8d8fc207c2392794eef9e00fe246f9f61fdcc132556c275be3dd8c3cd97f",
+      "destination": "boringssl_LICENSE.txt"
+    },
+    {
+      "name": "Brotli",
+      "version": "1.2.1",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/google/brotli/tree/v1.2.1",
+      "url": "https://raw.githubusercontent.com/google/brotli/v1.2.1/LICENSE",
+      "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94",
+      "destination": "brotli_LICENSE.txt"
+    },
+    {
+      "name": "Zstandard",
+      "version": "1.5.7",
+      "license": "BSD-3-Clause",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/facebook/zstd/tree/v1.5.7",
+      "url": "https://raw.githubusercontent.com/facebook/zstd/v1.5.7/LICENSE",
+      "sha256": "7055266497633c9025b777c78eb7235af13922117480ed5c674677adc381c9d8",
+      "destination": "zstd_LICENSE.txt"
+    },
+    {
+      "name": "c-ares",
+      "version": "1.34.9",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/c-ares/c-ares/tree/v1.34.9",
+      "url": "https://raw.githubusercontent.com/c-ares/c-ares/v1.34.9/LICENSE.md",
+      "sha256": "460f5e768fda3752ca2169a95df062578a10fb126bfd65f3b9b1a1bed2f84807",
+      "destination": "c-ares_LICENSE.txt"
+    },
+    {
+      "name": "nghttp2",
+      "version": "1.63.0",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/nghttp2/nghttp2/tree/v1.63.0",
+      "url": "https://raw.githubusercontent.com/nghttp2/nghttp2/v1.63.0/COPYING",
+      "sha256": "6b94f3abc1aabd0c72a7c7d92a77f79dda7c8a0cb3df839a97890b4116a2de2a",
+      "destination": "nghttp2_COPYING.txt"
+    },
+    {
+      "name": "ngtcp2",
+      "version": "1.20.0",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/ngtcp2/ngtcp2/tree/v1.20.0",
+      "url": "https://raw.githubusercontent.com/ngtcp2/ngtcp2/v1.20.0/COPYING",
+      "sha256": "542dd526d2ea23565f0571cc68df6f05ed11248a90ff0f32de19d8ba589db513",
+      "destination": "ngtcp2_COPYING.txt"
+    },
+    {
+      "name": "nghttp3",
+      "version": "1.15.0",
+      "license": "MIT",
+      "part_of": "curl_cffi: libcurl-impersonate DLL in curl_cffi.libs",
+      "with": "curl_cffi==0.17.0",
+      "source": "https://github.com/ngtcp2/nghttp3/tree/v1.15.0",
+      "url": "https://raw.githubusercontent.com/ngtcp2/nghttp3/v1.15.0/COPYING",
+      "sha256": "58cc3fc8c6d6cb2485ab35eb5918e849b5bf1e56522974e106d7a39a88d61dcd",
+      "destination": "nghttp3_COPYING.txt"
+    },
+    {
+      "name": "libxml2",
+      "version": "2.11.9",
+      "license": "MIT",
+      "part_of": "lxml: built into lxml's etree module",
+      "with": "lxml==6.1.3",
+      "source": "https://gitlab.gnome.org/GNOME/libxml2/-/tree/v2.11.9",
+      "url": "https://raw.githubusercontent.com/GNOME/libxml2/v2.11.9/Copyright",
+      "sha256": "c5c63674f8a83c4d2e385d96d1c670a03cb871ba2927755467017317878574bd",
+      "destination": "libxml2_Copyright.txt"
+    },
+    {
+      "name": "libxslt",
+      "version": "1.1.45",
+      "license": "MIT",
+      "part_of": "lxml: built into lxml's etree module",
+      "with": "lxml==6.1.3",
+      "source": "https://gitlab.gnome.org/GNOME/libxslt/-/tree/v1.1.45",
+      "url": "https://raw.githubusercontent.com/GNOME/libxslt/v1.1.45/Copyright",
+      "sha256": "7e48e290b6bfccc2ec1b297023a1d77f2fd87417f71fbb9f50aabef40a851819",
+      "destination": "libxslt_Copyright.txt"
+    },
+    {
+      "name": "GNU libiconv",
+      "version": "not reported by lxml (winlibs build of lxml/libxml2-win-binaries)",
+      "license": "LGPL-2.1-or-later",
+      "part_of": "lxml: built into lxml's etree module",
+      "with": "lxml==6.1.3",
+      "source": "https://www.gnu.org/software/libiconv/ (Windows build: https://github.com/winlibs/libiconv)",
+      "url": "https://raw.githubusercontent.com/winlibs/libiconv/accac417318a3eef7402685a268cab8037e62ba1/source/COPYING.LIB",
+      "sha256": "20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95",
+      "destination": "libiconv_COPYING.LIB.txt"
     }
   ]
 }

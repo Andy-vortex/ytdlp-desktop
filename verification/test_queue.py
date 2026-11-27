@@ -26,6 +26,8 @@ import paths
 import unfinished
 import urls as urltools
 
+_sandbox.private_bin()   # (2.0.5) the children start in paths.BIN; this test needs no vendor folder
+
 A, B, C, D, E = ('https://example.invalid/' + name for name in 'abcde')
 Y1, Y2, Y3 = ('https://www.youtube.com/watch?v=' + name for name in ('AAA', 'BBB', 'CCC'))
 OLD_ITEM_DONE = {'index', 'cancelled', 'success', 'files', 'bot_check'}

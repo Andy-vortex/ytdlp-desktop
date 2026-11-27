@@ -17,5 +17,7 @@ pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='YT-DLP下载器', debug=False, bootloader_ignore_signals=False,
           strip=False, upx=False, console=False, disable_windowed_traceback=False, icon=str(root / 'app.ico'),
           contents_directory='_internal')
-vendor = Tree(str(root / 'vendor'), prefix='vendor', excludes=['verification', '*.zip', '*.part'])
+# (2.0.5) build.py collects the Python packages' licences into the stage at every build; a python-packages folder an
+# older prepare_vendor.py left in vendor\licenses is not bundled.
+vendor = Tree(str(root / 'vendor'), prefix='vendor', excludes=['verification', '*.zip', '*.part', 'python-packages'])
 coll = COLLECT(exe, a.binaries, a.datas, vendor, strip=False, upx=False, name='YT-DLP下载器')

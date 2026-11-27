@@ -11,7 +11,8 @@ Install (every step refuses with a message and changes nothing until step 4):
      file changed (also at the same size), added or deleted after the gate refuses the install; a record without
      the list (written by an older verify_release.py) is refused too;
   3. copy _internal to <target>\\_internal.new and the exe to <target>\\YT-DLP下载器.new.exe; compare count and size,
-     then every copied file against the record's list;
+     then every copied file against the record's list (its entries for the exe and _internal: THIRD-PARTY.txt
+     beside the exe in the stage belongs to the zip of a GitHub release and is not installed, 2.0.5);
   4. move the previous program aside by its layout:
        onedir  (<target>\\_internal exists): exe + _internal (+ its install-receipt.json) into <target>\\_previous\\;
                an older _previous is first renamed to _previous.old-<stamp> and deleted only after the new receipt
@@ -755,9 +756,27 @@ def backup_name(target: Path, version: str) -> str:
     return name
 
 
+def installed_part(files: list) -> list:
+    """(2.0.5) The entries of the release record's list this script installs: the exe and everything below _internal.
+    Files beside the exe in the stage (THIRD-PARTY.txt) belong to the zip for a GitHub release, not to the install."""
+    return [item for item in files if item['path'] == EXE_NAME or item['path'].startswith(INTERNAL + '/')]
+
+
+def installed_totals(info: dict) -> tuple:
+    """(files, bytes) this script installs from the stage that check_stage read."""
+    listed = info.get('file_list')
+    if listed is None:
+        return info['files'], info['size']
+    installed = installed_part(listed)
+    return len(installed), sum(item['size'] for item in installed)
+
+
 def copy_new_program(stage: Path, target: Path, info: dict) -> None:
     """Step 3: _internal.new and the .new.exe beside the old program, compared with the stage."""
     new_internal, new_exe = target / NEW_INTERNAL, target / NEW_EXE
+    listed = info.get('file_list')
+    installed = installed_part(listed) if listed is not None else None
+    wanted = installed_totals(info)
     for leftover in (new_internal, new_exe):
         if os.path.lexists(leftover):
             say(f'发现上次未完成安装的残留，将重新生成：{leftover.name}')
@@ -768,13 +787,13 @@ def copy_new_program(stage: Path, target: Path, info: dict) -> None:
         shutil.copy2(stage / EXE_NAME, new_exe)
         count, size = folder_stats(new_internal)
         count, size = count + 1, size + new_exe.stat().st_size
-        same = (count, size) == (info['files'], info['size']) and file_sha256(new_exe) == info['exe_sha256']
+        same = (count, size) == wanted and file_sha256(new_exe) == info['exe_sha256']
         differences = ''
-        if same and info.get('file_list') is not None:
+        if same and installed is not None:
             say('核对复制结果（全部文件的 SHA256）…')
             copied = file_entries(new_internal, INTERNAL + '/')
             copied.append({'path': EXE_NAME, 'size': new_exe.stat().st_size, 'sha256': file_sha256(new_exe)})
-            differences = list_differences(info['file_list'], copied)
+            differences = list_differences(installed, copied)
     except (OSError, shutil.Error) as error:
         left = discard(target, [NEW_INTERNAL, NEW_EXE])
         raise InstallError(f'复制新程序失败（{short(error)}）；' + (f'副本未能完全删除（{"、".join(left)}），'
@@ -784,8 +803,8 @@ def copy_new_program(stage: Path, target: Path, info: dict) -> None:
         raise
     if not same:
         discard(target, [NEW_INTERNAL, NEW_EXE])
-        raise InstallError(f'复制结果与暂存目录不一致（{count} 个文件 / {size} 字节，应为 {info["files"]} / '
-                           f'{info["size"]}）；已删除副本，未做其他更改。')
+        raise InstallError(f'复制结果与暂存目录不一致（{count} 个文件 / {size} 字节，应为 {wanted[0]} / '
+                           f'{wanted[1]}）；已删除副本，未做其他更改。')
     if differences:
         discard(target, [NEW_INTERNAL, NEW_EXE])
         raise InstallError(f'复制结果与发布验证记录的文件清单不符：{differences}；已删除副本，未做其他更改。')
@@ -841,8 +860,9 @@ def plan_install(target: Path, kind: str, info: dict, old_version: str | None, g
         previous = {'layout': 'none', 'version': None, 'exe': None, 'internal': None, 'receipt': None}
         supersede()
     # "checked" turns true only once the post-install gate passed (mark_checked).
+    count, size = installed_totals(info)
     receipt = {'installed': info['version'], 'time': now(), 'previous': previous,
-               'exe_sha256': info['exe_sha256'], 'files': info['files'], 'size': info['size'], 'checked': False}
+               'exe_sha256': info['exe_sha256'], 'files': count, 'size': size, 'checked': False}
     files[PENDING_RECEIPT] = receipt
     steps += [move_step(NEW_INTERNAL, INTERNAL), move_step(NEW_EXE, EXE_NAME), move_step(PENDING_RECEIPT, RECEIPT)]
     return {'steps': steps, 'trash': trash, 'files': files, 'receipt': receipt}

@@ -260,7 +260,8 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(crlf, [], 'convert these to LF (the content stays the same): data.replace(b"\\r\\n", b"\\n")')
         self.assertEqual(unmarked, [], 'binary files: add their type to .gitattributes as "binary"')
         for name in ('src/library_ui.py', 'src/engine.py', 'verification/golden/stored-keys.json', 'requirements-lock.txt',
-                     'requirements-build.txt', 'app.spec', 'vendor.lock.json', '.gitattributes', 'README.md'):
+                     'requirements-build.txt', 'app.spec', 'vendor.lock.json', '.gitattributes', 'README.md',
+                     '.github/workflows/quick.yml'):   # (2.0.5) the CI workflow is a repository text file too
             self.assertIn(name, text)
         # (2.0.1) 128 text files: the 23 allow files, test_text_guard, guard_contract and docs/GUARDS.md went, test_v201_fixes
         # came (185 at 2.0.0 S1)
@@ -335,6 +336,7 @@ class TreeTests(unittest.TestCase):
         files = repo_files.repository_files(_sandbox.ROOT)
         self.assertIn('verification/golden/stored-keys.json', files)
         self.assertIn('verification/golden/text-allow.json', files)      # (2.0.1) the allow list is tracked
+        self.assertIn('.github/workflows/quick.yml', files)              # (2.0.5) a dot folder is walked like any other
         self.assertFalse([name for name in files if repo_files.matches('verification/*.json', name)], 'ignored')
         self.assertFalse([name for name in files if name.startswith(('build/', 'vendor/', '.venv/', '.git/', 'data/'))
                           or '__pycache__' in name or '/handoff/' in name])

@@ -12,9 +12,11 @@ vendor/manifest.json is a list, yt-dlp first (the app reads entry 0 as the bundl
 tool: repository, version, tag, asset, sha256 (of the downloaded asset), url, for FFmpeg display_version and build,
 source, and files = {path inside vendor/: sha256} of what is really in vendor/.  build.py and the release gate take
 the expected vendor/bin file list from it, so a newer FFmpeg with other DLL version numbers builds unchanged.
-Licence files come from the same pinned tags (FFmpeg's from inside its archive).  When
-vendor/licenses/python-packages/packages.json is missing, the licence files of the packages in requirements-lock.txt
-are copied there from this Python's installed distributions.
+Licence files come from the same pinned tags (FFmpeg's from inside its archive).  (2.0.5) The "notices" of
+vendor.lock.json, the licence texts of libraries built into the Python runtime and the Python packages that ship no
+licence file of their own (OpenSSL, libffi, curl_cffi's curl stack, lxml's libxml2, ...), are downloaded by URL and
+SHA-256 into vendor/licenses/notices; --update keeps them as they are.  The licence files of the Python packages
+themselves are collected by build.py from the installed distributions, at every build.
 Standard library only.
 """
 from __future__ import annotations
@@ -22,7 +24,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
-import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -38,7 +39,6 @@ ROOT = Path(__file__).resolve().parent
 VENDOR = ROOT / 'vendor'
 LOCK = ROOT / 'vendor.lock.json'
 CACHE = ROOT / 'build' / 'vendor-cache'
-REQUIREMENTS = ROOT / 'requirements-lock.txt'
 HEADERS = {'User-Agent': 'YtDlpDesktop-Build/1.0', 'Accept': 'application/vnd.github+json'}
 TOOL_ORDER = ('yt-dlp', 'deno', 'ffmpeg')          # yt-dlp must stay first in the manifest
 REPOSITORIES = {'yt-dlp': 'yt-dlp/yt-dlp', 'deno': 'denoland/deno', 'ffmpeg': 'yt-dlp/FFmpeg-Builds'}
@@ -52,6 +52,14 @@ SAFE_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.+\-]{0,120}')
 SHA256 = re.compile(r'[0-9a-f]{64}')
 AUTOBUILD = re.compile(r'autobuild-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})')
 LEFTOVERS = ('*.zip', '*.part')
+NOTICES = 'notices'                                 # vendor/licenses/notices
+NOTICE_KEYS = ('name', 'version', 'license', 'part_of', 'with', 'source', 'url', 'sha256', 'destination')
+NOTICE_WITH = re.compile(r'[A-Za-z0-9_.\-]+==[A-Za-z0-9_.+\-]+')
+LOCK_COMMENT = ('Pinned third-party programs bundled in vendor/ and the licence texts of libraries built into the Python '
+                'runtime and packages ("notices"). prepare_vendor.py downloads exactly these and verifies every '
+                'SHA-256; prepare_vendor.py --update looks up newer releases of the tools and rewrites this file, '
+                'keeping "notices" as they are (each names the package or Python version it was written for in '
+                '"with"; build.py refuses when that differs from what it bundles).')
 
 
 class PrepareError(Exception):
@@ -72,7 +80,8 @@ def file_sha256(path) -> str:
 
 def write_json_atomic(path: Path, data) -> None:
     temporary = path.with_name(f'{path.name}.{os.getpid()}.tmp')
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    # LF on every system: vendor.lock.json is a tracked file and the repository keeps text files LF.
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
     os.replace(temporary, path)
 
 
@@ -159,6 +168,41 @@ def load_lock(path: Path = LOCK) -> list:
             raise PrepareError(f'{Path(path).name}, {name}: {problem}')
         result.append(tool)
     return result
+
+
+def load_notices(path: Path = LOCK) -> list:
+    """(2.0.5) The "notices" of the lock, validated: licence texts of libraries built into the Python runtime and the
+    Python packages.  Each names the library, its version, licence, where it sits in the program ("part_of"), the
+    package or Python version it was written for ("with", for example curl_cffi==0.17.0), its official source, and
+    the pinned text (raw.githubusercontent.com URL, SHA-256, file name in vendor/licenses/notices).  A lock without
+    the key has none."""
+    try:
+        notices = json.loads(Path(path).read_text(encoding='utf-8')).get('notices', [])
+    except (OSError, ValueError, AttributeError) as error:
+        raise PrepareError(f'{Path(path).name} cannot be read: {error}')
+    if not isinstance(notices, list):
+        raise PrepareError(f'{Path(path).name}: "notices" is not a list')
+    seen = set()
+    for notice in notices:
+        if not isinstance(notice, dict) or sorted(notice) != sorted(NOTICE_KEYS) or \
+                not all(isinstance(notice[key], str) and notice[key].strip() for key in NOTICE_KEYS):
+            raise PrepareError(f'{Path(path).name}: notice {notice!r} needs exactly the text fields '
+                               + ', '.join(NOTICE_KEYS))
+        problem = None
+        if not SAFE_NAME.fullmatch(notice['destination']) or notice['destination'] in seen:
+            problem = f'destination {notice["destination"]!r} is not a plain, unique file name'
+        elif not notice['url'].startswith('https://raw.githubusercontent.com/'):
+            problem = 'url must be a raw.githubusercontent.com address'
+        elif not notice['source'].startswith('https://'):
+            problem = 'source must be an https address'
+        elif not SHA256.fullmatch(notice['sha256']):
+            problem = 'sha256 must be 64 lower-case hex digits'
+        elif not NOTICE_WITH.fullmatch(notice['with']):
+            problem = '"with" must read <package or python>==<version>'
+        if problem:
+            raise PrepareError(f'{Path(path).name}, notice {notice["name"]}: {problem}')
+        seen.add(notice['destination'])
+    return notices
 
 
 # ------------------------------------------------------------------ downloads
@@ -285,7 +329,8 @@ def remove_leftovers(vendor: Path) -> list:
 def install_vendor(staging: Path, vendor: Path, manifest: list) -> None:
     """Replace yt-dlp.exe, the whole of bin/ and the tool licences in vendor/; the manifest is written last.
 
-    vendor/licenses/python-packages and anything else in vendor/ stay.  An old bin/ is replaced as a whole, so DLLs
+    Anything else in vendor/ stays (vendor/licenses/notices is replaced by install_notices).  An old bin/ is replaced
+    as a whole, so DLLs
     of an older FFmpeg cannot remain beside the new ones.
     """
     vendor.mkdir(exist_ok=True)
@@ -325,54 +370,35 @@ def install_vendor(staging: Path, vendor: Path, manifest: list) -> None:
     write_json_atomic(manifest_path, manifest)
 
 
-def collect_python_licenses(vendor: Path, requirements: Path = REQUIREMENTS) -> None:
-    """vendor/licenses/python-packages from this Python's installed distributions, only when it is missing."""
-    folder = vendor / 'licenses' / 'python-packages'
-    if (folder / 'packages.json').is_file():
-        return
+def install_notices(notices: list, vendor: Path, cache: Path) -> None:
+    """(2.0.5) vendor/licenses/notices holds exactly the pinned notice texts (downloaded or reused from the cache,
+    each checked against its SHA-256); the folder is rebuilt beside it and then swapped in."""
+    staging = cache / f'notices-{os.getpid()}'
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
     try:
-        lines = requirements.read_text(encoding='utf-8').splitlines()
-    except OSError as error:
-        say(f'note: python-packages licences not collected ({error})')
-        return
-    packages, missing = [], []
-    pattern = re.compile(r'(?i)^(licen[cs]e|copying|notice|authors)')
-    for line in lines:
-        match = re.fullmatch(r'\s*([A-Za-z0-9_.\-]+)==\S+\s*', line)
-        if not match:
-            continue
-        name = match.group(1)
-        try:
-            distribution = importlib.metadata.distribution(name)
-        except importlib.metadata.PackageNotFoundError:
-            missing.append(name)
-            continue
-        licences = []
-        for item in distribution.files or []:
-            if '.dist-info' not in str(item) or not pattern.match(item.name):
-                continue
-            target_name = item.name if item.name not in licences else f'{item.parent.name}_{item.name}'
-            (folder / name).mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(item.locate(), folder / name / target_name)
-            licences.append(target_name)
-        packages.append({'package': name, 'version': distribution.version,
-                         'licenses': [f'{name}\\{item}' for item in licences]})
-    if missing:
-        say('note: python-packages licences not collected; not installed in this Python: ' + ', '.join(missing)
-            + '. Run prepare_vendor.py with the project .venv after pip install -r requirements-lock.txt.')
-        return
-    write_json_atomic(folder / 'packages.json', packages)
-    say(f'collected the licences of {len(packages)} Python packages in vendor/licenses/python-packages')
+        if notices:
+            say(f'notices: {len(notices)} licence texts')
+        for notice in notices:
+            source = download(notice['url'], cache / NOTICES / notice['destination'], notice['sha256'])
+            shutil.copyfile(source, staging / notice['destination'])
+        folder = vendor / 'licenses' / NOTICES
+        (vendor / 'licenses').mkdir(parents=True, exist_ok=True)
+        if folder.exists():
+            shutil.rmtree(folder)
+        shutil.move(str(staging), str(folder))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
-def prepare(tools: list, vendor: Path = VENDOR, cache: Path = CACHE, requirements: Path = REQUIREMENTS) -> list:
+def prepare(tools: list, vendor: Path = VENDOR, cache: Path = CACHE, notices=()) -> list:
     staging = cache / f'staging-{os.getpid()}'
     try:
         manifest = assemble(tools, cache, staging)
         install_vendor(staging, vendor, manifest)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-    collect_python_licenses(vendor, requirements)
+    install_notices(list(notices), vendor, cache)
     return manifest
 
 
@@ -539,6 +565,7 @@ def update_lock(lock: Path = LOCK, cache: Path = CACHE, today: datetime.date | N
         old = {tool['name']: tool for tool in load_lock(lock)}
     except PrepareError:
         old = {}
+    notices = load_notices(lock) if Path(lock).is_file() else []   # kept as they are (a broken list stops here)
     tools = []
     for name in TOOL_ORDER:
         tool = {'name': name, **found[name], 'licenses': []}
@@ -555,10 +582,7 @@ def update_lock(lock: Path = LOCK, cache: Path = CACHE, today: datetime.date | N
         say(f'{name}: ' + (f'{before["tag"]} -> {tool["tag"]}' if before and before['tag'] != tool['tag']
                            else f'{tool["tag"]} (unchanged)' if before else tool['tag']))
         tools.append(tool)
-    data = {'comment': 'Pinned third-party programs bundled in vendor/. prepare_vendor.py downloads exactly these and '
-                       'verifies every SHA-256; prepare_vendor.py --update looks up newer releases and rewrites this '
-                       'file.',
-            'updated': today.isoformat(), 'tools': tools}
+    data = {'comment': LOCK_COMMENT, 'updated': today.isoformat(), 'tools': tools, 'notices': notices}
     write_json_atomic(lock, data)
     say(f'wrote {lock.name}')
     return load_lock(lock)
@@ -600,7 +624,7 @@ def main(argv=None) -> int:
             say(f'vendor/ was not changed. Review {LOCK.name} (for example with git diff), then run '
                 'python prepare_vendor.py to download and verify the new pins into vendor/.')
             return 0
-        prepare(load_lock(LOCK), VENDOR, CACHE, REQUIREMENTS)
+        prepare(load_lock(LOCK), VENDOR, CACHE, load_notices(LOCK))
     except PrepareError as error:
         say(f'prepare_vendor: FAILED: {error}')
         return 1

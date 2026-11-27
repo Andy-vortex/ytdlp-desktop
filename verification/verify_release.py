@@ -7,8 +7,11 @@ check and cannot pass on stale evidence:
   1. layout: YT-DLP下载器.exe + _internal\\; no av*.dll / sw*.dll directly in _internal; _internal\\vendor\\bin holds
      exactly the files the bundled vendor\\manifest.json lists (no hard-coded FFmpeg DLL names; ffmpeg.exe,
      ffprobe.exe, deno.exe always required), each with the manifest's SHA-256; _internal\\vendor\\yt-dlp.exe matches
-     the manifest; manifest.json, licenses, the patchright node.exe and PIL's FreeType module are present; then every
-     file of the stage is listed (relative path, size, SHA-256) before the program first runs;
+     the manifest; manifest.json, licenses, the patchright node.exe and PIL's FreeType module are present; (2.0.5)
+     THIRD-PARTY.txt beside the exe covers the package (check_third_party: yt-dlp, FFmpeg with its build tag, commit
+     and GPL, Deno, Node.js, Python, Tcl/Tk and every collected Python package, each licence text it names exists,
+     every file below _internal\\vendor\\licenses is named); then every file of the stage is listed (relative path,
+     size, SHA-256) before the program first runs;
   2. --self-test twice: sandboxed (LOCALAPPDATA and YTDLP_DESKTOP_APP_DIR in a temp folder), then with only
      LOCALAPPDATA redirected, where app_dir must be the stage folder and state_dir must lie in the temp folder;
   3. download smoke through the packaged exe against an in-process fixture server (with archive);
@@ -408,7 +411,89 @@ def check_layout(stage: Path, source_manifest=ROOT / 'vendor' / 'manifest.json')
     check(not leftovers, 'download leftovers in _internal\\vendor: ' + ', '.join(leftovers))
     check((internal / 'patchright' / 'driver' / 'node.exe').is_file(), 'missing _internal\\patchright\\driver\\node.exe')
     check(any((internal / 'PIL').glob('_imagingft*.pyd')), 'missing _internal\\PIL\\_imagingft*.pyd (FreeType)')
-    return {'yt-dlp': entry.get('version'), 'yt-dlp_sha256': engine_hash, 'vendor_bin': expected_bin}
+    entries = check_third_party(stage, manifest)
+    return {'yt-dlp': entry.get('version'), 'yt-dlp_sha256': engine_hash, 'vendor_bin': expected_bin,
+            'third_party': len(entries)}
+
+
+THIRD_PARTY = 'THIRD-PARTY.txt'
+LICENCES = ('_internal', 'vendor', 'licenses')
+TEXT = '  License text: '
+# (2.0.5) the entries THIRD-PARTY.txt must have, each with at least one licence text that exists
+REQUIRED_ENTRIES = ('yt-dlp ', 'FFmpeg ', 'Deno ', 'Node.js ', 'Python ', 'Tcl/Tk ')
+
+
+def third_party_entries(text: str) -> dict:
+    """{heading: [lines of the entry]} of THIRD-PARTY.txt: a heading is an unindented line followed by an indented
+    "  License:" line; the entry runs to the next blank line."""
+    lines = text.splitlines()
+    entries, current = {}, None
+    for index, line in enumerate(lines):
+        if not line.strip():
+            current = None
+        elif not line.startswith(' ') and index + 1 < len(lines) and lines[index + 1].startswith('  License: '):
+            check(line not in entries, f'{THIRD_PARTY} names {line!r} twice')
+            current = entries[line] = []
+        elif current is not None:
+            current.append(line)
+    return entries
+
+
+def check_third_party(stage: Path, manifest: list) -> dict:
+    """(2.0.5) THIRD-PARTY.txt beside the exe covers the package: entries for the three programs of vendor (with the
+    manifest's versions; FFmpeg's names its build tag, the FFmpeg commit and the GPL), Node.js, Python, Tcl/Tk and
+    every Python package build.py collected; every "License text" it names exists, and every file below
+    _internal\\vendor\\licenses (but python-packages\\packages.json) is named by one."""
+    path = stage / THIRD_PARTY
+    check(path.is_file(), f'missing {path} (the third-party notice; build.py writes it)')
+    try:
+        entries = third_party_entries(path.read_text(encoding='utf-8'))
+    except UnicodeDecodeError as error:
+        raise GateError(f'{THIRD_PARTY} is not UTF-8: {error}')
+    named = set()
+    for heading, lines in entries.items():
+        for line in lines:
+            if line.startswith(TEXT):
+                relative = line[len(TEXT):].strip()
+                target = stage / Path(*relative.split('\\'))
+                check(target.resolve().is_relative_to(stage.resolve()) and target.is_file(),
+                      f'{THIRD_PARTY}: {heading}: the license text {relative} does not exist in the package')
+                named.add(os.path.normcase(str(target.resolve())))
+    for prefix in REQUIRED_ENTRIES:
+        found = [heading for heading in entries if heading.startswith(prefix)]
+        check(found and any(line.startswith(TEXT) for heading in found for line in entries[heading]),
+              f'{THIRD_PARTY} has no entry "{prefix.strip()} ..." with a license text')
+    versions = {}
+    for repository, title in zip(VENDOR_REPOSITORIES, ('yt-dlp', 'Deno', 'FFmpeg')):
+        item = next((item for item in manifest if str(item.get('repository', '')).lower() == repository), {})
+        versions[title] = item
+    for title in ('yt-dlp', 'Deno'):
+        tag = versions[title].get('tag') or versions[title].get('version')
+        check(f'{title} {tag}' in entries, f'{THIRD_PARTY} has no entry "{title} {tag}" (the bundled version)')
+    ffmpeg = versions['FFmpeg']
+    build = str(ffmpeg.get('build') or '')
+    commit = re.fullmatch(r'N-\d+-g([0-9a-f]{7,40})', build)
+    check(commit and f'FFmpeg {build}' in entries,
+          f'{THIRD_PARTY} has no entry "FFmpeg {build}" with a known commit (the bundled build)')
+    body = '\n'.join(entries[f'FFmpeg {build}'])
+    for needed in ('GPL', str(ffmpeg.get('tag') or ffmpeg.get('version')), commit.group(1),
+                   'https://github.com/yt-dlp/FFmpeg-Builds/tree/'):
+        check(needed in body, f'{THIRD_PARTY}: the FFmpeg entry does not name {needed}')
+    licences = stage.joinpath(*LICENCES)
+    packages_file = licences / 'python-packages' / 'packages.json'
+    check(packages_file.is_file(), f'missing {packages_file}')
+    try:
+        packages = json.loads(packages_file.read_text(encoding='utf-8'))
+    except ValueError as error:
+        raise GateError(f'{packages_file} cannot be read: {error}')
+    check(isinstance(packages, list) and packages, f'{packages_file} lists no package')
+    for package in packages:
+        heading = f'{package.get("package")} {package.get("version")} (Python package)'
+        check(heading in entries, f'{THIRD_PARTY} has no entry "{heading}"')
+    unnamed = sorted(str(item.relative_to(stage)) for item in licences.rglob('*') if item.is_file()
+                     and item != packages_file and os.path.normcase(str(item.resolve())) not in named)
+    check(not unnamed, f'{THIRD_PARTY} names no entry for these license texts: ' + ', '.join(unnamed[:10]))
+    return entries
 
 
 def _read_report(path: Path, command: str) -> dict:

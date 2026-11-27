@@ -17,6 +17,8 @@ from unittest.mock import patch
 import engine
 import unfinished
 
+_sandbox.private_bin()   # (2.0.5) the children start in paths.BIN; this test needs no vendor folder
+
 
 def stored_list():
     """(2.0.0 S2 P4) The unfinished list as (links, the Options of each entry), read with unfinished.load; it

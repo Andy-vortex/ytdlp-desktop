@@ -1,0 +1,19 @@
+# The quick test set on a fresh checkout (no vendor\, no .venv). The full gate runs on the owner's machine.
+name: quick
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  quick:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements-lock.txt
+      - run: python -X utf8 -B verification\run_tests.py --quick

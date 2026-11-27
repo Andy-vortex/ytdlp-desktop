@@ -4,7 +4,8 @@ YT-DLP 下载器 使用说明
 开始
 
 程序是一个文件夹：YT-DLP下载器.exe 要和旁边的 _internal 文件夹放在一起，不要单独复制或移动 exe。
-双击 YT-DLP下载器.exe 启动。已经打开时再双击，会把窗口调到前面。
+从 GitHub Releases 下载的 zip 先解压，放到自己能写入的地方（桌面或"下载"，不要放进 Program Files）。
+双击 YT-DLP下载器.exe 启动。程序没有代码签名，第一次运行时 Windows 可能提示"Windows 已保护你的电脑"：点"更多信息"，再点"仍要运行"。已经打开时再双击，会把窗口调到前面。
 要快捷方式：右键 exe，"发送到 → 桌面快捷方式"。
 
 
@@ -264,5 +265,5 @@ cookies 等同登录凭证，不要外传。程序只保存文件路径。过期
 
 内置组件与源码
 
-yt-dlp、FFmpeg / ffprobe、Deno 都来自上游官方发布页；第三方许可在 _internal\vendor\licenses。
+yt-dlp、FFmpeg / ffprobe、Deno 都来自上游官方发布页。Releases 的 zip 里，程序文件夹中的 THIRD-PARTY.txt 列出每个随附组件的版本、许可证、源码地址和许可文本的位置（大部分在 _internal\vendor\licenses）。FFmpeg 是 GPL 构建，它的源码和构建脚本位置见 THIRD-PARTY.txt。
 源码：https://github.com/Andy-vortex/ytdlp-desktop（MIT 许可）。

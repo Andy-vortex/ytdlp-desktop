@@ -204,7 +204,7 @@ class ModuleTests(Checks):
         for name in MODULES:
             module = sys.modules[name]
             self.assertFalse(hasattr(module, 'MESSAGES_READY'), f'{name}: WP-6 removed the staging flag (7.8)')
-        self.assertEqual(engine.APP_VERSION, '2.0.4')     # (2.0.4) the version bump; the test name keeps 1_8_0 (-k)
+        self.assertEqual(engine.APP_VERSION, '2.0.5')     # (2.0.5) the version bump; the test name keeps 1_8_0 (-k)
 
     def test_the_core_constants_keep_their_1_7_0_values(self):
         """8.1 / P3: the H4 constants are messages with the 1.7.0 values."""

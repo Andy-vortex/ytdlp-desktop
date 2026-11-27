@@ -1,4 +1,3 @@
-# quick
 """Golden argv matrix of engine.build_command.
 
 The golden, argv.json (1.6.0 WP2; 2.0.0 S2: renamed from argv-1.6.0.json, the 1.5.1 golden and its
@@ -11,6 +10,9 @@ tags and cover (embed_metadata=False, embed_cover=False).
 Normalisation tokens: <ENGINE> engine exe, <BIN> vendor\\bin, <OUT> output folder,
 <COOKIES> cookies file, <ARCHIVE> archive root, <STATE> state folder, <OTHER> an output
 folder on another drive than the state folder.
+
+(2.0.5) Not marked "# quick": test_every_flag_exists_in_the_bundled_engine runs the bundled yt-dlp,
+and the quick set starts no engine.  The default tier runs the whole file.
 """
 import _sandbox
 from pathlib import Path

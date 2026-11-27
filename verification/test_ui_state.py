@@ -3,7 +3,7 @@
 Every app here is created and destroyed on its own (one live StudioApp per process).  Non-smoke
 apps start from _sandbox.write_settings() (update check and clipboard hint off).  The module
 replaces updater.check_latest by a guard that fails the test when it is called, and
-StudioApp.clipboard_get by one that raises TclError, except in the two tests made for them.
+StudioApp.clipboard_get by one that raises TclError, except in the tests made for them.
 """
 import _sandbox
 import hashlib
@@ -1266,12 +1266,63 @@ class FBackgroundTests(Base):
             self.assertEqual(app.urls.get('1.0', 'end-1c'), '')        # never filled by itself
             app.accept_clipboard()
             self.assertEqual(len(app.urls.get('1.0', 'end-1c').splitlines()), 2)
-            self.assertEqual(app.prefs['last_clip'], hashlib.sha1(SHARE.encode('utf-8')).hexdigest())
             self.assertEqual(app.clip_bar.winfo_manager(), '')
             app.urls.delete('1.0', 'end')
             app.check_clipboard()                                       # the same text is not offered again
             self.assertEqual(app.clip_bar.winfo_manager(), '')
         self.assertFalse(app.busy)
+
+    def clip_traces(self):
+        """Everything a settings file could hold that comes from SHARE: the text, its digests, its links."""
+        data = SHARE.encode('utf-8')
+        return [SHARE, hashlib.sha1(data).hexdigest(), hashlib.sha256(data).hexdigest(), hashlib.md5(data).hexdigest(),
+                *SHARE.split()[1::2], 'AAAAAAAAAAA', 'b23.tv/abcdef']
+
+    def assert_nothing_of_the_clipboard_saved(self, app):
+        app.save_settings()
+        raw = (_sandbox.state_dir() / 'settings.json').read_text(encoding='utf-8')
+        self.assertNotIn('last_clip', json.loads(raw))
+        self.assertNotIn('last_clip', app.prefs)
+        for trace in self.clip_traces():
+            self.assertNotIn(trace, raw)
+
+    def test_clipboard_add_and_ignore_save_nothing_of_the_text(self):
+        """(2.0.5) What the clipboard offered is remembered in memory only: settings.json holds nothing of it."""
+        for button in ('accept_clipboard', 'ignore_clipboard'):
+            with self.subTest(button=button):
+                app = self.make_app(clipboard_hint=True)
+                try:
+                    with mock.patch.object(StudioApp, 'clipboard_get', lambda self, **_: SHARE):
+                        app.check_clipboard()
+                        self.assertEqual(app.clip_bar.winfo_manager(), 'grid')
+                        getattr(app, button)()
+                        self.assertEqual(app.clip_bar.winfo_manager(), '')
+                        pump(app, timeout=0.6)                          # a save scheduled by the click runs
+                        self.assert_nothing_of_the_clipboard_saved(app)
+                        app.urls.delete('1.0', 'end')
+                        app.check_clipboard()                           # still not offered again in this run
+                        self.assertEqual(app.clip_bar.winfo_manager(), '')
+                finally:
+                    self.close(app)                                     # one live window at a time
+
+    def test_clipboard_is_offered_once_more_after_a_restart(self):
+        """(2.0.5) The accepted cost of keeping it in memory: a new window offers the same text once, then not again."""
+        app = self.make_app(clipboard_hint=True)
+        with mock.patch.object(StudioApp, 'clipboard_get', lambda self, **_: SHARE):
+            app.check_clipboard()
+            app.ignore_clipboard()
+            app.save_settings()
+            self.close(app)
+            again = StudioApp(_sandbox.app_args())                      # the settings file of the first window
+            again.withdraw()
+            self.addCleanup(self.close, again)
+            again.update_idletasks()
+            self.assertTrue(again.clipboard_hint.get())
+            again.check_clipboard()
+            self.assertEqual(again.clip_bar.winfo_manager(), 'grid')    # offered once more
+            again.ignore_clipboard()
+            again.check_clipboard()
+            self.assertEqual(again.clip_bar.winfo_manager(), '')        # and only once
 
 
 class GForeignFileTests(Base):

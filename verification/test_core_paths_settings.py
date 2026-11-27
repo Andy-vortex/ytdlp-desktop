@@ -665,7 +665,7 @@ class SettingsTests(TempCase):
     BOOLEANS = ('batch_safe', 'archive_enabled', 'embed_metadata', 'embed_cover', 'subtitles', 'skip_downloaded',
                 'notify_done', 'clipboard_hint', 'check_engine_updates', 'zoomed', 'subscription_media_only',
                 'subscription_first_new')
-    STRINGS = ('output', 'mode', 'resolution', 'archive_root', 'cookies', 'naming', 'latest_engine', 'last_clip',
+    STRINGS = ('output', 'mode', 'resolution', 'archive_root', 'cookies', 'naming', 'latest_engine',
                'geometry', 'appearance', 'language')
     NUMBERS = ('last_engine_check', 'bot_check_at')
     SCHEDULES = ('subscription_interval',)        # (2.0.0 S4 A1) one of settings.SCHEDULES, an int
@@ -703,7 +703,7 @@ class SettingsTests(TempCase):
                 'archive_enabled': False, 'archive_root': str(Path(output) / '资料归档'), 'cookies': '',
                 'naming': 'title', 'embed_metadata': True, 'embed_cover': True, 'subtitles': False,
                 'skip_downloaded': True, 'notify_done': True, 'clipboard_hint': True, 'check_engine_updates': True,
-                'last_engine_check': 0.0, 'bot_check_at': 0.0, 'latest_engine': '', 'last_clip': '', 'geometry': '',
+                'last_engine_check': 0.0, 'bot_check_at': 0.0, 'latest_engine': '', 'geometry': '',
                 'zoomed': False, 'appearance': 'light', 'language': 'system',
                 'subscription_media_only': True, 'subscription_first_new': True, 'subscription_interval': 3600}
 
@@ -772,7 +772,7 @@ class SettingsTests(TempCase):
                  'archive_root': [], 'cookies': {}, 'naming': 'weird', 'embed_metadata': 1, 'embed_cover': 0,
                  'subtitles': None, 'skip_downloaded': 'true', 'notify_done': [], 'clipboard_hint': {},
                  'check_engine_updates': 'on', 'last_engine_check': 'yesterday', 'bot_check_at': -5,
-                 'latest_engine': 2026, 'last_clip': None, 'geometry': 1120, 'zoomed': 'true', 'appearance': 'blue',
+                 'latest_engine': 2026, 'geometry': 1120, 'zoomed': 'true', 'appearance': 'blue',
                  'language': 'fr', 'subscription_media_only': 'yes', 'subscription_first_new': 1,
                  'subscription_interval': '3600'}
         self.write(wrong)
@@ -795,7 +795,7 @@ class SettingsTests(TempCase):
                   'embed_metadata': False, 'embed_cover': False, 'subtitles': True, 'skip_downloaded': False,
                   'notify_done': False, 'clipboard_hint': False, 'check_engine_updates': False,
                   'last_engine_check': 1794000000.5, 'bot_check_at': 1794000100, 'latest_engine': '2026.11.01',
-                  'last_clip': 'da39a3ee5e6b4b0d3255bfef95601890afd80709', 'geometry': '1280x900+10+20',
+                  'geometry': '1280x900+10+20',
                   'zoomed': True, 'appearance': 'system', 'language': 'en', 'subscription_media_only': False,
                   'subscription_first_new': False, 'subscription_interval': 86400}
         self.write(stored)
@@ -805,6 +805,16 @@ class SettingsTests(TempCase):
         # mode and resolution are only type-checked here; membership is the window's business.
         # (WP2: the stored mode is a 1.6.0 format now, still none of the five the 1.5.1 window knows.)
         self.assertNotIn(values['mode'], engine.MODES[:5])
+
+    def test_an_old_last_clip_is_gone_after_the_next_save(self):
+        """(2.0.5) 'last_clip' is no longer a setting: an older file's value is not read and the next save drops it."""
+        self.write({'output': 'E:\\下载', 'last_clip': 'da39a3ee5e6b4b0d3255bfef95601890afd80709'})
+        values = settings.load()
+        self.assertNotIn('last_clip', values)
+        self.assertTrue(settings.save(values))
+        stored = json.loads(paths.settings_file().read_text(encoding='utf-8'))
+        self.assertNotIn('last_clip', stored)
+        self.assertEqual(stored['output'], 'E:\\下载')
 
     def test_quotes_around_the_output_folder_are_stripped(self):
         for raw, expected in (('"D:\\My Music"', 'D:\\My Music'), ('  D:\\My Music  ', 'D:\\My Music'),

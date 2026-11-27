@@ -249,7 +249,7 @@ class LinkBoxTests(AppCase):
             self.assertEqual(app.box_text(), LINK)
             # another activity holds the window: no offer
             self.busy(app, 'update')
-            app.prefs.pop('last_clip', None)
+            app.clip_seen = ''
             app.clear_links()
             app.check_clipboard()
             self.assertFalse(app.clip_bar.shown)

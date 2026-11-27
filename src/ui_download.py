@@ -160,6 +160,7 @@ class DownloadUI:
         self.retry_count = None             # the unfinished count refresh_failed_button showed last
         self.row_menu_at = None             # the row frame the row '⋯' sits in
         self.clip_text = self.clip_digest = ''
+        self.clip_seen = ''                 # digest of the text last added or ignored; memory only, never saved
         # ------------------------------------------------ input: links, how, where and start
         composer = ctk.CTkFrame(page, fg_color='transparent', corner_radius=0)
         composer.grid(row=1, column=0, sticky='ew')
@@ -542,7 +543,7 @@ class DownloadUI:
             if not isinstance(text, str) or not text.strip():
                 return self.hide_clipboard()
             digest = hashlib.sha1(text.encode('utf-8', 'replace')).hexdigest()
-            if digest == self.prefs.get('last_clip'):
+            if digest == self.clip_seen:
                 return self.hide_clipboard()
             playlist = self.playlist.get()
             known = self.box_keys() | {row.get('key') for row in self.row_model}
@@ -567,8 +568,7 @@ class DownloadUI:
 
     def _remember_clip(self):
         if self.clip_digest:
-            self.prefs['last_clip'] = self.clip_digest
-            self.schedule_save()
+            self.clip_seen = self.clip_digest
 
     def accept_clipboard(self):
         text = self.clip_text

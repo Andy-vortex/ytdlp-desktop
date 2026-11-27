@@ -196,9 +196,11 @@ class StoredChoiceTests(unittest.TestCase):
 
     def test_language_is_a_key_of_settings_py(self):
         """(2.0.0 S2 P3) settings.json 'language' is a known key: the keys of 1.6.0 plus 'language', with
-        the choices of i18n; i18n no longer reaches into '_extra'.  (S4 A1) Plus the three subscription keys."""
-        self.assertEqual(set(settings.defaults()), DEFAULT_KEYS_1_6_0 | {'language'} | SUBSCRIPTION_KEYS)
-        self.assertEqual(set(settings._CHECKS), DEFAULT_KEYS_1_6_0 | {'language'} | SUBSCRIPTION_KEYS)
+        the choices of i18n; i18n no longer reaches into '_extra'.  (S4 A1) Plus the three subscription keys.
+        (2.0.5) Minus 'last_clip': what the clipboard offered is remembered in memory only."""
+        keys = (DEFAULT_KEYS_1_6_0 - {'last_clip'}) | {'language'} | SUBSCRIPTION_KEYS
+        self.assertEqual(set(settings.defaults()), keys)
+        self.assertEqual(set(settings._CHECKS), keys)
         self.assertEqual(settings.defaults()['language'], 'system')
         self.assertEqual(settings.LANGUAGES, i18n.CHOICES)
         self.assertFalse(hasattr(i18n, 'EXTRA'))

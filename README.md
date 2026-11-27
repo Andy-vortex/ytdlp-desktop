@@ -31,7 +31,7 @@ A Windows desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp): paste link
 
 ### Use
 
-There are no prebuilt downloads; build the program as below. The result is a folder: keep `YT-DLP下载器.exe` and `_internal` together. Windows 10/11, 64-bit. Dynamic collection needs Google Chrome.
+Download `ytdlp-desktop-<version>-win64.zip` from [Releases](https://github.com/Andy-vortex/ytdlp-desktop/releases), unzip it to a folder you can write to (Desktop or Downloads, not Program Files) and run `YT-DLP下载器.exe` in the `YT-DLP下载器` folder. Keep the exe and `_internal` together. The program is not code-signed: on the first start Windows may show "Windows protected your PC"; click More info, then Run anyway. Windows 10/11, 64-bit. Dynamic collection needs Google Chrome installed.
 
 | Data | Location |
 |---|---|
@@ -60,10 +60,10 @@ py -3.11 -m venv .venv
 .venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<version>\YT-DLP下载器 --target "<program folder>" --dry-run
 ```
 
-- `prepare_vendor.py` downloads the pinned yt-dlp, FFmpeg and Deno into `vendor\` and stops on any SHA-256 mismatch.
+- `prepare_vendor.py` downloads the pinned yt-dlp, FFmpeg and Deno, and the license texts of the libraries inside the Python runtime and packages, into `vendor\` and stops on any SHA-256 mismatch.
 - `sandbox_app.py` starts the app in a temporary folder, so your settings and data stay untouched.
 - `run_tests.py` runs every test file in its own sandbox. `--quick` is the fast subset with no windows; `-k` picks files by name; `-j N` runs N files at once; `--all` adds the real engine, a local test server and Chrome.
-- `build.py` runs `--all` serially, packages `build\package-<version>\YT-DLP下载器`, tests the packaged exe and writes `build\verify\release-<version>.json` with every file's size and SHA-256. The release gate accepts only serial runs of the current sources and tests.
+- `build.py` runs `--all` serially, packages `build\package-<version>\YT-DLP下载器` with `THIRD-PARTY.txt`, tests the packaged exe, writes `build\verify\release-<version>.json` with every file's size and SHA-256, then `build\ytdlp-desktop-<version>-win64.zip` and its `.sha256`. The release gate accepts only serial runs of the current sources and tests.
 - `install_release.py` checks every file against that record, keeps the previous version, self-tests the new one and rolls back if the test fails. Drop `--dry-run` to install.
 
 | Path | Contents |
@@ -78,7 +78,7 @@ Design records of 1.x are in the tag `v1.8.1`.
 
 ### License
 
-[MIT](LICENSE). yt-dlp, FFmpeg, Deno, customtkinter, Scrapling and the other components keep their own licenses; `prepare_vendor.py` collects them into `vendor\licenses`, and the build ships them with the program. Not affiliated with the yt-dlp project; download only what you have the right to.
+[MIT](LICENSE). yt-dlp, FFmpeg, Deno, the Python runtime and the other bundled components keep their own licenses: `THIRD-PARTY.txt` in the program folder lists each with its version, license, source and where its license text is (most are in `_internal\vendor\licenses`). The bundled FFmpeg is a GPL build (GPL-3.0-or-later); its entry names the FFmpeg commit and the build scripts. Not affiliated with the yt-dlp project; download only what you have the right to.
 
 ---
 
@@ -111,7 +111,7 @@ Design records of 1.x are in the tag `v1.8.1`.
 
 ### 使用
 
-没有预编译下载，请按下文构建。得到的是一个文件夹：`YT-DLP下载器.exe` 和 `_internal` 要放在一起。Windows 10/11 64 位。动态采集需要安装 Google Chrome。
+从 [Releases](https://github.com/Andy-vortex/ytdlp-desktop/releases) 下载 `ytdlp-desktop-<版本>-win64.zip`，解压到自己能写入的文件夹（桌面或“下载”，不要放进 Program Files），运行 `YT-DLP下载器` 文件夹里的 `YT-DLP下载器.exe`。exe 和 `_internal` 要放在一起。程序没有代码签名：第一次运行时 Windows 可能提示“Windows 已保护你的电脑”，点“更多信息”，再点“仍要运行”。Windows 10/11 64 位。动态采集需要安装 Google Chrome。
 
 | 数据 | 位置 |
 |---|---|
@@ -140,10 +140,10 @@ py -3.11 -m venv .venv
 .venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<版本>\YT-DLP下载器 --target "<程序目录>" --dry-run
 ```
 
-- `prepare_vendor.py` 按锁定版本把 yt-dlp、FFmpeg、Deno 下载到 `vendor\`，SHA-256 不符即停止。
+- `prepare_vendor.py` 按锁定版本把 yt-dlp、FFmpeg、Deno，以及 Python 运行库和各个包里所含库的许可文本下载到 `vendor\`，SHA-256 不符即停止。
 - `sandbox_app.py` 在临时文件夹里启动程序，不碰本机设置和数据。
 - `run_tests.py` 让每个测试文件在自己的沙箱里运行。`--quick` 是不开窗口的快速子集；`-k` 按名字选文件；`-j N` 同时跑 N 个文件；`--all` 另含真实引擎、本地测试服务器和 Chrome。
-- `build.py` 串行运行 `--all`，打包到 `build\package-<版本>\YT-DLP下载器`，测试打包后的 exe，并写出记录每个文件大小和 SHA-256 的 `build\verify\release-<版本>.json`。发布门禁只接受对当前源码和测试的串行运行。
+- `build.py` 串行运行 `--all`，打包到 `build\package-<版本>\YT-DLP下载器`（附 `THIRD-PARTY.txt`），测试打包后的 exe，写出记录每个文件大小和 SHA-256 的 `build\verify\release-<版本>.json`，再生成 `build\ytdlp-desktop-<版本>-win64.zip` 和它的 `.sha256`。发布门禁只接受对当前源码和测试的串行运行。
 - `install_release.py` 按这份记录逐个核对文件，保留上一版，安装后自检，失败即回滚。去掉 `--dry-run` 即正式安装。
 
 | 路径 | 内容 |
@@ -158,4 +158,4 @@ py -3.11 -m venv .venv
 
 ### 许可证
 
-[MIT](LICENSE)。yt-dlp、FFmpeg、Deno、customtkinter、Scrapling 等组件遵循各自的许可证；`prepare_vendor.py` 把它们收集到 `vendor\licenses`，打包时随程序分发。本项目与 yt-dlp 官方无关；请只下载你有权下载的内容。
+[MIT](LICENSE)。yt-dlp、FFmpeg、Deno、Python 运行库等随附组件遵循各自的许可证：程序文件夹里的 `THIRD-PARTY.txt` 逐一列出版本、许可证、源码地址和许可文本的位置（大部分在 `_internal\vendor\licenses`）。随附的 FFmpeg 是 GPL 构建（GPL-3.0-or-later），它那一条写明了 FFmpeg 的提交号和构建脚本。本项目与 yt-dlp 官方无关；请只下载你有权下载的内容。

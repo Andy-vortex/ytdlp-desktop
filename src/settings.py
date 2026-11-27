@@ -49,7 +49,6 @@ def defaults(output=None) -> dict:
         'last_engine_check': 0.0,
         'bot_check_at': 0.0,
         'latest_engine': '',
-        'last_clip': '',
         'geometry': '',
         'zoomed': False,
         'appearance': 'light',
@@ -107,7 +106,7 @@ _CHECKS = {
     'naming': _choice(NAMING), 'embed_metadata': _flag, 'embed_cover': _flag, 'subtitles': _flag,
     'skip_downloaded': _flag, 'notify_done': _flag, 'clipboard_hint': _flag,
     'check_engine_updates': _flag, 'last_engine_check': _seconds, 'bot_check_at': _seconds,
-    'latest_engine': _text, 'last_clip': _text, 'geometry': _text, 'zoomed': _flag,
+    'latest_engine': _text, 'geometry': _text, 'zoomed': _flag,
     'appearance': _choice(APPEARANCE), 'language': _choice(LANGUAGES),
     'subscription_media_only': _flag, 'subscription_first_new': _flag, 'subscription_interval': _schedule,
 }

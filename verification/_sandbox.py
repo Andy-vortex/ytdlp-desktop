@@ -207,6 +207,19 @@ def set_state_dir(path) -> None:
         module.STATE_DIR = path
 
 
+def private_bin() -> Path:
+    """(2.0.5) Point paths.BIN at an empty folder inside the sandbox for the rest of this process; returns it.
+
+    The engine starts its children in paths.BIN (engine._run_once, engine.diagnostics, updater).  Tests whose
+    children are stand-ins need that folder to exist, not the programs a prepared vendor\\ holds, so with
+    this they run the same on a fresh checkout without vendor\\ (the CI) as on a prepared one."""
+    import paths
+    folder = BASE / 'bin'
+    folder.mkdir(parents=True, exist_ok=True)
+    paths.BIN = folder
+    return folder
+
+
 @contextlib.contextmanager
 def language(lang, env=True):
     """(1.7.0) Run a block in ``lang`` ('zh' / 'en'): i18n.set_language(lang), restored afterwards

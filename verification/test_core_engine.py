@@ -33,6 +33,8 @@ import paths
 import procutil
 import updater
 
+_sandbox.private_bin()   # (2.0.5) the children start in paths.BIN; this test needs no vendor folder
+
 # Prints its own pid and the pid of a sleeping grandchild, then what it sees as TEMP/TMP,
 # leaves a file there, and waits to be stopped (or exits when asked).
 CHILD = ('import json, os, subprocess, sys, time\n'

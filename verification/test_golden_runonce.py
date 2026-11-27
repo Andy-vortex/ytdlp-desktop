@@ -46,6 +46,8 @@ import engine
 import paths
 from messages import msg
 
+_sandbox.private_bin()   # (2.0.5) the children start in paths.BIN; this test needs no vendor folder
+
 GOLDEN_NAME = 'runonce.json'          # (S2 review) was runonce-1.5.1.json; content unchanged
 WATCHDOG_SECONDS = 60
 PRELUDE = ('import json, os, sys, time\n'

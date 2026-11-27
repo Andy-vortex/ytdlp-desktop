@@ -30,6 +30,7 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 | 交付前 | `verification\run_tests.py -j 4` | 10 分钟 |
 | 正式门禁（发布前，串行） | `verification\run_tests.py --all` | 20 分钟 |
 
+- CI（`.github\workflows\quick.yml`）在每次推送和每个 PR 上，用干净检出（没有 `vendor\`、没有 `.venv`）和锁定的依赖只跑 `--quick`；默认层、`--all` 和发布门禁不在 CI 里，仍然在本机跑。所以 quick 文件不能依赖 `vendor\`：子进程要的 `vendor\bin` 用 `_sandbox.private_bin()` 在沙箱里建，要运行真引擎的测试不标 `# quick`。
 - 每个测试文件在自己的沙箱进程里跑，界面语言是中文。`--all` 需要 `vendor\` 和 Chrome。运行期间不改 `verification\`、`src\*.py`、`app.spec`，同一时间只跑一个 `run_tests.py` 或 `build.py`。发布门禁只认串行、不带 `-k` 和 `--quick` 的报告。
 - 新测试文件：快、不开窗口的，在前五行加 `# quick`；按时钟计时、抢前台窗口或截屏的，加 `# serial: <原因>`，并把文件名加进 `verification\test_sandbox.py` 里 `assertEqual(serial, [...])` 那张清单。
 
@@ -79,8 +80,10 @@ Windows 上的 yt-dlp 图形界面（Python 3.11 + CustomTkinter，中英文界�
 
 ## 发布（只在所有者要求时）
 
-1. 把 `src\engine.py` 的 `APP_VERSION` 改成新版本号；`vendor\` 不全时先运行 `.venv\Scripts\python.exe -X utf8 -B prepare_vendor.py`（联网下载，按 `vendor.lock.json` 核对 SHA-256）。`build.py` 本身不下载。
-2. `.venv\Scripts\python.exe -X utf8 -B build.py`（约 40 分钟，依次是串行 `--all`、PyInstaller、exe 层测试、`verify_release.py`），产出 `build\package-<版本>\YT-DLP下载器` 和 `build\verify\release-<版本>.json`。
-3. 关掉正在运行的程序，先运行 `.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<版本>\YT-DLP下载器 --target "<程序目录>" --dry-run`，确认无误后去掉 `--dry-run` 再运行一次。安装后自检失败会自动回滚。
-4. 隐私检查：`git grep -n -i -F $env:USERNAME`、`git grep -n -i -F $env:USERPROFILE`、`git grep -n -i -F (git config user.email)` 都没有结果；`git status` 里没有 `docs\*\handoff\`、cookies 文件或 `data\`。
+1. 把 `src\engine.py` 的 `APP_VERSION` 改成新版本号；`vendor\` 不全或与锁文件不一致时先运行 `.venv\Scripts\python.exe -X utf8 -B prepare_vendor.py`（联网下载，按 `vendor.lock.json` 核对 SHA-256；也下载锁文件 `notices` 里的许可文本）。`build.py` 本身不下载。改了 Python 版本或 `curl_cffi`、`lxml` 的版本时，先按新版本核对并改 `notices`（`with` 写它对应的版本），否则 `build.py` 第一步就拒绝。
+2. `.venv\Scripts\python.exe -X utf8 -B build.py`（约 40 分钟，依次是串行 `--all`、PyInstaller、暂存时补齐许可文本并写 `THIRD-PARTY.txt`、exe 层测试、`verify_release.py`、zip），产出 `build\package-<版本>\YT-DLP下载器`、`build\verify\release-<版本>.json`，以及发 Release 用的 `build\ytdlp-desktop-<版本>-win64.zip` 和 `build\ytdlp-desktop-<版本>-win64.zip.sha256`。zip 里是 `YT-DLP下载器` 文件夹本身，文件与发布记录的清单逐个一致；任何文件里出现本机用户名、用户目录或 git 邮箱时 `build.py` 拒绝生成 zip。
+3. 关掉正在运行的程序，先运行 `.venv\Scripts\python.exe -X utf8 -B install_release.py --stage build\package-<版本>\YT-DLP下载器 --target "<程序目录>" --dry-run`，确认无误后去掉 `--dry-run` 再运行一次。安装后自检失败会自动回滚。安装只换 exe 和 `_internal`，不复制 `THIRD-PARTY.txt`。
+4. 隐私检查：`git grep -n -i -F $env:USERNAME`、`git grep -n -i -F $env:USERPROFILE`、`git grep -n -i -F (git config user.email)` 都没有结果；`git status` 里没有 `docs\*\handoff\`、cookies 文件或 `data\`。发 Release 前再查一次包：`build.py` 的 zip 一步已经逐个文件找过本机用户名、用户目录（含 8.3 短路径写法）和 git 邮箱（UTF-8 和 UTF-16；包里的 zip 和 exe 里的 PYZ 解压后也找），输出里有 `zip … sha256 …` 一行就是通过了；另外打开 zip 看一眼，只有 `YT-DLP下载器\` 一个文件夹，里面是 exe、`_internal` 和 `THIRD-PARTY.txt`。第三方许可文本里本来就有上游作者的名字和邮箱，这不算隐私问题。
 5. `git commit`，然后 `git tag v<版本>`，最后 `git push origin main v<版本>`。
+6. 发 Release（在标签 `v<版本>` 上）：附件是 zip 和它的 `.sha256`。发行说明写：这一版改了什么；下载哪个文件、它的 SHA-256；解压后运行 `YT-DLP下载器\YT-DLP下载器.exe`，`_internal` 要和 exe 放在一起，不要解压到 Program Files；程序没有代码签名，第一次运行时 SmartScreen 点"更多信息 → 仍要运行"；系统要求 Windows 10/11 64 位，动态采集需要已安装 Chrome；内置的 yt-dlp、FFmpeg、Deno 版本；FFmpeg 是 GPL 构建，写出它的构建标签、FFmpeg 提交号、`https://git.ffmpeg.org/ffmpeg.git` 和 `https://github.com/yt-dlp/FFmpeg-Builds/tree/<构建标签>`（都从包里的 `THIRD-PARTY.txt` 抄）。中英文各一份，英文在前。
+7. FFmpeg 源码链接的期限：FFmpeg-Builds（`util/prunetags.sh`）只保留最近 14 个构建和最多 24 个月的月末构建，其余连发布和标签一起删除。所以每个 Release 里 FFmpeg 的构建脚本和下载链接大约在构建日期之后 24 个月失效（2.0.5 的 `autobuild-2026-10-31-18-18` 约在 2028 年 10–11 月）。到期前由所有者决定：给那个 Release 附上构建脚本快照和 FFmpeg 源码包，或者撤下那个 Release。

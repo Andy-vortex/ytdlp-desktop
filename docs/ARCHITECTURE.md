@@ -1,6 +1,6 @@
 # 架构
 
-YT-DLP 下载器 2.0.4：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
+YT-DLP 下载器 2.0.5：Windows 上的 yt-dlp 图形界面（CustomTkinter），界面有中文和英文。本文讲每样东西在哪个文件、怎么连起来。
 怎么跑程序和测试、怎么改文字见 `AGENTS.md`；数据格式的细节见 `docs\DATA.md`；用户能看到的规则见 `使用说明.txt`。
 代码注释里形如 `MESSAGES.md 6`、`I18N.md`、`GLOSSARY.md`、`WP3` 的引用指 1.x 的设计文档，它们在标签 `v1.8.1` 里，不在主干。
 
@@ -172,10 +172,10 @@ YT-DLP 下载器 2.0.4：Windows 上的 yt-dlp 图形界面（CustomTkinter）�
 
 | 命令 | 做什么 |
 |---|---|
-| `prepare_vendor.py` | 按 `vendor.lock.json` 下载 yt-dlp、Deno、FFmpeg，逐个核对 SHA-256 后填好 `vendor\`（`vendor\` 不进仓库）；`--update` 只改锁文件；`--record-local` 离线记录现有文件 |
-| `build.py [--skip-tests]` | ① 按 `vendor\manifest.json` 核对 vendor；② 串行 `run_tests.py --all`；③ PyInstaller `app.spec`（文件夹版）；④ 暂存到 `build\package-<版本>\YT-DLP下载器` 并写 `build.json`，随后尽力删除 `build\dist`、`build\work`（删不掉只提示）；⑤ 对暂存的 exe 跑 exe 层，再跑发布门禁。从不联网下载 |
-| `verification\verify_release.py [--stage 目录]` | 门禁：文件布局与 vendor 哈希；两次 `--self-test`；打包 exe 的夹具下载；界面冒烟；两份测试报告属于这份源码、这些测试（`tests_sha256`）和这个 exe；暂存目录在运行后没变。通过后写 `build\verify\release-<版本>.json`（含逐文件清单） |
-| `install_release.py --stage <暂存目录> --target <程序目录> [--dry-run]` | 程序在运行时拒绝；按 `release-<版本>.json` 逐文件核对暂存目录；复制并再核对；上一版移进 `_previous\`；改名切换（写 `install-receipt.json` 是提交点）；在安装位置自检、下载冒烟、界面冒烟；任何一步失败自动回滚。`data\`、`下载文件\` 不碰 |
+| `prepare_vendor.py` | 按 `vendor.lock.json` 下载 yt-dlp、Deno、FFmpeg，逐个核对 SHA-256 后填好 `vendor\`（`vendor\` 不进仓库）；锁文件的 `notices`（Python 运行库、curl_cffi、lxml 里所含库的许可文本，各自钉住地址和 SHA-256）下载到 `vendor\licenses\notices`；`--update` 只改锁文件（`notices` 原样保留）；`--record-local` 离线记录现有文件 |
+| `build.py [--skip-tests]` | ① 按 `vendor\manifest.json` 核对 vendor，`vendor\licenses\notices` 与锁文件一致，每条 notice 的 `with` 与本机安装的版本一致；② 串行 `run_tests.py --all`；③ PyInstaller `app.spec`（文件夹版）；④ 暂存到 `build\package-<版本>\YT-DLP下载器`，往 `_internal\vendor\licenses` 补 Python 运行库的 `LICENSE.txt` 、`requirements-lock.txt` 里每个包的许可文件（每次从已安装的元数据重新收集，包括 setuptools 在 `_vendor` 里自带的库）和 Playwright 驱动的 `LICENSE` / `NOTICE`（取自已安装的 playwright），在 exe 旁写 `THIRD-PARTY.txt`（每个第三方程序和库的版本、许可证、源码地址、许可文本位置；FFmpeg 写构建标签、FFmpeg 提交号和构建脚本地址），再写 `build.json`，随后尽力删除 `build\dist`、`build\work`（删不掉只提示）；⑤ 对暂存的 exe 跑 exe 层，再跑发布门禁；⑥ 按发布记录的文件清单打 `build\ytdlp-desktop-<版本>-win64.zip`（`YT-DLP下载器` 文件夹本身，UTF-8 文件名，按路径排序，统一用 `build.json` 的时间，同一暂存目录得到相同字节）和 `.sha256`，有文件含本机用户名、用户目录（含 8.3 写法）或 git 邮箱时拒绝（包里的 zip 和 exe 里的 PYZ 解压后也查）。从不联网下载 |
+| `verification\verify_release.py [--stage 目录]` | 门禁：文件布局与 vendor 哈希，`THIRD-PARTY.txt` 覆盖整个包（vendor 的三个程序版本与清单一致，FFmpeg 写明 GPL、构建标签和提交号，Node.js、Python、Tcl/Tk 和每个收集到的包都有一条；列出的许可文本都存在，`_internal\vendor\licenses` 里每个文件都被列出）；两次 `--self-test`；打包 exe 的夹具下载；界面冒烟；两份测试报告属于这份源码、这些测试（`tests_sha256`）和这个 exe；暂存目录在运行后没变。通过后写 `build\verify\release-<版本>.json`（含逐文件清单） |
+| `install_release.py --stage <暂存目录> --target <程序目录> [--dry-run]` | 程序在运行时拒绝；按 `release-<版本>.json` 逐文件核对暂存目录；复制 exe 和 `_internal` 并按清单里这两部分再核对（`THIRD-PARTY.txt` 只随 zip 发出，不安装）；上一版移进 `_previous\`；改名切换（写 `install-receipt.json` 是提交点）；在安装位置自检、下载冒烟、界面冒烟；任何一步失败自动回滚。`data\`、`下载文件\` 不碰 |
 | `install_release.py --target <程序目录> --rollback` | 按 `install-receipt.json` 把当前版本移到 `_rolledback-<版本>\`，恢复上一版。中途断电留下的 `install-journal.json` 在下次运行时先被撤销或补完 |
 
 版本号只写在 `src\engine.py` 的 `APP_VERSION`，`build.py` 和门禁从那里读。构建与安装只在所有者要求时运行。

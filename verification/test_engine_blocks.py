@@ -56,6 +56,8 @@ import time
 import unfinished
 from messages import Message
 
+_sandbox.private_bin()   # (2.0.5) the children start in paths.BIN; this test needs no vendor folder
+
 PRELUDE = ('import json, os, sys, time\n'
            'sys.stdout.reconfigure(encoding="utf-8", newline="\\n")\n'
            'def say(*lines):\n'
